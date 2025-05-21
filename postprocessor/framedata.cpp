@@ -55,7 +55,7 @@ void FrameData::SetUpOffscreenRender(const FrameData &guiFD, vtkCamera* sourceGu
 {
     std::copy(std::begin(guiFD.representation.ranges), std::end(guiFD.representation.ranges), std::begin(this->representation.ranges));
 
-    offscreenRenderWindow->Initialize();
+    //offscreenRenderWindow->Initialize();
     offscreenRenderWindow->SetOffScreenRendering(true);
     offscreenRenderWindow->SetSize(1920, 1080);
     offscreenRenderWindow->DoubleBufferOff();
