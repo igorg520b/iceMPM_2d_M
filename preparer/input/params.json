@@ -1,0 +1,26 @@
+{
+"ProjectName":"n2k",
+"InputSVG":"input/resized_bc.svg",
+"InputPNG":"input/combined2_2000.png",
+"InputFluentDAT":"input/FFF.1-3-00600.dat.h5",
+"InputFluentCAS":"input/FFF.1-3.cas.h5",
+"MainPathID":"path1340",
+"Height":1323,
+"Width":2000,
+
+"FLUENT_Scale":0.005294,
+"FLUENT_OffsetX":959,
+"FLUENT_OffsetY":714,
+
+  "openWaterColors": [
+    [0.0, 0.0, 0.0],
+    [0.08235, 0.12157, 0.18431],
+    [0.11373, 0.16078, 0.22745],
+    [0.15686, 0.23137, 0.32157]
+  ],
+  "solidColors": [
+    [0.67451, 0.69020, 0.69412],
+    [0.76863, 0.78431, 0.79608],
+    [0.78431, 0.78824, 0.79216]
+  ]
+}
