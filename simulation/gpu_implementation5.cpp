@@ -15,6 +15,103 @@
 using namespace Eigen;
 
 
+
+void GPU_Implementation5::initialize()
+{
+    const unsigned &nPartitions = model->prms.nPartitions;
+
+    // count available GPUs
+    int deviceCount = 0;
+    cudaError_t err = cudaGetDeviceCount(&deviceCount);
+    if (err != cudaSuccess) throw std::runtime_error("cudaGetDeviceCount error");
+    if(deviceCount == 0) throw std::runtime_error("No avaialble CUDA devices");
+    LOGR("GPU_Implementation5::initialize; devic count {}",deviceCount);
+
+    LOGV("Device Information:");
+    for (int i = 0; i < deviceCount; ++i) {
+        cudaDeviceProp deviceProp;
+        cudaGetDeviceProperties(&deviceProp, i);
+
+        LOGR("  --- Device {}: {} ---", i, deviceProp.name);
+        LOGR("      Compute Capability: {}.{}", deviceProp.major, deviceProp.minor);
+        // Convert bytes to Megabytes (MB) for readability
+        double totalMemMB = static_cast<double>(deviceProp.totalGlobalMem) / (1024.0 * 1024.0);
+        LOGR("      Total Global Memory: {:>.2} MB", totalMemMB);
+        LOGR("      Clock Rate: {:>.2} GHz", deviceProp.clockRate / (1000.0 * 1000.0)); // Convert kHz to GHz
+        LOGR("      Number of SMs: {}\n", deviceProp.multiProcessorCount);
+    }
+    std::cout << std::endl;
+
+    partitions.clear();
+    partitions.resize(nPartitions);
+
+    for(int i=0;i<nPartitions;i++)
+    {
+        GPU_Partition &p = partitions[i];
+        p.initialize(i%deviceCount, i);
+    }
+
+    if(deviceCount >= 2)
+    {
+        // enable peer access
+        const int nLoop = deviceCount == 2 ? 1 : deviceCount;
+        for(int i=0;i<nLoop;i++)
+        {
+            const int dev_next = (i+1)%deviceCount;
+            CUDA_CHECK(cudaSetDevice(i));
+            CUDA_CHECK(cudaDeviceEnablePeerAccess(dev_next, 0));
+            CUDA_CHECK(cudaSetDevice(dev_next));
+            CUDA_CHECK(cudaDeviceEnablePeerAccess(i, 0));
+        }
+    }
+}
+
+void GPU_Implementation5::split_hssoa_into_partitions()
+{
+    LOGV("\nsplit_hssoa_into_partitions() start");
+    const int &GridXTotal = model->prms.GridXTotal;
+    const unsigned &nPartitions = model->prms.nPartitions;
+
+    unsigned nPointsProcessed = 0;
+    partitions[0].GridX_offset = 0;
+
+    for(unsigned partition_idx=0; partition_idx<nPartitions; partition_idx++)
+    {
+        GPU_Partition &p = partitions[partition_idx];
+        p.disabled_points_count = 0;
+        const unsigned nPartitionsRemaining = nPartitions - partition_idx;
+        p.nPts_partition = (hssoa.size - nPointsProcessed)/nPartitionsRemaining; // points in this partition
+
+        // find the index of the first point with x-index cellsIdx
+        if(partition_idx < nPartitions-1)
+        {
+            SOAIterator it2 = hssoa.begin() + (nPointsProcessed + p.nPts_partition);
+            const unsigned cellsIdx = it2->getCellX();
+            p.GridX_partition = cellsIdx - p.GridX_offset;
+            partitions[partition_idx+1].GridX_offset = cellsIdx;
+        }
+        else if(partition_idx == nPartitions-1)
+        {
+            // the last partition spans the rest of the grid along the x-axis
+            p.GridX_partition = GridXTotal - p.GridX_offset;
+        }
+
+#pragma omp parallel for
+        for(int j=nPointsProcessed;j<(nPointsProcessed+p.nPts_partition);j++)
+        {
+            point_partitions[j] = (uint8_t)partition_idx;
+        }
+
+        LOGR("split: P {}; grid_offset {}; grid_size {}, npts {}",
+                     partition_idx, p.GridX_offset, p.GridX_partition, p.nPts_partition);
+        nPointsProcessed += p.nPts_partition;
+    }
+    LOGV("split_hssoa_into_partitions() done");
+}
+
+
+
+
 void GPU_Implementation5::reset_grid()
 {
     for(GPU_Partition &p : partitions)
@@ -91,53 +188,6 @@ void GPU_Implementation5::record_timings(const bool enablePointTransfer)
 // ==========================================================================
 
 
-void GPU_Implementation5::initialize()
-{
-    const int nPartitions = 1;
-
-    // count available GPUs
-    int deviceCount = 0;
-    cudaError_t err = cudaGetDeviceCount(&deviceCount);
-    if (err != cudaSuccess) throw std::runtime_error("cudaGetDeviceCount error");
-    if(deviceCount == 0) throw std::runtime_error("No avaialble CUDA devices");
-    LOGR("GPU_Implementation5::initialize; devic count {}",deviceCount);
-
-
-    LOGV("Device Information:");
-    for (int i = 0; i < deviceCount; ++i) {
-        cudaDeviceProp deviceProp;
-        cudaGetDeviceProperties(&deviceProp, i);
-
-        LOGR("  --- Device {}: {} ---", i, deviceProp.name);
-        LOGR("      Compute Capability: {}.{}", deviceProp.major, deviceProp.minor);
-        // Convert bytes to Megabytes (MB) for readability
-        double totalMemMB = static_cast<double>(deviceProp.totalGlobalMem) / (1024.0 * 1024.0);
-        LOGR("      Total Global Memory: {:>.2} MB", totalMemMB);
-        LOGR("      Clock Rate: {:>.2} GHz", deviceProp.clockRate / (1000.0 * 1000.0)); // Convert kHz to GHz
-        LOGR("      Number of SMs: {}\n", deviceProp.multiProcessorCount);
-    }
-
-    partitions.clear();
-    partitions.resize(nPartitions);
-
-    for(int i=0;i<nPartitions;i++)
-    {
-        GPU_Partition &p = partitions[i];
-        p.initialize(i%deviceCount, i);
-    }
-}
-
-void GPU_Implementation5::split_hssoa_into_partitions()
-{
-    LOGV("split_hssoa_into_partitions() start");
-
-    GPU_Partition &p = partitions.front();
-    p.nPts_partition = hssoa.size;
-    p.GridX_partition = model->prms.GridXTotal;
-    p.disabled_points_count = 0;
-    LOGV("split_hssoa_into_partitions() done");
-}
-
 
 void GPU_Implementation5::allocate_host_arrays_grid()
 {
@@ -159,14 +209,23 @@ void GPU_Implementation5::allocate_host_arrays_points()
 {
     hssoa.Allocate(model->prms.nPtsInitial);
     point_colors_rgb.resize(model->prms.nPtsInitial);
+    point_partitions.resize(model->prms.nPtsInitial);
 }
 
 
 void GPU_Implementation5::allocate_device_arrays()
 {
     LOGV("GPU_Implementation5::allocate_device_arrays()");
-    int GridX_size = partitions.front().GridX_partition;
-    partitions.front().allocate(model->prms.nPtsInitial, GridX_size);
+
+    const unsigned &nPts = model->gpu.hssoa.size;
+    const unsigned pts_reserve = (nPts/partitions.size()) * (1. + SimParams::extra_space_pts);
+
+    auto it = std::max_element(partitions.begin(), partitions.end(),
+                               [](const GPU_Partition &p1, const GPU_Partition &p2)
+                               {return p1.GridX_partition < p2.GridX_partition;});
+    unsigned max_GridX_size = it->GridX_partition;
+    unsigned GridX_size = std::min((unsigned)(max_GridX_size*1.5), (unsigned)model->prms.GridXTotal);
+    for(GPU_Partition &p : partitions) p.allocate(pts_reserve, GridX_size);
 }
 
 
@@ -174,13 +233,15 @@ void GPU_Implementation5::allocate_device_arrays()
 void GPU_Implementation5::transfer_to_device()
 {
     LOGV("GPU_Implementation: transfer_to_device()");
-    int points_uploaded = 0;
-    GPU_Partition &p = partitions.front();
-    p.transfer_points_from_soa_to_device(hssoa, points_uploaded);
-    points_uploaded += p.nPts_partition;
-    LOGR("transfer_to_device() done; transferred points {}", points_uploaded);
 
-    p.transfer_grid_data_to_device(this);
+    int points_uploaded = 0;
+    for(GPU_Partition &p : partitions)
+    {
+        p.transfer_points_from_soa_to_device(hssoa, points_uploaded);
+        p.transfer_grid_data_to_device(this);
+        points_uploaded += p.nPts_partition;
+    }
+    spdlog::info("transfer_ponts_to_device() done; transferred points {}", points_uploaded);
 }
 
 

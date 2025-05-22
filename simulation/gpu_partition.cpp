@@ -93,7 +93,7 @@ void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, int p
         if(err != cudaSuccess)
         {
             const char* errorString = cudaGetErrorString(err);
-            LOGR("PID {}; line {}; nPts_partition {}, cuda error: {}",PartitionID, i, nPts_partition, errorString);
+            LOGR("PID {}; line {}; nPts_partition {}, cuda error: {}", PartitionID, i, nPts_partition, errorString);
             throw std::runtime_error("transfer_points_from_soa_to_device");
         }
     }
@@ -111,28 +111,23 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
     err = cudaSetDevice(Device);
     if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device");
 
-    // transfer status array (distinguishes between modelled area and land)
-    size_t grid_array_size = prms->GridXTotal * prms->GridYTotal * sizeof(uint8_t);
+    const size_t n_transfer_elems = GridX_partition*prms->GridYTotal;
+    const size_t n_offset_elems = this->GridX_offset*prms->GridYTotal;
 
-    err = cudaMemcpyAsync(grid_status_array, gpu->grid_status_buffer.data(),
-                          grid_array_size, cudaMemcpyHostToDevice,streamCompute);
+    err = cudaMemcpyAsync(grid_status_array, &gpu->grid_status_buffer[n_offset_elems],
+                          n_transfer_elems*sizeof(uint8_t), cudaMemcpyHostToDevice, streamCompute);
     if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device");
 
-
     // transfer boundary normals (for slip collisions)
-    const int &gxp = GridX_partition;
-    const int &gx = prms->GridXTotal;
-    const int &gy = prms->GridYTotal;
 
-    const size_t transfer_size = gxp*gy*sizeof(t_GridReal);
     err = cudaMemcpyAsync(grid_array + nGridPitch * SimParams::grid_idx_bc_normal_nx,
-                          gpu->grid_boundary_normals.data(),
-                          transfer_size, cudaMemcpyHostToDevice, streamCompute);
+                          &gpu->grid_boundary_normals[n_offset_elems],
+                          n_transfer_elems*sizeof(t_GridReal), cudaMemcpyHostToDevice, streamCompute);
     if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device bc nx");
 
     err = cudaMemcpyAsync(grid_array + nGridPitch * SimParams::grid_idx_bc_normal_ny,
-                          gpu->grid_boundary_normals.data() + gx*gy,
-                          transfer_size, cudaMemcpyHostToDevice, streamCompute);
+                          &gpu->grid_boundary_normals[n_offset_elems + prms->GridYTotal*prms->GridXTotal],
+                          n_transfer_elems*sizeof(t_GridReal), cudaMemcpyHostToDevice, streamCompute);
     if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device bc ny");
 }
 

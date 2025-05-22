@@ -37,6 +37,7 @@ struct SimParams
 {
 public:
     constexpr static float disabled_pts_proportion_threshold = 0.05; // when exceeded, disabled points are removed
+    constexpr static float extra_space_pts = 0.10;
     constexpr static t_PointReal pi = 3.14159265358979323846;
     constexpr static double Earth_Radius = 6371000.0;
     constexpr static float MPM_points_per_cell = 5.0;    // approximate average value
@@ -76,6 +77,7 @@ public:
     constexpr static size_t nPtsArrays = idx_thickness + 1;
 
     int tpb_P2G, tpb_Upd, tpb_G2P;  // threads per block for each operation
+    unsigned nPartitions;           // number of partitions split between GPU devices
 
     int nPtsInitial;
     int64_t SimulationStartUnixTime;

@@ -263,7 +263,7 @@ void MainWindow::cameraReset_triggered()
     camera->SetFocalPoint(0, 0., 0.);
     camera->SetPosition(0.0, 0.0, 50.0);
     camera->SetViewUp(0.0, 1.0, 0.0);
-    camera->SetParallelScale(2.5);
+ //   camera->SetParallelScale(2.5);
 
     camera->Modified();
     renderWindow->Render();

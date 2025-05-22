@@ -145,12 +145,9 @@ __global__ void partition_kernel_update_nodes(const t_PointReal simulation_time)
 
         GridVector2r v_w(vcx, vcy);
         v_w *= (1+min(simulation_time/(3600*2), 2.));
-        const double &h = gprms.cellsize;                       // cell size
-        const double &rho_w = gprms.sea_water_density;     // water density
         const double &dt = gprms.InitialTimeStep;               // time step
-
-        const double kL = gprms.waterDragEffectiveLinear * gprms.InitialTimeStep; // linear param
-        const double kQp = gprms.waterDragEffectiveQuadratic * gprms.InitialTimeStep; // quadratic
+        const double kL = gprms.waterDragEffectiveLinear * dt; // linear param
+        const double kQp = gprms.waterDragEffectiveQuadratic * dt; // quadratic
 
         GridVector2r U_rel = (v_w - velocity);  // relative velocity
         const double U_rel_mag = U_rel.norm();  // magnitude

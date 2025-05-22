@@ -15,6 +15,20 @@
 #include "windandcurrentinterpolator.h"
 
 
+// Helper macro for CUDA error checking
+#define CUDA_CHECK(call)                                                                          \
+do {                                                                                          \
+        cudaError_t err = call;                                                                   \
+        if (err != cudaSuccess) {                                                                 \
+            spdlog::error("CUDA error in {}:{} {} (code {}): {}", __FILE__, __LINE__, #call, err, \
+                          cudaGetErrorString(err));                                               \
+            throw std::runtime_error(std::string("CUDA error in " #call ": ") +                   \
+                                     cudaGetErrorString(err));                                    \
+    }                                                                                         \
+} while (0)
+
+
+
 // kernels
 __global__ void partition_kernel_p2g();
 

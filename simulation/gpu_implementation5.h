@@ -14,6 +14,8 @@
 #include <functional>
 #include <vector>
 
+
+
 namespace icy { class Model; }
 
 
@@ -29,6 +31,8 @@ public:
     uint32_t error_code;
 
     std::vector<uint32_t> point_colors_rgb;     // rgb values of original point colors
+    std::vector<uint8_t> point_partitions;
+
     std::vector<uint8_t> grid_status_buffer;    // land (0), modeled area (>0)
     std::vector<uint8_t> original_image_colors_rgb;
     std::vector<t_GridReal> grid_boundary_normals, grid_boundary_forces;

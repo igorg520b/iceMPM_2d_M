@@ -54,7 +54,7 @@ public:
 
     enum VisOpt { none, status, Jp_inv, P, Q, color, v_u, v_v, v_norm, thickness, regions, ridges,
                   grid_Jpinv, grid_mass, grid_pointdensity, grid_P, grid_Q, grid_colors,
-                  grid_vnorm, grid_force};
+                  grid_vnorm, grid_force, partitions};
     Q_ENUM(VisOpt)
     VisOpt VisualizingVariable = VisOpt::none;
     double ranges[30] = {};

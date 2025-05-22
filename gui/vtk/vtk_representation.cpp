@@ -345,7 +345,7 @@ void icy::VisualRepresentation::SynchronizeValues()
     {
         for(int i=0;i<nPts;i++)
         {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
+//            SOAIterator s = model->gpu.hssoa.begin()+i;
             pts_colors->SetValue((vtkIdType)(i*3+0), 240);
             pts_colors->SetValue((vtkIdType)(i*3+1), 122);
             pts_colors->SetValue((vtkIdType)(i*3+2), 122);
@@ -429,6 +429,15 @@ void icy::VisualRepresentation::SynchronizeValues()
             double val = s->getValue(SimParams::idx_thickness);
             double value = (val-0.8)/0.2;
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, value);
+            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c[k]);
+        }
+    }
+    else if(VisualizingVariable == VisOpt::partitions)
+    {
+        for(int i=0;i<nPts;i++)
+        {
+            uint8_t partition_idx = model->gpu.point_partitions[i];
+            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, partition_idx/8.);
             for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c[k]);
         }
     }

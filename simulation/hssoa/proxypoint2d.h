@@ -33,6 +33,7 @@ struct ProxyPoint
     uint16_t getGrain();
 
     int getCellIndex(int GridY);  // index of the grid cell at the point's location
+    unsigned getCellX();
 
     // other
     void ConvertToIntegerCellFormat(t_PointReal h);

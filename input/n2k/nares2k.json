@@ -1,8 +1,8 @@
 {
 "SimulationTitle":"n2k",
 "InputPNG":"input/n2k/combined2_2000.png",
-"InputMap":"input/n2kv2/map.h5",
-"InputFlowVelocity":"input/n2kv2/flow_velocities.h5",
+"InputMap":"input/n2k/map.h5",
+"InputFlowVelocity":"input/n2k/flow_velocities.h5",
 "UseCurrentData":true,
 
 "DimensionHorizontal":430000,
@@ -10,7 +10,7 @@
 "SnapshotPeriod":30,
 
 "SimulationStartUnixTime":1717988400,
-"SimulationEndTime":500000,
+"SimulationEndTime":1500000,
 "AnimationFramePeriod":300,
 
 "InitialTimeStep":0.17,
@@ -32,7 +32,8 @@
 
 "tpb_P2G":256,
 "tpb_Upd":512,
-"tpb_G2P":128
+"tpb_G2P":128,
+"nPartitions":4
 }
 
 

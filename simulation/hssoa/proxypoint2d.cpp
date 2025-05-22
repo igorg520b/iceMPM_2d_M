@@ -122,6 +122,14 @@ int ProxyPoint::getCellIndex(int GridY)
     return x_idx*GridY + y_idx;
 }
 
+unsigned ProxyPoint::getCellX()
+{
+    uint32_t cell = getValueInt(SimParams::integer_cell_idx);
+    uint32_t x_idx = cell & 0xffff;
+    return (unsigned) x_idx;
+}
+
+
 void ProxyPoint::ConvertToIntegerCellFormat(t_PointReal h)
 {
     const t_PointReal hinv = 1.0f/h;
