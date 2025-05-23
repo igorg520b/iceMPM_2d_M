@@ -1,7 +1,5 @@
 #include "gpu_partition.h"
 #include "gpu_implementation5.h"
-#include "helper_math.cuh"
-#include "kernels.cuh"
 #include <stdio.h>
 
 
@@ -14,48 +12,35 @@ SimParams *GPU_Partition::prms;
 
 
 
-void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, int point_idx_offset, std::vector<t_GridReal> &boundary_forces)
+void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const int point_idx_offset, std::vector<t_GridReal> &boundary_forces)
 {
-    cudaError_t err;
-    err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_from_device() set");
+    CUDA_CHECK(cudaSetDevice(Device));
 
     for(int j=0;j<SimParams::nPtsArrays;j++)
     {
-        if((point_idx_offset + nPts_partition) > hssoa.capacity)
+        if((point_idx_offset + pparams.count_pts) > hssoa.capacity)
             throw std::runtime_error("transfer_from_device() HSSOA capacity");
 
-        t_PointReal *ptr_src = pts_array + j*nPtsPitch;
-        t_PointReal *ptr_dst = hssoa.getPointerToLine(j)+point_idx_offset;
+        t_PointReal* const ptr_src = pparams.buffer_pts + j*pparams.pitch_pts;
+        t_PointReal* const ptr_dst = hssoa.getPointerToLine(j)+point_idx_offset;
 
-        err = cudaMemcpyAsync(ptr_dst, ptr_src, nPts_partition*sizeof(t_PointReal), cudaMemcpyDeviceToHost, streamCompute);
-        if(err != cudaSuccess)
-        {
-            const char *errorString = cudaGetErrorString(err);
-            LOGR("error when copying points: {}", errorString);
-            throw std::runtime_error("transfer_from_device() cudaMemcpyAsync points");
-        }
+        CUDA_CHECK(cudaMemcpyAsync(ptr_dst, ptr_src, pparams.count_pts*sizeof(t_PointReal), cudaMemcpyDeviceToHost, streamCompute));
     }
 
     // transfer error code
-    err = cudaMemcpyFromSymbolAsync(&error_code, gpu_error_indicator, sizeof(error_code), 0,
-                                    cudaMemcpyDeviceToHost, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_from_device");
+    CUDA_CHECK(cudaMemcpyFromSymbolAsync(&error_code, gpu_error_indicator, sizeof(error_code), 0,
+                                         cudaMemcpyDeviceToHost, streamCompute));
 
     // transfer the count of disabled points
-    err = cudaMemcpyFromSymbolAsync(&disabled_points_count, gpu_disabled_points_count,
-                                    sizeof(disabled_points_count), 0, cudaMemcpyDeviceToHost, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_from_device; disabled_points_count");
+    CUDA_CHECK(cudaMemcpyFromSymbolAsync(&disabled_points_count, gpu_disabled_points_count,
+                                         sizeof(gpu_disabled_points_count), 0, cudaMemcpyDeviceToHost, streamCompute));
 
+    LOGR("sizeof(gpu_disabled_points_count) = {}",sizeof(gpu_disabled_points_count));
 
-    // transfer grid data (accumulated forces)
-    const size_t bytes_to_transfer = prms->GridYTotal * GridX_partition * sizeof(t_GridReal);
-    for(int j=0;j<2;j++)
-    {
-        const t_GridReal *ptr_src = grid_array + nGridPitch*(SimParams::grid_idx_fx + j);
-        t_GridReal *ptr_dest = boundary_forces.data() + prms->GridYTotal*(j*prms->GridXTotal + GridX_offset);
-        err = cudaMemcpyAsync(ptr_dest, ptr_src, bytes_to_transfer, cudaMemcpyDeviceToHost, streamCompute);
-    }
+    // transfer grid data (accumulated forces) to temporary buffers
+    const size_t tmp_bytes_transfer = 2*sizeof(t_GridReal)*prms->GridYTotal*(pparams.pitch_grid);
+    t_GridReal* const ptr_src = pparams.buffer_grid + pparams.pitch_grid*SimParams::grid_idx_fx;
+    CUDA_CHECK(cudaMemcpyAsync(tmp_accumulated_forces, ptr_src, tmp_bytes_transfer, cudaMemcpyDeviceToHost, streamCompute));
 }
 
 
@@ -80,29 +65,26 @@ void GPU_Partition::check_error_code()
 
 void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, int point_idx_offset)
 {
-    cudaError_t err;
-    err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_points_from_soa_to_device");
+    CUDA_CHECK(cudaSetDevice(Device));
 
     // due to the layout of host-side SOA, we transfer the pts arrays one-by-one
     for(int i=0;i<SimParams::nPtsArrays;i++)
     {
-        t_PointReal *ptr_dst = pts_array + i*nPtsPitch;
-        t_PointReal *ptr_src = hssoa.getPointerToLine(i)+point_idx_offset;
-        err = cudaMemcpyAsync(ptr_dst, ptr_src, nPts_partition*sizeof(t_PointReal), cudaMemcpyHostToDevice, streamCompute);
-        if(err != cudaSuccess)
-        {
-            const char* errorString = cudaGetErrorString(err);
-            LOGR("PID {}; line {}; nPts_partition {}, cuda error: {}", PartitionID, i, nPts_partition, errorString);
-            throw std::runtime_error("transfer_points_from_soa_to_device");
-        }
+        t_PointReal* const ptr_dst = pparams.buffer_pts + i*pparams.pitch_pts;
+        t_PointReal* const ptr_src = hssoa.getPointerToLine(i) + point_idx_offset;
+        CUDA_CHECK(cudaMemcpyAsync(ptr_dst, ptr_src, nPts_partition*sizeof(t_PointReal), cudaMemcpyHostToDevice, streamCompute));
     }
 
-    err = cudaMemcpyToSymbolAsync(gpu_disabled_points_count, &disabled_points_count,
-                                              sizeof(disabled_points_count), 0,
-                                              cudaMemcpyHostToDevice,streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("gpu_error_indicator initialization");
+    // write the disabled points count (a bit overcompicated since we use the array of 8 per device)
 
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(
+        gpu_disabled_points_count,              // symbol
+        &disabled_points_count[pparams.PartitionID],                                 // host pointer
+        sizeof(unsigned),                       // size
+        pparams.PartitionID * sizeof(unsigned),       // offset in bytes
+        cudaMemcpyHostToDevice,                 // direction
+        streamCompute                           // optional stream
+        ));
 }
 
 void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
@@ -116,50 +98,24 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 
     err = cudaMemcpyAsync(grid_status_array, &gpu->grid_status_buffer[n_offset_elems],
                           n_transfer_elems*sizeof(uint8_t), cudaMemcpyHostToDevice, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device");
-
-    // transfer boundary normals (for slip collisions)
-
-    err = cudaMemcpyAsync(grid_array + nGridPitch * SimParams::grid_idx_bc_normal_nx,
-                          &gpu->grid_boundary_normals[n_offset_elems],
-                          n_transfer_elems*sizeof(t_GridReal), cudaMemcpyHostToDevice, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device bc nx");
-
-    err = cudaMemcpyAsync(grid_array + nGridPitch * SimParams::grid_idx_bc_normal_ny,
-                          &gpu->grid_boundary_normals[n_offset_elems + prms->GridYTotal*prms->GridXTotal],
-                          n_transfer_elems*sizeof(t_GridReal), cudaMemcpyHostToDevice, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device bc ny");
 }
 
 
 void GPU_Partition::update_constants()
 {
-    cudaSetDevice(Device);
-    cudaError_t err = cudaMemcpyToSymbol(gpu_error_indicator, &error_code, sizeof(error_code));
-    if(err != cudaSuccess) throw std::runtime_error("gpu_error_indicator initialization");
-    err = cudaMemcpyToSymbol(gprms, prms, sizeof(SimParams));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: gprms");
+    CUDA_CHECK(cudaSetDevice(Device));
 
-    err = cudaMemcpyToSymbol(partition_buffer_pts, &pts_array, sizeof(t_PointReal*));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants");
+    CUDA_CHECK(cudaMemcpyToSymbol(gpu_error_indicator, &error_code, sizeof(error_code)));
+    CUDA_CHECK(cudaMemcpyToSymbol(gprms, prms, sizeof(SimParams)));
 
-    err = cudaMemcpyToSymbol(partition_buffer_grid, &grid_array, sizeof(t_GridReal*));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: grid_array");
-
-    err = cudaMemcpyToSymbol(partition_gridX, &GridX_partition, sizeof(size_t));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: GridX_partition");
-
-    err = cudaMemcpyToSymbol(partition_pitch_grid, &nGridPitch, sizeof(size_t));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: partition_pitch_grid");
-
-    err = cudaMemcpyToSymbol(partition_count_pts, &nPts_partition, sizeof(size_t));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: partition_count_pts");
-
-    err = cudaMemcpyToSymbol(partition_pitch_pts, &nPtsPitch, sizeof(size_t));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: partition_pitch_pts");
-
-    err = cudaMemcpyToSymbol(partition_grid_status, &grid_status_array, sizeof(uint8_t*));
-    if(err!=cudaSuccess) throw std::runtime_error("cuda_update_constants: partition_grid_status");
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_buffer_pts, &pts_array, sizeof(t_PointReal*)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_buffer_grid, &grid_array, sizeof(t_GridReal*)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_gridX, &GridX_partition, sizeof(size_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_gridX_offset, &GridX_offset, sizeof(size_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_pitch_grid, &nGridPitch, sizeof(size_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_count_pts, &nPts_partition, sizeof(size_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_pitch_pts, &nPtsPitch, sizeof(size_t)));
+    CUDA_CHECK(cudaMemcpyToSymbol(partition_grid_status, &grid_status_array, sizeof(uint8_t*)));
 
     LOGR("Constant symbols copied to device {}; partition {}", Device, PartitionID);
 }
@@ -196,14 +152,16 @@ GPU_Partition::GPU_Partition()
 {
     initialized = false;
     error_code = 0;
-    disabled_points_count = 0;
-    nPts_partition = GridX_partition = 0;
+    tmp_accumulated_forces = nullptr;
 
-    pts_array = nullptr;
-    grid_array = nullptr;
-    grid_status_array = nullptr;
+    for(int k=0;k<8;k++) disabled_points_count[k]=0;
+    pparams.count_pts = 0;
+    pparams.partition_gridX = 0;
+    pparams.gridX_offset = 0;
 
-    GridX_offset = 0;
+    pparams.buffer_grid = nullptr;
+    pparams.buffer_pts = nullptr;
+    pparams.buffer_grid_regions = nullptr;
 }
 
 GPU_Partition::~GPU_Partition()
@@ -229,8 +187,9 @@ GPU_Partition::~GPU_Partition()
 void GPU_Partition::initialize(int device, int partition)
 {
     if(initialized) throw std::runtime_error("GPU_Partition double initialization");
-    this->PartitionID = partition;
+    pparams.PartitionID = partition;
     this->Device = device;
+    disabled_points_count[pparams.PartitionID] = 0;
     cudaSetDevice(Device);
 
     cudaEventCreate(&event_10_cycle_start);
@@ -251,39 +210,66 @@ void GPU_Partition::initialize(int device, int partition)
 }
 
 
-void GPU_Partition::allocate(const int n_points_capacity, const int gx)
+void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx_requested)
 {
-    cudaError_t err;
-    cudaSetDevice(Device);
+    CUDA_CHECK(cudaSetDevice(Device));
 
     const int &gy = prms->GridYTotal;
+    const unsigned &halo = prms->GridHaloSize;
+
     LOGR("P{}-{} allocate; sub-grid {} x {}; sub-pts", PartitionID, Device, gx, gy, n_points_capacity);
 
     // grid
     size_t total_allocated = 0; // count what we allocated
-    size_t grid_size_local_requested = sizeof(t_GridReal) * gy * gx;
-    err = cudaMallocPitch (&grid_array, &nGridPitch, grid_size_local_requested, SimParams::nGridArrays);
-    total_allocated += nGridPitch * SimParams::nGridArrays;
-    if(err != cudaSuccess) throw std::runtime_error("GPU_Partition allocate grid array");
-    nGridPitch /= sizeof(t_GridReal); // assume that this divides without remainder
 
-    // grid status
-    err = cudaMalloc(&grid_status_array, gx*gy*sizeof(uint8_t));
-    if(err != cudaSuccess) throw std::runtime_error("GPU_Partition allocate grid status array");
-    total_allocated += gx*gy;
+    const size_t grid_requested = sizeof(t_GridReal) * gy * (gx_requested + 6*halo);
+    CUDA_CHECK(cudaMallocPitch (&pparams.buffer_grid, &pparams.pitch_grid, grid_requested, SimParams::nGridArrays));
+    total_allocated += pparams.pitch_grid * SimParams::nGridArrays;
+    if(pparams.pitch_grid % sizeof(t_GridReal) != 0) throw std::runtime_error("pparams.pitch_grid % sizeof(t_GridReal) != 0");
+    pparams.pitch_grid /= sizeof(t_GridReal); // assume that this divides without remainder
+
+    pparams.halo_transfer_buffer[0] = pparams.buffer_grid + gy*(gx_requested+2*halo);
+    pparams.halo_transfer_buffer[1] = pparams.buffer_grid + gy*(gx_requested+4*halo);
+
+    // grid regions identifiers/indices
+    const size_t grid_regions_size = sizeof(uint8_t) * gy * (gx_requested + 2*halo);
+    CUDA_CHECK(cudaMalloc(&pparams.buffer_grid_regions, grid_regions_size));
+    total_allocated += grid_regions_size;
+
+
+    // device-side buffer for force transfer form gird
+    // tmp_accumulated_forces
+    cudaFreeHost(tmp_accumulated_forces);
+    const size_t tmp_alloc_size = 2*sizeof(t_GridReal)*gy*(pparams.pitch_grid);
+    CUDA_CHECK(cudaMallocHost(&tmp_accumulated_forces, tmp_alloc_size));
+
 
     // points
     const size_t pts_buffer_requested = sizeof(t_PointReal) * n_points_capacity;
-    err = cudaMallocPitch(&pts_array, &nPtsPitch, pts_buffer_requested, SimParams::nPtsArrays);
-    total_allocated += nPtsPitch * SimParams::nPtsArrays;
-    if(err != cudaSuccess) throw std::runtime_error("GPU_Partition allocate");
-    nPtsPitch /= sizeof(t_PointReal);
+    CUDA_CHECK(cudaMallocPitch(&pparams.buffer_pts, &pparams.pitch_pts, pts_buffer_requested, SimParams::nPtsArrays));
+
+    total_allocated += pparams.pitch_pts * SimParams::nPtsArrays;
+    if(pparams.pitch_pts % sizeof(t_PointReal) != 0) throw std::runtime_error("pparams.pitch_pts % sizeof(t_PointReal) != 0");
+    pparams.pitch_pts /= sizeof(t_PointReal);
+
+
+    // points transfer buffer
+    //points_transfer_buffer_fraction
+    pparams.point_transfer_buffer_capacity = (size_t)(SimParams::points_transfer_buffer_fraction * n_points_capacity);
+    pparams.point_transfer_buffer_capacity = std::max((size_t)100, pparams.point_transfer_buffer_capacity); // at least 100
+    const size_t transfer_buffer_alloc_size = sizeof(t_PointReal)*SimParams::nPtsArrays*pparams.point_transfer_buffer_capacity;
+
+    // point transfer buffers
+    for(int i=0;i<4;i++)
+    {
+        CUDA_CHECK(cudaMalloc(&pparams.point_transfer_buffer[i], transfer_buffer_alloc_size));
+        total_allocated += transfer_buffer_alloc_size;
+    }
+
 
     LOGR("allocate: P {}-{}:  requested grid {} x {} = {}; gird pitch {}; Pts-req {}; pts-pitch {}; total alloc {:.2} Mb",
-                 PartitionID, Device,
-                 gx, gy, gx*gy,
-                 nGridPitch,
-                 n_points_capacity, nPtsPitch,
+                 pparams.PartitionID, Device, gx_requested, gy, gx_requested*gy,
+                 pparams.pitch_grid, n_points_capacity, pparams.pitch_pts,
                  (double)total_allocated/(1024*1024));
 }
 

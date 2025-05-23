@@ -1,4 +1,6 @@
 #include "parameters_sim.h"
+#include "gpu_partition.h"
+#include "helper_math.cuh"
 
 
 using namespace Eigen;
@@ -26,26 +28,27 @@ constexpr uint32_t error_code_grid_p2g_nan_mass = 0x0200;   // during P2G writin
 constexpr uint32_t error_code_grid_nan = 0x0400;            // velocity on the grid is NaN (during grid update)
 
 
-__device__ int gpu_disabled_points_count;
+__device__ unsigned gpu_disabled_points_count[8];    // in case if we have 8 partitions on the same device
 __constant__ SimParams gprms;
 
-// device-side parameters that are typically reused in kernels
-__constant__ t_PointReal *partition_buffer_pts;
-__constant__ t_GridReal *partition_buffer_grid;
-__constant__ size_t partition_gridX, partition_pitch_grid, partition_count_pts, partition_pitch_pts;
-__constant__ uint8_t *partition_grid_status;
 
 
-__global__ void partition_kernel_p2g()
+
+__global__ void partition_kernel_p2g(const PartitionParams pparams)
 {
     const size_t pt_idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if(pt_idx >= partition_count_pts) return;
-
-    uint32_t utility_data = *reinterpret_cast<const uint32_t*>(&partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
+    if(pt_idx >= pparams.count_pts) return;
 
     const double &h = gprms.cellsize;
     const int &gridY = gprms.GridYTotal;
+    const unsigned &halo = gprms.GridHaloSize;
+    const size_t &pitch = pparams.pitch_pts;
+    const size_t &gridX_offset = pparams.gridX_offset;
+    t_PointReal* const &bpts = pparams.buffer_pts;
+    t_GridReal* const &bgrid = pparams.buffer_grid;
+
+    const uint32_t utility_data = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::idx_utility_data]);
+    if(utility_data & status_disabled) return; // point is disabled
 
     // pull point data from SOA
     PointVector2r pos, velocity;
@@ -53,23 +56,23 @@ __global__ void partition_kernel_p2g()
 
     for(int i=0; i<SimParams::dim; i++)
     {
-        pos[i] = partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::posx+i)];
-        velocity[i] = partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::velx+i)];
+        pos[i] = bpts[pt_idx + pitch*(SimParams::posx+i)];
+        velocity[i] = bpts[pt_idx + pitch*(SimParams::velx+i)];
         for(int j=0; j<SimParams::dim; j++)
         {
-            Fe(i,j) = partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::Fe00 + i*SimParams::dim + j)];
-            Bp(i,j) = partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::Bp00 + i*SimParams::dim + j)];
+            Fe(i,j) = bpts[pt_idx + pitch*(SimParams::Fe00 + i*SimParams::dim + j)];
+            Bp(i,j) = bpts[pt_idx + pitch*(SimParams::Bp00 + i*SimParams::dim + j)];
         }
     }
-    t_PointReal Jp_inv = partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_Jp_inv];
-    const t_PointReal thickness = partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_thickness];
-    double particle_mass = gprms.ParticleMass * thickness;
+    const t_PointReal Jp_inv = bpts[pt_idx + pitch*SimParams::idx_Jp_inv];
+    const t_PointReal thickness = bpts[pt_idx + pitch*SimParams::idx_thickness];
+    const double particle_mass = gprms.ParticleMass * thickness;
 
-    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::integer_cell_idx]);
+    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::integer_cell_idx]);
     Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
 
+    // perform computation
     const PointMatrix2r PFt = KirchhoffStress_Wolper(Fe);
-    // PFt = Water(buffer_pts[pt_idx + pitch_pts*SimParams::idx_Jp_inv]);
 //    PointMatrix2r subterm2 = particle_mass*Bp - (gprms.dt_vol_Dpinv)*PFt;
 
     // version that accounts for surface density change
@@ -86,66 +89,72 @@ __global__ void partition_kernel_p2g()
             const PointVector2r dpos((i-pos[0])*h, (j-pos[1])*h);
             const PointVector2r incV = Wip*(velocity*particle_mass + subterm2*dpos);
 
-            // the x-index of the cell takes into accout the partition's offset of the gird fragment
-            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0])*gridY;
+            // index of the cell takes into accout the partition's offset of the gird fragment
+            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
 
             // distribute values to the grid (mass and momentum)
-            atomicAdd(&partition_buffer_grid[SimParams::grid_idx_mass*partition_pitch_grid + idx_gridnode], (t_GridReal)incM);
-            atomicAdd(&partition_buffer_grid[SimParams::grid_idx_px*partition_pitch_grid + idx_gridnode], (t_GridReal)incV[0]);
-            atomicAdd(&partition_buffer_grid[SimParams::grid_idx_py*partition_pitch_grid + idx_gridnode], (t_GridReal)incV[1]);
+            atomicAdd(&bgrid[SimParams::grid_idx_mass*pparams.pitch_grid + idx_gridnode], (t_GridReal)incM);
+            atomicAdd(&bgrid[SimParams::grid_idx_px*pparams.pitch_grid + idx_gridnode], (t_GridReal)incV[0]);
+            atomicAdd(&bgrid[SimParams::grid_idx_py*pparams.pitch_grid + idx_gridnode], (t_GridReal)incV[1]);
 
             if(isnan(incV[0]) || isnan(incV[1])) gpu_error_indicator |= error_code_grid_p2g_nan_vel;
             if(isnan(incM)) gpu_error_indicator |= error_code_grid_p2g_nan_mass;
         }
 
-    // check if a point is out of bounds of the grid box
-    if(cell_i[0] < 1 || cell_i[1] < 1 || cell_i[0] > (partition_gridX-2) || cell_i[1] > gridY-2)
+    // check if a point is out of bounds of the local grid partition
+    unsigned lboundX = 1;
+    if(pparams.gridX_offset > gprms.GridHaloSize) lboundX += (pparams.gridX_offset - gprms.GridHaloSize);
+    unsigned hboundX = pparams.partition_gridX + pparams.gridX_offset - 2 + gprms.GridHaloSize;
+    if(hboundX > gprms.GridXTotal) hboundX = gprms.GridXTotal - 2;
+
+    if(cell_i[0] < lboundX || cell_i[1] < 1 || cell_i[0] > hboundX || cell_i[1] > gridY-2)
         gpu_error_indicator |= error_code_point_left_area;
 }
 
 
 
 
-__global__ void partition_kernel_update_nodes(const t_PointReal simulation_time)
+__global__ void partition_kernel_update_nodes(const PartitionParams pparams, const t_PointReal simulation_time)
 {
     const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    const size_t nNodes = partition_gridX * gprms.GridYTotal;
+    const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
     if(idx >= nNodes) return;
 
     const int &gridY = gprms.GridYTotal;
+    const unsigned &halo = gprms.GridHaloSize;
+    const size_t &pitch_grid = pparams.pitch_grid;
+    t_GridReal* const &bgrid = pparams.buffer_grid;
 
-    const t_GridReal mass = partition_buffer_grid[SimParams::grid_idx_mass*partition_pitch_grid + idx];
+    const double &cellsize = gprms.cellsize;
+    const double &dt = gprms.InitialTimeStep;               // time step
+
+    const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
     if(mass == 0) return;
 
-    t_GridReal vx = partition_buffer_grid[SimParams::grid_idx_px*partition_pitch_grid + idx];
-    t_GridReal vy = partition_buffer_grid[SimParams::grid_idx_py*partition_pitch_grid + idx];
+    t_GridReal vx = bgrid[SimParams::grid_idx_px*pitch_grid + idx];
+    t_GridReal vy = bgrid[SimParams::grid_idx_py*pitch_grid + idx];
 
-    // const double &dt = gprms.InitialTimeStep;
-    const double &cellsize = gprms.cellsize;
-    const double &vmax = gprms.vmax;
-
-    const Vector2i gi(idx/gridY, idx%gridY);   // integer x-y index of the grid node
+    const Vector2i gi(idx/gridY+pparams.gridX_offset-halo, idx%gridY);   // integer x-y index of the grid node
     const GridVector2r gnpos = gi.cast<t_GridReal>()*cellsize;    // position of the grid node in the whole grid
 
     GridVector2r momentum(vx, vy);  // at this point it is momentum
     GridVector2r velocity = momentum/mass;
 
-    uint8_t is_modeled_area = partition_grid_status[idx];
+    uint8_t is_modeled_area = pparams.buffer_grid_regions[idx];
     if(is_modeled_area != 100)
     {
         velocity.setZero();
-        partition_buffer_grid[SimParams::grid_idx_fx*partition_pitch_grid + idx] += momentum[0];
-        partition_buffer_grid[SimParams::grid_idx_fy*partition_pitch_grid + idx] += momentum[1];
+        bgrid[SimParams::grid_idx_fx*pitch_grid + idx] += momentum[0];
+        bgrid[SimParams::grid_idx_fy*pitch_grid + idx] += momentum[1];
     }
     else
     {
         //grid_water_current
-        t_GridReal vcx = partition_buffer_grid[SimParams::grid_idx_current_vx*partition_pitch_grid + idx];
-        t_GridReal vcy = partition_buffer_grid[SimParams::grid_idx_current_vy*partition_pitch_grid + idx];
+        t_GridReal vcx = bgrid[SimParams::grid_idx_current_vx*pitch_grid + idx];
+        t_GridReal vcy = bgrid[SimParams::grid_idx_current_vy*pitch_grid + idx];
 
         GridVector2r v_w(vcx, vcy);
         v_w *= (1+min(simulation_time/(3600*2), 2.));
-        const double &dt = gprms.InitialTimeStep;               // time step
         const double kL = gprms.waterDragEffectiveLinear * dt; // linear param
         const double kQp = gprms.waterDragEffectiveQuadratic * dt; // quadratic
 
@@ -159,30 +168,37 @@ __global__ void partition_kernel_update_nodes(const t_PointReal simulation_time)
     }
 
     // write the updated grid velocity back to memory
-    if(velocity.squaredNorm() > vmax*vmax*0.1) velocity.setZero();
-    partition_buffer_grid[SimParams::grid_idx_px*partition_pitch_grid + idx] = velocity[0];
-    partition_buffer_grid[SimParams::grid_idx_py*partition_pitch_grid + idx] = velocity[1];
+    if(velocity.squaredNorm() > gprms.vmax*gprms.vmax*0.5) velocity.setZero();
+    bgrid[SimParams::grid_idx_px*pitch_grid + idx] = velocity[0];
+    bgrid[SimParams::grid_idx_py*pitch_grid + idx] = velocity[1];
 
     if(isnan(velocity[0]) || isnan(velocity[1])) gpu_error_indicator |= error_code_grid_nan;
 }
 
 
 
-__global__ void partition_kernel_g2p(const bool recordPQ)
+__global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ)
 {
     const size_t pt_idx = (size_t) blockIdx.x * blockDim.x + threadIdx.x;
-    if(pt_idx >= partition_count_pts) return;
+    if(pt_idx >= pparams.count_pts) return;
 
-    // skip if a point is disabled
-    uint32_t utility_data = *reinterpret_cast<uint32_t*>(&partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
+    const unsigned &halo = gprms.GridHaloSize;
+    const size_t &pitch_pts = pparams.pitch_pts;
+    const size_t &pitch_grid = pparams.pitch_grid;
+    const size_t &gridX_offset = pparams.gridX_offset;
+    t_PointReal* const &bpts = pparams.buffer_pts;
+    t_GridReal* const &bgrid = pparams.buffer_grid;
 
     const double &h_inv = gprms.cellsize_inv;
     const double &dt = gprms.InitialTimeStep;
     const double &mu = gprms.mu;
     const double &kappa = gprms.kappa;
     const int &gridY = gprms.GridYTotal;
-    const int &gridX = gprms.GridXTotal;
+    const int &gridXTotal = gprms.GridXTotal;
+
+    // skip if a point is disabled
+    uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::idx_utility_data]);
+    if(utility_data & status_disabled) return; // point is disabled
 
     PointVector2r pos;
     PointMatrix2r Fe;
@@ -190,18 +206,19 @@ __global__ void partition_kernel_g2p(const bool recordPQ)
     // pull point data from SOA
     for(int i=0; i<SimParams::dim; i++)
     {
-        pos[i] = partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::posx+i)];
+        pos[i] = bpts[pt_idx + pitch_pts*(SimParams::posx+i)];
         for(int j=0; j<SimParams::dim; j++)
         {
-            Fe(i,j) = partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::Fe00 + i*SimParams::dim + j)];
+            Fe(i,j) = bpts[pt_idx + pitch_pts*(SimParams::Fe00 + i*SimParams::dim + j)];
         }
     }
-    const t_PointReal initial_thickness = partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_thickness];
-    t_PointReal Jp_inv = partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_Jp_inv];
+    const t_PointReal initial_thickness = bpts[pt_idx + pitch_pts*SimParams::idx_thickness];
+    t_PointReal Jp_inv = bpts[pt_idx + pitch_pts*SimParams::idx_Jp_inv];
 
-    uint32_t cell = *reinterpret_cast<const uint32_t*>(&partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::integer_cell_idx]);
+    uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::integer_cell_idx]);
     // coords of grid node for point
     Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
+
 
     // optimized method of computing the quadratic weight function without conditional operators
     PointArray2r ww[3];
@@ -209,44 +226,50 @@ __global__ void partition_kernel_g2p(const bool recordPQ)
 
     PointVector2r p_velocity;
     PointMatrix2r p_Bp;
-    p_velocity.setZero(); p_Bp.setZero();
+    p_velocity.setZero();
+    p_Bp.setZero();
 
+    // pull velocity from the grid
     for (int i = -1; i <= 1; i++)
         for (int j = -1; j <= 1; j++)
         {
             PointVector2r dpos = PointVector2r(i, j) - pos;
             t_PointReal weight = ww[i+1][0]*ww[j+1][1];
 
-            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0])*gridY; // grid node index within the 3x3 loop
+            // grid node index within the 3x3 loop
+            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
 
             PointVector2r node_velocity;
-            node_velocity[0] = (t_PointReal)partition_buffer_grid[SimParams::grid_idx_px*partition_pitch_grid + idx_gridnode];
-            node_velocity[1] = (t_PointReal)partition_buffer_grid[SimParams::grid_idx_py*partition_pitch_grid + idx_gridnode];
+            node_velocity[0] = (t_PointReal)bgrid[SimParams::grid_idx_px*pitch_grid + idx_gridnode];
+            node_velocity[1] = (t_PointReal)bgrid[SimParams::grid_idx_py*pitch_grid + idx_gridnode];
             p_velocity += weight * node_velocity;
-            p_Bp += (4.f*h_inv*weight) * (node_velocity*dpos.transpose());
+            p_Bp += (4.*h_inv*weight) * (node_velocity*dpos.transpose());
         }
 
     // Advection and update of the deformation gradient
     pos += p_velocity * (dt*h_inv); // position is in local cell coordinates [-0.5 to 0.5]
 
+    // check if there is an error
     if(isnan(p_velocity[0]) || isnan(p_velocity[1])) gpu_error_indicator |= error_code_point_vel_nan;
     if(isnan(pos[0]) || isnan(pos[1])) gpu_error_indicator |= error_code_point_pos_nan;
     if(isnan(p_Bp(0,0)) || isnan(p_Bp(1,0)) || isnan(p_Bp(0,1)) || isnan(p_Bp(1,1))) gpu_error_indicator |= error_code_point_Bp_nan;
 
 
     // encode the position of the point as coordinates + cell index
+    // if a point moves to the next cell, account for the change
     bool cell_updated = false;
     if(pos.x() > 0.5) { pos.x() -= 1.0; cell_i.x()++; cell_updated = true; }
     else if(pos.x() < -0.5) { pos.x() += 1.0; cell_i.x()--; cell_updated = true; }
     if(pos.y() > 0.5) { pos.y() -= 1.0; cell_i.y()++; cell_updated = true; }
     else if(pos.y() < -0.5) { pos.y() += 1.0; cell_i.y()--; cell_updated = true; }
 
+    // this allows the points to leave the simulation area and become disabled
     if(cell_updated)
     {
-        if(cell_i.x() <= 1 || cell_i.x() >= gridX-2 || cell_i.y() <= 1 || cell_i.y() >= gridY-2)
+        if(cell_i.x() <= 1 || cell_i.x() >= gprms.GridXTotal-2 || cell_i.y() <= 1 || cell_i.y() >= gridY-2)
         {
             utility_data |= status_disabled;
-            atomicAdd(&gpu_disabled_points_count, 1);
+            atomicAdd(&gpu_disabled_points_count[pparams.PartitionID], 1);
         }
     }
 
@@ -254,7 +277,7 @@ __global__ void partition_kernel_g2p(const bool recordPQ)
     if(pos.x() > 0.5 || pos.x() < -0.5 || pos.y() > 0.5 || pos.y() < -0.5)
         gpu_error_indicator |= error_code_point_jump_cells;
 
-    Fe = (PointMatrix2r::Identity() + dt*p_Bp) * Fe;     // p.Bp is the gradient of the velocity vector (it seems)
+    Fe = (PointMatrix2r::Identity() + dt*p_Bp) * Fe;     // Bp plays the role of the gradient of the velocity vector
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
 
     t_PointReal Je_tr, p_tr, q_tr;
@@ -268,39 +291,37 @@ __global__ void partition_kernel_g2p(const bool recordPQ)
     if(utility_data & status_crushed)
     {
         Wolper_Drucker_Prager(initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
-
     }
-
 
 
     // distribute the values of p back into GPU memory: pos, velocity, BP, Fe, Jp_inv, PQ
     for(int i=0; i<SimParams::dim; i++)
     {
-        partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::posx+i)] = pos[i];
-        partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::velx+i)] = p_velocity[i];
+        bpts[pt_idx + pitch_pts*(SimParams::posx+i)] = pos[i];
+        bpts[pt_idx + pitch_pts*(SimParams::velx+i)] = p_velocity[i];
         for(int j=0; j<SimParams::dim; j++)
         {
-            partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::Fe00 + i*SimParams::dim + j)] = Fe(i,j);
-            partition_buffer_pts[pt_idx + partition_pitch_pts*(SimParams::Bp00 + i*SimParams::dim + j)] = p_Bp(i,j);
+            bpts[pt_idx + pitch_pts*(SimParams::Fe00 + i*SimParams::dim + j)] = Fe(i,j);
+            bpts[pt_idx + pitch_pts*(SimParams::Bp00 + i*SimParams::dim + j)] = p_Bp(i,j);
         }
     }
 
-    partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_Jp_inv] = Jp_inv;
+    bpts[pt_idx + pitch_pts*SimParams::idx_Jp_inv] = Jp_inv;
 
     // save crushed/disabled status
-    *reinterpret_cast<uint32_t*>(&partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_utility_data]) = utility_data;
+    *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::idx_utility_data]) = utility_data;
 
     if(cell_updated)
     {
         cell = ((uint32_t)cell_i[1] << 16) | (uint32_t)cell_i[0];
-        *reinterpret_cast<uint32_t*>(&partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::integer_cell_idx]) = cell;
+        *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::integer_cell_idx]) = cell;
     }
 
     // upon request, PQ are recorded for visualization
     if(recordPQ)
     {
-        partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_P] = p_tr;
-        partition_buffer_pts[pt_idx + partition_pitch_pts*SimParams::idx_Q] = q_tr;
+        bpts[pt_idx + pitch_pts*SimParams::idx_P] = p_tr;
+        bpts[pt_idx + pitch_pts*SimParams::idx_Q] = q_tr;
     }
 }
 

@@ -51,17 +51,34 @@ bool icy::Model::Step()
     // print out timings
     LOGR("{:^3s} {:^8s} {:^8s} {:^7s} | {:^5s} {:^5s} {:^5s} | {:^5s} {:^5s} {:^5s} {:^5s} {:^5s} | {:^6s}",
                  "P-D",  "pts", "free", "dis",  "p2g",  "s2",  "S12",     "u",  "g2p", "psnt", "prcv","S36", "tot");
-    GPU_Partition &p = gpu.partitions.front();
-    p.normalize_timings(count_unupdated_steps);
-    LOGR("{:>1}-{:>1} {:>8} {:>8} {:>7} | {:>5.1f} {:>5.1f} {:>5.1f} | {:>5.1f} {:>5.1f} {:>5.1f} {:5.1f} {:5.1f} | {:>6.1f}",
-                 p.PartitionID, p.Device, p.nPts_partition, (p.nPtsPitch-p.nPts_partition), p.disabled_points_count,
-                 p.timing_10_P2GAndHalo, p.timing_20_acceptHalo, (p.timing_10_P2GAndHalo + p.timing_20_acceptHalo),
-                 p.timing_30_updateGrid, p.timing_40_G2P, p.timing_60_ptsSent, p.timing_70_ptsAccepted,
-                 (p.timing_30_updateGrid + p.timing_40_G2P + p.timing_60_ptsSent + p.timing_70_ptsAccepted),
-                 p.timing_stepTotal);
 
-    const float disabled_proportion = (float)p.disabled_points_count/p.nPts_partition;
-    if(disabled_proportion > SimParams::disabled_pts_proportion_threshold)
+
+    bool squeeze_required = false;
+    for(GPU_Partition &p : gpu.partitions)
+    {
+        p.normalize_timings(count_unupdated_steps);
+        LOGR("{0:>1}-{1:>1} {2:>8} {3:>8} {4:>7} | {5:>5.1f} {6:>5.1f} {7:>5.1f} | {8:>5.1f} {9:>5.1f} {10:>5.1f} {11:5.1f} {12:5.1f} | {13:>6.1f}",
+             p.pparams.PartitionID, // 0  P-D
+             p.Device,              // 1
+             p.pparams.count_pts,   // 2 pts
+             (p.pparams.pitch_pts-p.pparams.count_pts), // 3 free space
+             p.get_disabled_pts(),   // 4 disabled
+             p.timing_10_P2GAndHalo,    // 5
+             p.timing_20_acceptHalo,    // 6
+             (p.timing_10_P2GAndHalo + p.timing_20_acceptHalo),     // 7
+             p.timing_30_updateGrid,    // 8
+             p.timing_40_G2P,           // 9
+             p.timing_60_ptsSent,       // 10
+             p.timing_70_ptsAccepted,   // 11
+             (p.timing_30_updateGrid + p.timing_40_G2P + p.timing_60_ptsSent + p.timing_70_ptsAccepted),    // 12
+             p.timing_stepTotal);       // 13
+
+        const float disabled_proportion = (float)p.get_disabled_pts()/p.pparams.count_pts;
+        if(disabled_proportion > SimParams::disabled_pts_proportion_threshold) squeeze_required = true;
+    }
+
+
+    if(squeeze_required)
     {
         LOGV("Model::Step() squeezing and sorting HSSOA");
         gpu.hssoa.RemoveDisabledAndSort(prms.GridYTotal);

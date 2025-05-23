@@ -64,6 +64,8 @@ void GPU_Implementation5::initialize()
             CUDA_CHECK(cudaDeviceEnablePeerAccess(i, 0));
         }
     }
+    LOGV("GPU_Implementation5::initialize() completed");
+    LOGR("sizeof(PartitionParams) = {}\n", sizeof(PartitionParams));
 }
 
 void GPU_Implementation5::split_hssoa_into_partitions()
@@ -73,38 +75,37 @@ void GPU_Implementation5::split_hssoa_into_partitions()
     const unsigned &nPartitions = model->prms.nPartitions;
 
     unsigned nPointsProcessed = 0;
-    partitions[0].GridX_offset = 0;
+    partitions[0].pparams.gridX_offset = 0;
 
     for(unsigned partition_idx=0; partition_idx<nPartitions; partition_idx++)
     {
         GPU_Partition &p = partitions[partition_idx];
-        p.disabled_points_count = 0;
         const unsigned nPartitionsRemaining = nPartitions - partition_idx;
-        p.nPts_partition = (hssoa.size - nPointsProcessed)/nPartitionsRemaining; // points in this partition
+        p.pparams.count_pts = (hssoa.size - nPointsProcessed)/nPartitionsRemaining; // points in this partition
 
         // find the index of the first point with x-index cellsIdx
         if(partition_idx < nPartitions-1)
         {
-            SOAIterator it2 = hssoa.begin() + (nPointsProcessed + p.nPts_partition);
+            SOAIterator it2 = hssoa.begin() + (nPointsProcessed + p.pparams.count_pts);
             const unsigned cellsIdx = it2->getCellX();
-            p.GridX_partition = cellsIdx - p.GridX_offset;
-            partitions[partition_idx+1].GridX_offset = cellsIdx;
+            p.pparams.partition_gridX = cellsIdx - p.pparams.gridX_offset;
+            partitions[partition_idx+1].pparams.gridX_offset = cellsIdx;
         }
         else if(partition_idx == nPartitions-1)
         {
             // the last partition spans the rest of the grid along the x-axis
-            p.GridX_partition = GridXTotal - p.GridX_offset;
+            p.pparams.gridX_offset = GridXTotal - p.pparams.gridX_offset;
         }
 
 #pragma omp parallel for
-        for(int j=nPointsProcessed;j<(nPointsProcessed+p.nPts_partition);j++)
+        for(int j=nPointsProcessed;j<(nPointsProcessed+p.pparams.count_pts);j++)
         {
             point_partitions[j] = (uint8_t)partition_idx;
         }
 
-        LOGR("split: P {}; grid_offset {}; grid_size {}, npts {}",
-                     partition_idx, p.GridX_offset, p.GridX_partition, p.nPts_partition);
-        nPointsProcessed += p.nPts_partition;
+        LOGR("split: P {0:}; grid_offset {1:}; grid_size {2:}, npts {3:}",
+                     partition_idx, p.pparams.gridX_offset, p.pparams.partition_gridX, p.pparams.count_pts);
+        nPointsProcessed += p.pparams.count_pts;
     }
     LOGV("split_hssoa_into_partitions() done");
 }
@@ -207,7 +208,8 @@ void GPU_Implementation5::allocate_host_arrays_grid()
 
 void GPU_Implementation5::allocate_host_arrays_points()
 {
-    hssoa.Allocate(model->prms.nPtsInitial);
+    const size_t requested_capacity = (size_t)(double(model->prms.nPtsInitial)*(1.+SimParams::extra_space_pts));
+    hssoa.Allocate(requested_capacity);
     point_colors_rgb.resize(model->prms.nPtsInitial);
     point_partitions.resize(model->prms.nPtsInitial);
 }
@@ -222,9 +224,9 @@ void GPU_Implementation5::allocate_device_arrays()
 
     auto it = std::max_element(partitions.begin(), partitions.end(),
                                [](const GPU_Partition &p1, const GPU_Partition &p2)
-                               {return p1.GridX_partition < p2.GridX_partition;});
-    unsigned max_GridX_size = it->GridX_partition;
-    unsigned GridX_size = std::min((unsigned)(max_GridX_size*1.5), (unsigned)model->prms.GridXTotal);
+                               {return p1.pparams.partition_gridX < p2.pparams.partition_gridX;});
+    size_t max_GridX_size = it->pparams.partition_gridX;
+    size_t GridX_size = std::min((size_t)(max_GridX_size*1.5), (size_t)model->prms.GridXTotal);
     for(GPU_Partition &p : partitions) p.allocate(pts_reserve, GridX_size);
 }
 
@@ -239,7 +241,7 @@ void GPU_Implementation5::transfer_to_device()
     {
         p.transfer_points_from_soa_to_device(hssoa, points_uploaded);
         p.transfer_grid_data_to_device(this);
-        points_uploaded += p.nPts_partition;
+        points_uploaded += p.pparams.count_pts;
     }
     spdlog::info("transfer_ponts_to_device() done; transferred points {}", points_uploaded);
 }
@@ -248,21 +250,21 @@ void GPU_Implementation5::transfer_to_device()
 
 void GPU_Implementation5::transfer_from_device(const int elapsed_cycles)
 {
-    unsigned offset_pts = 0;
+    size_t offset_pts = 0;
     for(int i=0;i<partitions.size();i++)
     {
         GPU_Partition &p = partitions[i];
-        int capacity_required = offset_pts + p.nPts_partition;
+        const size_t capacity_required = offset_pts + p.pparams.count_pts;
         if(capacity_required > hssoa.capacity)
         {
             LOGR("transfer_from_device(): capacity {} exceeded ({}) when transferring P {}",
-                             hssoa.capacity, capacity_required, p.PartitionID);
+                             hssoa.capacity, capacity_required, p.pparams.PartitionID);
             throw std::runtime_error("transfer_from_device capacity exceeded");
         }
         p.transfer_from_device(hssoa, offset_pts, grid_boundary_forces);
-        offset_pts += p.nPts_partition;
+        offset_pts += p.pparams.count_pts;
     }
-    hssoa.size = offset_pts;
+    hssoa.size = (unsigned)offset_pts;
 
     // wait until everything is copied to host
     for(int i=0;i<partitions.size();i++)
@@ -274,7 +276,7 @@ void GPU_Implementation5::transfer_from_device(const int elapsed_cycles)
         {
             // throw std::runtime_error("error code");
             this->error_code = p.error_code;
-            LOGR("P {}; error code {}; this error code {}", p.PartitionID, p.error_code, this->error_code);
+            LOGR("P {}; error code {}; this error code {}", p.pparams.PartitionID, p.error_code, this->error_code);
         }
     }
 #pragma omp parallel for

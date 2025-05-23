@@ -7,6 +7,8 @@
 void SimParams::Reset()
 {
     nPartitions = 1;
+    GridHaloSize = 10;
+
     UseWindData = false;
     UseCurrentData = false;
     SimulationStartUnixTime = 0;

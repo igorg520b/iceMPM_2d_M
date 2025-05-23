@@ -92,8 +92,8 @@ FetchContent_MakeAvailable(PBrowser)
 
         simulation/gpu_partition.h
         simulation/gpu_partition.cpp
-        simulation/kernels.cuh
-        
+        simulation/kernels.cu
+
         simulation/data_manager/snapshotmanager.h
         simulation/data_manager/snapshotmanager.cpp
         simulation/data_manager/windandcurrentinterpolator.cpp
@@ -103,7 +103,7 @@ FetchContent_MakeAvailable(PBrowser)
         gui/colormap.h
         gui/colormap.cpp
     )
-    set_source_files_properties(simulation/gpu_partition.cpp PROPERTIES LANGUAGE CUDA)
+    set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
     
     message(${PBrowser_SOURCE_DIR})
     target_include_directories(gm2m PRIVATE ${PBrowser_SOURCE_DIR} ${PBrowser_SOURCE_DIR}/propertybrowser)
@@ -164,7 +164,6 @@ add_executable(cm2m
     simulation/gpu_implementation5.h
     simulation/gpu_implementation5.cpp
 
-
     simulation/hssoa/host_side_soa.h
     simulation/hssoa/host_side_soa.cpp
     simulation/hssoa/proxypoint2d.h
@@ -172,8 +171,7 @@ add_executable(cm2m
 
     simulation/gpu_partition.h
     simulation/gpu_partition.cpp
-    simulation/kernels.cuh
-
+    simulation/kernels.cu
 
     simulation/data_manager/snapshotmanager.h
     simulation/data_manager/snapshotmanager.cpp
@@ -184,9 +182,8 @@ add_executable(cm2m
 
     gui/colormap.h
     gui/colormap.cpp
-
 )
-set_source_files_properties(simulation/gpu_partition.cpp PROPERTIES LANGUAGE CUDA)
+set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
 
 set_target_properties(cm2m PROPERTIES CUDA_ARCHITECTURES "80;89")
 set_target_properties(cm2m PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
@@ -276,13 +273,14 @@ if(BUILD_POSTPROCESSOR)
 
         simulation/gpu_partition.h
         simulation/gpu_partition.cpp
-        simulation/kernels.cuh
+        simulation/kernels.cu
 
         simulation/data_manager/snapshotmanager.h
         simulation/data_manager/snapshotmanager.cpp
         simulation/data_manager/windandcurrentinterpolator.cpp
         simulation/data_manager/windandcurrentinterpolator.h
     )
+    set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
 
     target_include_directories(pp PRIVATE postprocessor postprocessor/window postprocessor/vtk gui External)
     target_include_directories(pp PRIVATE simulation simulation/hssoa simulation/data_manager)
