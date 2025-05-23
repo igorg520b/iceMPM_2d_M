@@ -46,14 +46,11 @@ void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const int point_idx
 
 void GPU_Partition::check_error_code()
 {
-    cudaError_t err;
-    err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("check_error_code() set");
+    CUDA_CHECK(cudaSetDevice(Device));
 
     // transfer error code
     cudaDeviceSynchronize();
-    err = cudaMemcpyFromSymbol(&error_code, gpu_error_indicator, sizeof(error_code), 0, cudaMemcpyDeviceToHost);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_from_device");
+    CUDA_CHECK(cudaMemcpyFromSymbol(&error_code, gpu_error_indicator, sizeof(error_code), 0, cudaMemcpyDeviceToHost));
     if(error_code)
     {
         LOGR("error {:#x}", error_code);
@@ -72,7 +69,8 @@ void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, int p
     {
         t_PointReal* const ptr_dst = pparams.buffer_pts + i*pparams.pitch_pts;
         t_PointReal* const ptr_src = hssoa.getPointerToLine(i) + point_idx_offset;
-        CUDA_CHECK(cudaMemcpyAsync(ptr_dst, ptr_src, nPts_partition*sizeof(t_PointReal), cudaMemcpyHostToDevice, streamCompute));
+        CUDA_CHECK(cudaMemcpyAsync(ptr_dst, ptr_src, pparams.count_pts*sizeof(t_PointReal),
+                                   cudaMemcpyHostToDevice, streamCompute));
     }
 
     // write the disabled points count (a bit overcompicated since we use the array of 8 per device)
@@ -99,6 +97,54 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
     err = cudaMemcpyAsync(grid_status_array, &gpu->grid_status_buffer[n_offset_elems],
                           n_transfer_elems*sizeof(uint8_t), cudaMemcpyHostToDevice, streamCompute);
 }
+
+
+/*
+void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* impl)
+{
+    const int gy = impl->model->prms.GridYTotal;
+    const int halo = impl->model->prms.GridHaloSize;
+
+    const int total_columns = partition_gridX + 2 * halo;
+    const size_t total_bytes = gy * total_columns * sizeof(uint8_t);
+
+    // Zero the entire device buffer to be safe
+    CUDA_CHECK(cudaMemset(buffer_grid_regions, 0, total_bytes));
+
+    // Determine source offset in global buffer
+    int global_x_start = static_cast<int>(gridX_offset) - halo;
+
+    // Clamp for first and last partitions
+    int local_halo_left = 0;
+    int copy_columns = partition_gridX + 2 * halo;
+
+    if (global_x_start < 0) {
+        // First partition: left halo would underflow, so we shift
+        local_halo_left = -global_x_start;  // how many halo columns to skip
+        global_x_start = 0;
+        copy_columns -= local_halo_left;    // reduce columns to copy
+    }
+
+    if (global_x_start + copy_columns > impl->model->prms.GridXTotal) {
+        // Last partition: right halo would overflow
+        int over = global_x_start + copy_columns - impl->model->prms.GridXTotal;
+        copy_columns -= over;
+        // No need to shift anything here, just avoid reading OOB
+    }
+
+    // Copy each column separately to handle 2D layout in 1D buffer
+    for (int i = 0; i < copy_columns; ++i) {
+        int src_x = global_x_start + i;
+        int dst_x = local_halo_left + i;
+
+        const uint8_t* src_ptr = impl->grid_status_buffer.data() + src_x * gy;
+        uint8_t* dst_ptr = buffer_grid_regions + dst_x * gy;
+
+        CUDA_CHECK(cudaMemcpy(dst_ptr, src_ptr, gy * sizeof(uint8_t), cudaMemcpyHostToDevice));
+    }
+}
+*/
+
 
 
 void GPU_Partition::update_constants()
