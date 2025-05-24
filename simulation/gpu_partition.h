@@ -19,7 +19,7 @@
 do {                                                                                          \
         cudaError_t err = call;                                                                   \
         if (err != cudaSuccess) {                                                                 \
-            spdlog::error("CUDA error in {}:{} {} (code {}): {}", __FILE__, __LINE__, #call, err, \
+            LOGR("CUDA error in {}:{} {} (code {}): {}", __FILE__, __LINE__, #call, err, \
                           cudaGetErrorString(err));                                               \
             throw std::runtime_error(std::string("CUDA error in " #call ": ") +                   \
                                      cudaGetErrorString(err));                                    \
@@ -40,13 +40,15 @@ struct PartitionParams
     t_GridReal *buffer_grid;  // *grid_array
     uint8_t *buffer_grid_regions;     // grid_status_array
 
-    t_GridReal *halo_transfer_buffer[2];    // computed from *buffer_grid during allocation
 
     t_PointReal *point_transfer_buffer[4]; // GPU-side buffers to send/receive points between adj. partitions
     size_t point_transfer_buffer_capacity;  // max points it can hold
 
     size_t pitch_grid, count_pts, pitch_pts;
     size_t partition_gridX, gridX_offset;
+    size_t gridX_alloc_capacity;    // max resize capacity (in X-direction) excluding halos
+
+    t_GridReal *halo_transfer_buffer[2];    // computed from *buffer_grid during allocation
 };
 
 
@@ -116,9 +118,9 @@ private:
 };
 
 
-
 extern __device__ unsigned gpu_disabled_points_count[8];
 extern __device__ uint32_t gpu_error_indicator;
+extern __constant__ SimParams gprms;
 
 // kernels
 __global__ void partition_kernel_p2g(const PartitionParams pparams);

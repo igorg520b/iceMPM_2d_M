@@ -7,6 +7,44 @@
 SimParams *GPU_Partition::prms;
 
 
+GPU_Partition::GPU_Partition()
+{
+    initialized = false;
+    error_code = 0;
+    tmp_accumulated_forces = nullptr;
+
+    for(int k=0;k<8;k++) disabled_points_count[k]=0;
+    pparams.count_pts = 0;
+    pparams.partition_gridX = 0;
+    pparams.gridX_offset = 0;
+
+    pparams.buffer_grid = nullptr;
+    pparams.buffer_pts = nullptr;
+    pparams.buffer_grid_regions = nullptr;
+}
+
+GPU_Partition::~GPU_Partition()
+{
+    cudaSetDevice(Device);
+
+    cudaEventDestroy(event_10_cycle_start);
+    cudaEventDestroy(event_20_grid_halo_sent);
+    cudaEventDestroy(event_30_halo_accepted);
+    cudaEventDestroy(event_40_grid_updated);
+    cudaEventDestroy(event_50_g2p_completed);
+    cudaEventDestroy(event_70_pts_sent);
+    cudaEventDestroy(event_80_pts_accepted);
+
+    cudaStreamDestroy(streamCompute);
+
+    cudaFree(pparams.buffer_grid);
+    cudaFree(pparams.buffer_pts);
+    cudaFree(pparams.buffer_grid_regions);
+
+    cudaFreeHost(tmp_accumulated_forces);
+    LOGR("Destructor invoked; partition {} on device {}", pparams.PartitionID, Device);
+}
+
 
 // =========================================  GPU_Partition class
 
@@ -38,7 +76,7 @@ void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const int point_idx
     LOGR("sizeof(gpu_disabled_points_count) = {}",sizeof(gpu_disabled_points_count));
 
     // transfer grid data (accumulated forces) to temporary buffers
-    const size_t tmp_bytes_transfer = 2*sizeof(t_GridReal)*prms->GridYTotal*(pparams.pitch_grid);
+    const size_t tmp_bytes_transfer = 2*sizeof(t_GridReal)*pparams.pitch_grid;
     t_GridReal* const ptr_src = pparams.buffer_grid + pparams.pitch_grid*SimParams::grid_idx_fx;
     CUDA_CHECK(cudaMemcpyAsync(tmp_accumulated_forces, ptr_src, tmp_bytes_transfer, cudaMemcpyDeviceToHost, streamCompute));
 }
@@ -87,63 +125,92 @@ void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, int p
 
 void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 {
-    cudaError_t err;
-    err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("transfer_grid_data_to_device");
+    CUDA_CHECK(cudaSetDevice(Device));
+    const int &gy = prms->GridYTotal;
+    const unsigned &halo = prms->GridHaloSize;
 
-    const size_t n_transfer_elems = GridX_partition*prms->GridYTotal;
-    const size_t n_offset_elems = this->GridX_offset*prms->GridYTotal;
+    // Clear the device buffer, including halos
+    const size_t grid_regions_size = sizeof(uint8_t) * gy * (pparams.gridX_alloc_capacity + 2 * halo);
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid_regions, 0, grid_regions_size, streamCompute));
 
-    err = cudaMemcpyAsync(grid_status_array, &gpu->grid_status_buffer[n_offset_elems],
-                          n_transfer_elems*sizeof(uint8_t), cudaMemcpyHostToDevice, streamCompute);
+    // Determine copy parameters
+    size_t transfer_width;
+    size_t src_offset_x;
+    size_t dst_offset_x;
+
+    if (pparams.PartitionID == 0)
+    {
+        src_offset_x = 0;
+        dst_offset_x = halo;
+
+        transfer_width = (prms->nPartitions == 1)
+                             ? pparams.partition_gridX
+                             : pparams.partition_gridX + halo;
+    }
+    else
+    {
+        src_offset_x = pparams.gridX_offset - halo;
+        dst_offset_x = 0;
+
+        transfer_width = (pparams.PartitionID == prms->nPartitions - 1)
+                             ? pparams.partition_gridX + halo
+                             : pparams.partition_gridX + 2 * halo;
+    }
+
+    const uint8_t* src = gpu->grid_status_buffer.data() + gy * src_offset_x;
+    uint8_t* dst = pparams.buffer_grid_regions + gy * dst_offset_x;
+
+    const size_t transfer_size = transfer_width * gy * sizeof(uint8_t);
+    CUDA_CHECK(cudaMemcpyAsync(dst, src, transfer_size, cudaMemcpyHostToDevice, streamCompute));
 }
 
 
-/*
-void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* impl)
+void GPU_Partition::update_current_field(const WindAndCurrentInterpolator &wac)
 {
-    const int gy = impl->model->prms.GridYTotal;
-    const int halo = impl->model->prms.GridHaloSize;
+    // transfer current velocity field from wac to device
+    CUDA_CHECK(cudaSetDevice(Device));
 
-    const int total_columns = partition_gridX + 2 * halo;
-    const size_t total_bytes = gy * total_columns * sizeof(uint8_t);
+    const int &gy = prms->GridYTotal;
+    const int &gx = prms->GridXTotal;
+    const unsigned &halo = prms->GridHaloSize;
 
-    // Zero the entire device buffer to be safe
-    CUDA_CHECK(cudaMemset(buffer_grid_regions, 0, total_bytes));
+    // Compute the transfer region
+    size_t transfer_width;
+    size_t src_offset_x;
+    size_t dst_offset_x;
 
-    // Determine source offset in global buffer
-    int global_x_start = static_cast<int>(gridX_offset) - halo;
 
-    // Clamp for first and last partitions
-    int local_halo_left = 0;
-    int copy_columns = partition_gridX + 2 * halo;
+    if (pparams.PartitionID == 0)
+    {
+        src_offset_x = 0;
+        dst_offset_x = halo;
 
-    if (global_x_start < 0) {
-        // First partition: left halo would underflow, so we shift
-        local_halo_left = -global_x_start;  // how many halo columns to skip
-        global_x_start = 0;
-        copy_columns -= local_halo_left;    // reduce columns to copy
+        transfer_width = (prms->nPartitions == 1)
+                             ? pparams.partition_gridX
+                             : pparams.partition_gridX + halo;
+    }
+    else
+    {
+        src_offset_x = pparams.gridX_offset - halo;
+        dst_offset_x = 0;
+
+        transfer_width = (pparams.PartitionID == prms->nPartitions - 1)
+                             ? pparams.partition_gridX + halo
+                             : pparams.partition_gridX + 2 * halo;
     }
 
-    if (global_x_start + copy_columns > impl->model->prms.GridXTotal) {
-        // Last partition: right halo would overflow
-        int over = global_x_start + copy_columns - impl->model->prms.GridXTotal;
-        copy_columns -= over;
-        // No need to shift anything here, just avoid reading OOB
-    }
+    const size_t transfer_size = transfer_width * gy * sizeof(t_GridReal);
 
-    // Copy each column separately to handle 2D layout in 1D buffer
-    for (int i = 0; i < copy_columns; ++i) {
-        int src_x = global_x_start + i;
-        int dst_x = local_halo_left + i;
+    // Compute source and destination pointers for vx and vy
+    const t_GridReal* src_vx = wac.current_flow_data.data() + gy * src_offset_x;
+    const t_GridReal* src_vy = wac.current_flow_data.data() + gx * gy + gy * src_offset_x;
 
-        const uint8_t* src_ptr = impl->grid_status_buffer.data() + src_x * gy;
-        uint8_t* dst_ptr = buffer_grid_regions + dst_x * gy;
+    t_GridReal* dst_vx = pparams.buffer_grid + pparams.pitch_grid * SimParams::grid_idx_current_vx + gy * dst_offset_x;
+    t_GridReal* dst_vy = pparams.buffer_grid + pparams.pitch_grid * SimParams::grid_idx_current_vy + gy * dst_offset_x;
 
-        CUDA_CHECK(cudaMemcpy(dst_ptr, src_ptr, gy * sizeof(uint8_t), cudaMemcpyHostToDevice));
-    }
+    CUDA_CHECK(cudaMemcpyAsync(dst_vx, src_vx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+    CUDA_CHECK(cudaMemcpyAsync(dst_vy, src_vy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
 }
-*/
 
 
 
@@ -154,81 +221,12 @@ void GPU_Partition::update_constants()
     CUDA_CHECK(cudaMemcpyToSymbol(gpu_error_indicator, &error_code, sizeof(error_code)));
     CUDA_CHECK(cudaMemcpyToSymbol(gprms, prms, sizeof(SimParams)));
 
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_buffer_pts, &pts_array, sizeof(t_PointReal*)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_buffer_grid, &grid_array, sizeof(t_GridReal*)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_gridX, &GridX_partition, sizeof(size_t)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_gridX_offset, &GridX_offset, sizeof(size_t)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_pitch_grid, &nGridPitch, sizeof(size_t)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_count_pts, &nPts_partition, sizeof(size_t)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_pitch_pts, &nPtsPitch, sizeof(size_t)));
-    CUDA_CHECK(cudaMemcpyToSymbol(partition_grid_status, &grid_status_array, sizeof(uint8_t*)));
-
-    LOGR("Constant symbols copied to device {}; partition {}", Device, PartitionID);
+    LOGR("Constant symbols copied to device {}; partition {}", Device, pparams.PartitionID);
 }
 
 
 
-void GPU_Partition::update_current_field(const WindAndCurrentInterpolator &wac)
-{
-    // transfer current velocity field from wac to device
 
-    cudaError_t err;
-    err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("update_current_field");
-
-    const int &gxp = GridX_partition;
-    const int &gx = prms->GridXTotal;
-    const int &gy = prms->GridYTotal;
-
-    const size_t transfer_size = gxp*gy*sizeof(t_GridReal);
-    err = cudaMemcpyAsync(grid_array + nGridPitch * SimParams::grid_idx_current_vx,
-                          wac.current_flow_data.data(),
-                          transfer_size, cudaMemcpyHostToDevice, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("update_current_field current vx");
-
-    err = cudaMemcpyAsync(grid_array + nGridPitch * SimParams::grid_idx_current_vy,
-                          wac.current_flow_data.data() + gx*gy,
-                          transfer_size, cudaMemcpyHostToDevice, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("update_current_field current vy");
-}
-
-
-
-GPU_Partition::GPU_Partition()
-{
-    initialized = false;
-    error_code = 0;
-    tmp_accumulated_forces = nullptr;
-
-    for(int k=0;k<8;k++) disabled_points_count[k]=0;
-    pparams.count_pts = 0;
-    pparams.partition_gridX = 0;
-    pparams.gridX_offset = 0;
-
-    pparams.buffer_grid = nullptr;
-    pparams.buffer_pts = nullptr;
-    pparams.buffer_grid_regions = nullptr;
-}
-
-GPU_Partition::~GPU_Partition()
-{
-    cudaSetDevice(Device);
-
-    cudaEventDestroy(event_10_cycle_start);
-    cudaEventDestroy(event_20_grid_halo_sent);
-    cudaEventDestroy(event_30_halo_accepted);
-    cudaEventDestroy(event_40_grid_updated);
-    cudaEventDestroy(event_50_g2p_completed);
-    cudaEventDestroy(event_70_pts_sent);
-    cudaEventDestroy(event_80_pts_accepted);
-
-    cudaStreamDestroy(streamCompute);
-
-    cudaFree(grid_array);
-    cudaFree(pts_array);
-    cudaFree(grid_status_array);
-    LOGR("Destructor invoked; partition {} on device {}", PartitionID, Device);
-}
 
 void GPU_Partition::initialize(int device, int partition)
 {
@@ -252,7 +250,8 @@ void GPU_Partition::initialize(int device, int partition)
 
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, Device);
-    LOGR("Partition {}: initialized dev {}; compute {}.{}", PartitionID, Device,deviceProp.major, deviceProp.minor);
+    LOGR("Partition {}: initialized dev {}; compute {}.{}",
+         pparams.PartitionID, Device, deviceProp.major, deviceProp.minor);
 }
 
 
@@ -263,7 +262,8 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     const int &gy = prms->GridYTotal;
     const unsigned &halo = prms->GridHaloSize;
 
-    LOGR("P{}-{} allocate; sub-grid {} x {}; sub-pts", PartitionID, Device, gx, gy, n_points_capacity);
+    LOGR("P{0:}-{1:} allocate; sub-grid {2:} x {3:}; sub-pts {4:}",
+         pparams.PartitionID, Device, gx_requested, gy, n_points_capacity);
 
     // grid
     size_t total_allocated = 0; // count what we allocated
@@ -273,6 +273,7 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     total_allocated += pparams.pitch_grid * SimParams::nGridArrays;
     if(pparams.pitch_grid % sizeof(t_GridReal) != 0) throw std::runtime_error("pparams.pitch_grid % sizeof(t_GridReal) != 0");
     pparams.pitch_grid /= sizeof(t_GridReal); // assume that this divides without remainder
+    pparams.gridX_alloc_capacity = gx_requested;
 
     pparams.halo_transfer_buffer[0] = pparams.buffer_grid + gy*(gx_requested+2*halo);
     pparams.halo_transfer_buffer[1] = pparams.buffer_grid + gy*(gx_requested+4*halo);
@@ -286,7 +287,7 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     // device-side buffer for force transfer form gird
     // tmp_accumulated_forces
     cudaFreeHost(tmp_accumulated_forces);
-    const size_t tmp_alloc_size = 2*sizeof(t_GridReal)*gy*(pparams.pitch_grid);
+    const size_t tmp_alloc_size = 2*sizeof(t_GridReal)*(pparams.pitch_grid);
     CUDA_CHECK(cudaMallocHost(&tmp_accumulated_forces, tmp_alloc_size));
 
 
@@ -312,7 +313,6 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
         total_allocated += transfer_buffer_alloc_size;
     }
 
-
     LOGR("allocate: P {}-{}:  requested grid {} x {} = {}; gird pitch {}; Pts-req {}; pts-pitch {}; total alloc {:.2} Mb",
                  pparams.PartitionID, Device, gx_requested, gy, gx_requested*gy,
                  pparams.pitch_grid, n_points_capacity, pparams.pitch_pts,
@@ -326,68 +326,61 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
 // ============================================================= main simulation steps
 void GPU_Partition::reset_grid()
 {
-    cudaError_t err;
-    cudaSetDevice(Device);
+    CUDA_CHECK(cudaSetDevice(Device));
     const size_t arrays_to_clear = 3;   // mass, px, py
-    size_t gridArraySize = nGridPitch * arrays_to_clear * sizeof(t_GridReal);
-    err = cudaMemsetAsync(grid_array, 0, gridArraySize, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("cuda_reset_grid error");
+    const size_t gridArraySize = pparams.pitch_grid * arrays_to_clear * sizeof(t_GridReal);
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, gridArraySize, streamCompute));
 }
 
 void GPU_Partition::clear_force_accumulator()
 {
-    cudaError_t err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("GPU_Partition::clear_force_accumulator(): cudaSetDevice");
-
+    CUDA_CHECK(cudaSetDevice(Device));
     const size_t arrays_to_clear = 2;   // fx, fy
-    size_t bytes_to_clear = nGridPitch * arrays_to_clear * sizeof(t_GridReal);
-    err = cudaMemsetAsync(grid_array + nGridPitch*SimParams::grid_idx_fx, 0, bytes_to_clear, streamCompute);
-    if(err != cudaSuccess) throw std::runtime_error("clear_force_accumulator() cudaMemsetAsync");
+    const size_t bytes_to_clear = pparams.pitch_grid * arrays_to_clear * sizeof(t_GridReal);
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid + pparams.pitch_grid*SimParams::grid_idx_fx, 0, bytes_to_clear, streamCompute));
 }
 
 
 void GPU_Partition::p2g()
 {
-    cudaSetDevice(Device);
+    CUDA_CHECK(cudaSetDevice(Device));
     const int gridX = prms->GridXTotal; // todo: change to gridx_partition
 
-    const int &n = nPts_partition;
+    const int &n = pparams.count_pts;
     const int &tpb = prms->tpb_P2G;
     const int blocksPerGrid = (n + tpb - 1) / tpb;
-    partition_kernel_p2g<<<blocksPerGrid, tpb, 0, streamCompute>>>();
+    partition_kernel_p2g<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("p2g kernel");
-
 //    check_error_code();
 }
 
 void GPU_Partition::update_nodes(float simulation_time, const GridVector2r vWind, const float interpolation_coeff)
 {
-    cudaSetDevice(Device);
-    const int nGridNodes = prms->GridYTotal * (GridX_partition);
+    CUDA_CHECK(cudaSetDevice(Device));
+
+    const int &gy = prms->GridYTotal;
+    const unsigned &halo = prms->GridHaloSize;
+    const size_t nGridNodes = gy * (pparams.partition_gridX + 2*halo);
 
     int tpb = prms->tpb_Upd;
     int nBlocks = (nGridNodes + tpb - 1) / tpb;
 
-    partition_kernel_update_nodes<<<nBlocks, tpb, 0, streamCompute>>>(simulation_time);
+    partition_kernel_update_nodes<<<nBlocks, tpb, 0, streamCompute>>>(pparams, simulation_time);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("update_nodes");
-
 //    check_error_code();
 }
 
 void GPU_Partition::g2p(const bool recordPQ, const bool enablePointTransfer, int applyGlensLaw)
 {
-    cudaError_t err;
-    err = cudaSetDevice(Device);
-    if(err != cudaSuccess) throw std::runtime_error("g2p cudaSetDevice");
+    CUDA_CHECK(cudaSetDevice(Device));
 
-    const int &n = nPts_partition;
+    const size_t &n = pparams.count_pts;
     const int &tpb = prms->tpb_G2P;
     const int nBlocks = (n + tpb - 1) / tpb;
 
-    partition_kernel_g2p<<<nBlocks, tpb, 0, streamCompute>>>(recordPQ);
+    partition_kernel_g2p<<<nBlocks, tpb, 0, streamCompute>>>(pparams, recordPQ);
 
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("g2p kernel");
-
 //    check_error_code();
 }
 
@@ -396,9 +389,10 @@ void GPU_Partition::g2p(const bool recordPQ, const bool enablePointTransfer, int
 
 void GPU_Partition::record_timings(const bool enablePointTransfer)
 {
+    CUDA_CHECK(cudaSetDevice(Device));
+
     float _gridResetAndHalo, _acceptHalo=0, _G2P, _total, _ptsSent, _ptsAccepted;
     float _updateGrid;
-    cudaSetDevice(Device);
     cudaError_t err;
     err = cudaStreamSynchronize(streamCompute);
     if(err != cudaSuccess)
