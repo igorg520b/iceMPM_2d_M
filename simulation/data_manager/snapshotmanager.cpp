@@ -631,7 +631,7 @@ void icy::SnapshotManager::CalculateWeightCoeffs(const PointVector2r &pos, Point
 
 void icy::SnapshotManager::PrepareFrameArrays()
 {
-    //LOGR("PrepareFrameArrays() {} x {}", model->prms.GridXTotal, model->prms.GridYTotal);
+    LOGR("icy::SnapshotManager::PrepareFrameArrays() {} x {}", model->prms.GridXTotal, model->prms.GridYTotal);
     const int &width = model->prms.InitializationImageSizeX;
     const int &height = model->prms.InitializationImageSizeY;
     const int &ox = model->prms.ModeledRegionOffsetX;
@@ -786,6 +786,7 @@ void icy::SnapshotManager::PrepareFrameArrays()
         forces_per_region[idx*2+0] += model->gpu.grid_boundary_forces[i];
         forces_per_region[idx*2+1] += model->gpu.grid_boundary_forces[i+gx*gy];
     }
+    LOGR("icy::SnapshotManager::PrepareFrameArrays() done");
 }
 
 
