@@ -171,10 +171,6 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams, con
 //            velocity.y() = 0;
 //        }
 
-
-
-
-
         const double kL = gprms.waterDragEffectiveLinear * dt; // linear param
         const double kQp = gprms.waterDragEffectiveQuadratic * dt; // quadratic
 
@@ -193,6 +189,143 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams, con
     bgrid[SimParams::grid_idx_py*pitch_grid + idx] = velocity[1];
 
     if(isnan(velocity[0]) || isnan(velocity[1])) gpu_error_indicator |= error_code_grid_nan;
+}
+
+
+__global__ void partition_kernel_render_results(const PartitionParams pparams)
+{
+    // from the point data, populate the gird arrays:
+    // grid_idx_vis_r/g/b, grid_idx_vis_Jpinv, grid_idx_vis_P/Q,
+    // grid_idx_vis_strain_EqvGreenLagrange, grid_idx_vis_strain_vonMises
+
+    const size_t pt_idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if(pt_idx >= pparams.count_pts) return;
+
+    const unsigned &halo = gprms.GridHaloSize;
+    const int &gridY = gprms.GridYTotal;
+    const size_t &gridX_offset = pparams.gridX_offset;
+    const size_t &pitch = pparams.pitch_pts;
+    const size_t &pitch_g = pparams.pitch_grid;
+
+    t_PointReal* const &bpts = pparams.buffer_pts;
+    t_GridReal* const &bgrid = pparams.buffer_grid;
+
+    const uint32_t utility_data = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::idx_utility_data]);
+    if(utility_data & status_disabled) return; // point is disabled
+
+    PointVector2r pos, velocity;
+    PointMatrix2r Fe;
+
+    // pull point data from SOA
+    for(int i=0; i<SimParams::dim; i++)
+    {
+        pos[i] = bpts[pt_idx + pitch*(SimParams::posx+i)];
+        velocity[i] = bpts[pt_idx + pitch*(SimParams::velx+i)];
+        for(int j=0; j<SimParams::dim; j++)
+        {
+            Fe(i,j) = bpts[pt_idx + pitch*(SimParams::Fe00 + i*SimParams::dim + j)];
+        }
+    }
+    const t_PointReal Jp_inv = bpts[pt_idx + pitch*SimParams::idx_Jp_inv];
+    const t_PointReal thickness = bpts[pt_idx + pitch*SimParams::idx_thickness];
+    const double particle_mass = gprms.ParticleMass * thickness;
+
+    const t_PointReal rR = bpts[pt_idx + pitch*(SimParams::idx_pt_color_RGB+0)];
+    const t_PointReal rG = bpts[pt_idx + pitch*(SimParams::idx_pt_color_RGB+1)];
+    const t_PointReal rB = bpts[pt_idx + pitch*(SimParams::idx_pt_color_RGB+2)];
+    const t_PointReal P = bpts[pt_idx + pitch*SimParams::idx_P];
+    const t_PointReal Q = bpts[pt_idx + pitch*SimParams::idx_Q];
+
+    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::integer_cell_idx]);
+    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
+
+    PointArray2r ww[3];
+    CalculateWeightCoeffs(pos, ww);
+
+    PointMatrix2r E = 0.5f*(Fe.transpose()*Fe-PointMatrix2r::Identity()); // GreenLagrangeStrainTensor
+    PointMatrix2r E_dev = dev(E);
+    const t_PointReal str_vonMises = std::sqrt((2.0f / 3.0f) * (E_dev.array() * E_dev.array()).sum());
+    const t_PointReal str_EqvGreenLagrange = std::sqrt(E.squaredNorm());
+
+    for (int i = -1; i <= 1; i++)
+        for (int j = -1; j <= 1; j++)
+        {
+            const t_PointReal Wip = ww[i+1][0]*ww[j+1][1];
+
+            // index of the cell takes into accout the partition's offset of the gird fragment
+            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+
+
+            const t_PointReal incM = Wip*particle_mass;
+            const PointVector2r incV = incM*velocity;
+
+            // distribute values to the grid
+            atomicAdd(&bgrid[SimParams::grid_idx_mass*pitch_g + idx_gridnode], (t_GridReal)incM);
+            atomicAdd(&bgrid[SimParams::grid_idx_px*pitch_g + idx_gridnode], (t_GridReal)incV[0]);
+            atomicAdd(&bgrid[SimParams::grid_idx_py*pitch_g + idx_gridnode], (t_GridReal)incV[1]);
+
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_r*pitch_g + idx_gridnode], (t_GridReal)(rR*incM));
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_g*pitch_g + idx_gridnode], (t_GridReal)(rG*incM));
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_b*pitch_g + idx_gridnode], (t_GridReal)(rB*incM));
+
+//            atomicAdd(&bgrid[SimParams::grid_idx_vis_r*pitch_g + idx_gridnode], (t_GridReal)(rR*Wip));
+//            atomicAdd(&bgrid[SimParams::grid_idx_vis_g*pitch_g + idx_gridnode], (t_GridReal)(rG*Wip));
+//            atomicAdd(&bgrid[SimParams::grid_idx_vis_b*pitch_g + idx_gridnode], (t_GridReal)(rB*Wip));
+
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_Jpinv*pitch_g + idx_gridnode], (t_GridReal)(Jp_inv*incM));
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_P*pitch_g + idx_gridnode], (t_GridReal)(P*incM));
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_Q*pitch_g + idx_gridnode], (t_GridReal)(Q*incM));
+
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_strain_EqvGreenLagrange*pitch_g + idx_gridnode], (t_GridReal)(str_EqvGreenLagrange*incM));
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_strain_vonMises*pitch_g + idx_gridnode], (t_GridReal)(str_vonMises*incM));
+            atomicAdd(&bgrid[SimParams::grid_idx_vis_pts_density*pitch_g + idx_gridnode], (t_GridReal)Wip);
+        }
+}
+
+__global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
+{
+    // forces that were recorded (accumulated) in grid_idx_fx/fy are now summarized by region
+    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
+    if(idx >= nNodes) return;
+
+    //const int &gridY = gprms.GridYTotal;
+    const size_t &pitch_grid = pparams.pitch_grid;
+    t_GridReal* const &bgrid = pparams.buffer_grid;
+
+    // normalize grid data
+    const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
+    if(mass == 0) return;
+
+    t_GridReal pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
+
+
+    bgrid[SimParams::grid_idx_px*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_py*pitch_grid + idx] /= mass;
+
+    bgrid[SimParams::grid_idx_vis_r*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_vis_g*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_vis_b*pitch_grid + idx] /= mass;
+
+//    bgrid[SimParams::grid_idx_vis_r*pitch_grid + idx] /= pt_density;
+//    bgrid[SimParams::grid_idx_vis_g*pitch_grid + idx] /= pt_density;
+//    bgrid[SimParams::grid_idx_vis_b*pitch_grid + idx] /= pt_density;
+
+    bgrid[SimParams::grid_idx_vis_Jpinv*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_vis_P*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_vis_Q*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_vis_strain_EqvGreenLagrange*pitch_grid + idx] /= mass;
+    bgrid[SimParams::grid_idx_vis_strain_vonMises*pitch_grid + idx] /= mass;
+
+    t_GridReal fx = bgrid[SimParams::grid_idx_fx*pitch_grid + idx];
+    t_GridReal fy = bgrid[SimParams::grid_idx_fy*pitch_grid + idx];
+
+    uint8_t area_idx = pparams.buffer_grid_regions[idx];
+    if(area_idx < SimParams::MAX_REGIONS && (fx != 0 || fy != 0))
+    {
+        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+0], fx);
+        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+1], fy);
+    }
 }
 
 
@@ -378,8 +511,10 @@ __global__ void partition_kernel_check_if_transfer_needed(const PartitionParams 
     t_PointReal* const &bpts = pparams.buffer_pts;
     const int threshold = gprms.HaloDiffusionThreshold;
     const size_t &pitch_pts = pparams.pitch_pts;
-    const size_t &gridX_offset = pparams.pts_gridX_offset;
-    const size_t &gridX = pparams.pts_partition_gridX;
+    const size_t &gridX_offset = pparams.gridX_offset;
+    const size_t &gridX = pparams.partition_gridX;
+//    const size_t &gridX = pparams.pts_partition_gridX;
+//    const size_t &gridX_offset = pparams.pts_gridX_offset;
 
     // skip if a point is disabled
     const uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::idx_utility_data]);
@@ -410,8 +545,12 @@ __global__ void partition_kernel_point_transfer(const PartitionParams pparams)
 
     t_PointReal* const &bpts = pparams.buffer_pts;
     const size_t &pitch_pts = pparams.pitch_pts;
-    const size_t &gridX_offset = pparams.pts_gridX_offset;
-    const size_t &gridX = pparams.pts_partition_gridX;
+//    const size_t &gridX_offset = pparams.pts_gridX_offset;
+//    const size_t &gridX = pparams.pts_partition_gridX;
+
+    const size_t &gridX_offset = pparams.gridX_offset;
+    const size_t &gridX = pparams.partition_gridX;
+
 
     // skip if a point is disabled
     uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::idx_utility_data]);
@@ -716,14 +855,6 @@ __device__ void GetParametersForGrain(uint32_t utility_data, t_PointReal &pmin, 
     mSq = (4.*qmax*qmax*(1.+2.*beta))/((pmax-pmin)*(pmax-pmin));
 }
 
-
-
-__device__ t_PointReal smoothstep(t_PointReal x)
-{
-    if(x<0) x = 0;
-    if(x>1) x = 1;
-    return (x*x)*(3.0 - 2.0 * x);
-}
 
 
 

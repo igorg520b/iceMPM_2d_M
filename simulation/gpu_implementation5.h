@@ -31,12 +31,13 @@ public:
     uint32_t error_code;
     int halo_diffusion; // how far do points diffuse into halo (max value across partitions)
 
-    std::vector<uint32_t> point_colors_rgb;     // rgb values of original point colors
+    // std::vector<uint32_t> point_colors_rgb;     // rgb values of original point colors
     std::vector<uint8_t> point_partitions;
 
     std::vector<uint8_t> grid_status_buffer;    // land (0), modeled area (>0)
     std::vector<uint8_t> original_image_colors_rgb;
-    std::vector<t_GridReal> grid_boundary_normals, grid_boundary_forces;
+    //std::vector<t_GridReal> grid_boundary_normals, grid_boundary_forces;
+    std::vector<t_GridReal> host_grid_buffer;
 
 
     void allocate_host_arrays_grid();
@@ -49,7 +50,11 @@ public:
     void transfer_wind_and_current_data_to_device();
 
     void transfer_from_device();
-    void finish_transfer_of_forces();
+    void transfer_grid_to_host();
+
+//    void finish_transfer_of_forces();
+    void render_visualized_data();
+    void render_data_debug();
 
     void synchronize(); // call before terminating the main thread
     void update_constants();

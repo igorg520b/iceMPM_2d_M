@@ -49,17 +49,23 @@ public:
     constexpr static size_t grid_idx_mass           = 0;
     constexpr static size_t grid_idx_px             = 1;
     constexpr static size_t grid_idx_py             = 2;
-    constexpr static size_t grid_idx_bc_normal_nx   = 3;
-    constexpr static size_t grid_idx_bc_normal_ny   = 4;
-    constexpr static size_t grid_idx_current_vx     = 5;
-    constexpr static size_t grid_idx_current_vy     = 6;
-    constexpr static size_t grid_idx_fx             = 7;
-    constexpr static size_t grid_idx_fy             = 8;
-    constexpr static size_t nGridArrays             = 9;
-//    constexpr static size_t grid_idx_wind1_vx       = 7;
-//    constexpr static size_t grid_idx_wind1_vy       = 8;
-//    constexpr static size_t grid_idx_wind2_vx       = 9;
-//    constexpr static size_t grid_idx_wind2_vy       = 10;
+    constexpr static size_t grid_idx_vis_r          = 3;
+    constexpr static size_t grid_idx_vis_g          = 4;
+    constexpr static size_t grid_idx_vis_b          = 5;
+    constexpr static size_t grid_idx_vis_Jpinv      = 6;
+    constexpr static size_t grid_idx_vis_P          = 7;
+    constexpr static size_t grid_idx_vis_Q          = 8;
+    constexpr static size_t grid_idx_vis_strain_EqvGreenLagrange  = 9;
+    constexpr static size_t grid_idx_vis_strain_vonMises          = 10;
+    constexpr static size_t grid_idx_vis_pts_density              = 11;
+
+    constexpr static size_t grid_idx_fx             = 12;
+    constexpr static size_t grid_idx_fy             = 13;
+    constexpr static size_t grid_idx_current_vx     = 14;
+    constexpr static size_t grid_idx_current_vy     = 15;
+    constexpr static size_t nGridArrays             = 16;
+//    constexpr static size_t grid_idx_bc_normal_nx   = 3;
+//    constexpr static size_t grid_idx_bc_normal_ny   = 4;
 
     // index of the corresponding array in SoA
     constexpr static size_t idx_utility_data = 0;
@@ -73,7 +79,8 @@ public:
     constexpr static size_t Fe00 = velx + 2;
     constexpr static size_t Bp00 = Fe00 + 4;
     constexpr static size_t idx_thickness = Bp00 + 4;
-    constexpr static size_t nPtsArrays = idx_thickness + 1;
+    constexpr static size_t idx_pt_color_RGB = idx_thickness + 1;
+    constexpr static size_t nPtsArrays = idx_pt_color_RGB + 3;
 
     // GPU and multi-GPU-related params
     int tpb_P2G, tpb_Upd, tpb_G2P;  // threads per block for each operation

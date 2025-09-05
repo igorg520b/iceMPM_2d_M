@@ -44,6 +44,7 @@ bool icy::Model::Step()
     processing_current_cycle_data.lock();   // if locked, previous results are not yet processed by the host
     accessing_point_data.lock();
 
+    gpu.render_visualized_data();
     gpu.transfer_from_device();
     prms.SimulationTime = simulation_time;
     prms.SimulationStep += count_unupdated_steps;
@@ -95,7 +96,7 @@ bool icy::Model::Step()
         LOGV("Model::Step() rebalancing done");
     }
 
-    if(prms.SaveSnapshots) SaveFrameRequest(prms.SimulationStep, prms.SimulationTime);
+    SaveFrameRequest(prms.SimulationStep, prms.SimulationTime);
     return (prms.SimulationTime < prms.SimulationEndTime && !gpu.error_code);
 }
 
@@ -156,8 +157,8 @@ void icy::Model::SaveThread()
             break; // Exit if simulation is finished
         }
 
-        gpu.finish_transfer_of_forces();
-        snapshot.PrepareFrameArrays();
+        //gpu.finish_transfer_of_forces();
+        //snapshot.PrepareFrameArrays();
         if(transfer_completion_callback) transfer_completion_callback();
 
         // Save the frame
@@ -243,7 +244,10 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
         prms.UseCurrentData = true;
         wac_interpolator.OpenCustomHDF5(additionalFiles["InputFlowVelocity"]);
     }
-    snapshot.PrepareFrameArrays();
+//    snapshot.PrepareFrameArrays();
+    Prepare();
+    gpu.render_visualized_data();
+    gpu.transfer_from_device();
 
     //    if(additionalFiles.count("InputWindData")) model.snapshot.LoadWindData(additionalFiles["InputWindData"]);
     LOGR("LoadParameterFile done {}", fileName);

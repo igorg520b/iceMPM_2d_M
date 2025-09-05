@@ -119,15 +119,12 @@ void icy::SnapshotManager::PrepareGrid(std::string fileNamePNG, std::string file
 
     stbi_image_free(png_data);
 
-
-
     // (4) Set grid normals and "status" byte
     auto transformPathIdx = [](const int &idx) -> uint8_t {
         if(idx < 1000) return (uint8_t)(idx+1);
         else if(idx == 1000) return (uint8_t)(idx-900);
         else return (uint8_t)(idx-1000+1);
     };
-
 
     // transfer / set grid land bit
     for(int i=0;i<gx;i++)
@@ -136,8 +133,8 @@ void icy::SnapshotManager::PrepareGrid(std::string fileNamePNG, std::string file
             size_t idx1 = (i+ox) + (j+oy)*width;
             size_t idx_host = j + i*gy; // store as row-major
             model->gpu.grid_status_buffer[idx_host] = transformPathIdx(path_indices[idx1]);
-            model->gpu.grid_boundary_normals[idx_host] = (t_GridReal)normals[idx1].x();
-            model->gpu.grid_boundary_normals[idx_host + gx*gy] = (t_GridReal)normals[idx1].y();
+            //model->gpu.grid_boundary_normals[idx_host] = (t_GridReal)normals[idx1].x();
+            //model->gpu.grid_boundary_normals[idx_host + gx*gy] = (t_GridReal)normals[idx1].y();
         }
     LOGV("PrepareGrid done \n");
 }
@@ -176,13 +173,11 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
     const size_t initial_pt_count = pt_buffer.size();
     model->prms.ParticleVolume = h*h*gx*gy/ initial_pt_count;
 
-
     // convert unscaled point coordinates to (i,j) pair on the grid
     auto idxPt = [&](const std::array<float,2> &pt) -> std::pair<int,int> {
         const double scale = gx-1;
         return {(int)(pt[0]*scale + 0.5), (int)(pt[1]*scale + 0.5)};
     };
-
 
     // return true if the underlying cell is land or open water
     auto shouldRemove = [&](const std::array<float,2> &pt) -> bool {
@@ -193,11 +188,9 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
         return (status != 1 && status != 2);    // 1 - crushed, 2 - intact ice
     };
 
-
-    std::erase_if(pt_buffer, shouldRemove);  // C++ 20
+    std::erase_if(pt_buffer, shouldRemove);
     model->prms.nPtsInitial = pt_buffer.size();
     LOGR("model->prms.nPtsInitial = {}", model->prms.nPtsInitial);
-
 
     // (3) allocate host-side array for points
     // allocate space for points on hssoa
@@ -205,7 +198,6 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
 
     model->gpu.hssoa.size = model->prms.nPtsInitial; // set the actual number of points stored in HSSOA
     LOGR("icy::SnapshotManager::PopulatePoints: allocated {} points on HSSOA", model->prms.nPtsInitial);
-
 
     // (6) transfer points
     const double pointScale = (gx-1) * h;
@@ -223,13 +215,21 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
         p.setValue(SimParams::posx, pt[0]*pointScale);      // set point's x-position in SOA
         p.setValue(SimParams::posx+1, pt[1]*pointScale);    // set point's y-position in SOA
 
+        p.setValueInt(SimParams::integer_point_idx, k);     // not really used
+
         const size_t idx_in_image = ((i+ox) + (j+oy)*width)*3;
         uint32_t r = model->gpu.original_image_colors_rgb[idx_in_image+0];
         uint32_t g = model->gpu.original_image_colors_rgb[idx_in_image+1];
         uint32_t b = model->gpu.original_image_colors_rgb[idx_in_image+2];
-        uint32_t rgba = (r << 16) | (g << 8) | b;
-        model->gpu.point_colors_rgb[k] = rgba;
-        p.setValueInt(SimParams::integer_point_idx, k);
+        // uint32_t rgba = (r << 16) | (g << 8) | b;
+        // model->gpu.point_colors_rgb[k] = rgba;
+
+        t_PointReal color_r = ((t_PointReal)r)/255.;
+        t_PointReal color_g = ((t_PointReal)g)/255.;
+        t_PointReal color_b = ((t_PointReal)b)/255.;
+        p.setValue(SimParams::idx_pt_color_RGB+0, color_r);
+        p.setValue(SimParams::idx_pt_color_RGB+1, color_g);
+        p.setValue(SimParams::idx_pt_color_RGB+2, color_b);
 
         // set ice type
         int idx = (i+ox) + (j+oy)*width;
@@ -261,7 +261,7 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
 
     if(model->prms.SaveSnapshots)
     {
-        SavePointColors();
+        //SavePointColors();
         SaveSnapshot(0, 0);
     }
     LOGV("PopulatePoints done \n");
@@ -356,8 +356,8 @@ void icy::SnapshotManager::ReadPointsFromSnapshot(std::string fileNameSnapshotHD
     model->gpu.hssoa.RemoveDisabledAndSort(model->prms.GridYTotal);
 
     FillModelledAreaWithBlueColor();
-    ReadPointColors();
-    PrepareFrameArrays();
+    //ReadPointColors();
+    //PrepareFrameArrays();
     LOGR("ReadPointsFromSnapshot; hssoa capacity {}; size {}", model->gpu.hssoa.capacity, model->gpu.hssoa.size);
 }
 
@@ -416,7 +416,7 @@ void icy::SnapshotManager::SaveSnapshot(int SimulationStep, double SimulationTim
     dataset_pts.createAttribute("ParticleVolume", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &model->prms.ParticleVolume);
 }
 
-
+/*
 void icy::SnapshotManager::SavePointColors()
 {
     // ensure that the output directory exists
@@ -459,7 +459,7 @@ void icy::SnapshotManager::ReadPointColors()
     H5::H5File file(fullPath.string(), H5F_ACC_RDONLY);
     file.openDataSet("pts_colors").read(model->gpu.point_colors_rgb.data(), H5::PredType::NATIVE_UINT32);
 }
-
+*/
 
 
 
@@ -479,7 +479,6 @@ void icy::SnapshotManager::generate_points(int gx, int gy, float points_per_cell
     bool cache_result = attempt_to_fill_from_cache(gx, gy, buffer);
     if(!cache_result) generate_and_save(gx, gy, SimParams::MPM_points_per_cell, buffer);
 }
-
 
 void icy::SnapshotManager::generate_and_save(int gx, int gy, float points_per_cell, std::vector<std::array<float, 2>> &buffer)
 {
@@ -628,7 +627,7 @@ void icy::SnapshotManager::CalculateWeightCoeffs(const PointVector2r &pos, Point
     ww[2] = 0.5*arr_v2*arr_v2;
 }
 
-
+/*
 void icy::SnapshotManager::PrepareFrameArrays()
 {
     LOGR("icy::SnapshotManager::PrepareFrameArrays() {} x {}", ((int)model->prms.GridXTotal), (int)model->prms.GridYTotal);
@@ -788,7 +787,7 @@ void icy::SnapshotManager::PrepareFrameArrays()
     }
     LOGV("icy::SnapshotManager::PrepareFrameArrays() done");
 }
-
+*/
 
 
 void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)

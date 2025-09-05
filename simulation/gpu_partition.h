@@ -63,8 +63,7 @@ struct PartitionParams
     PartitionUtilityData *pud;          // gpu-side allocation
     unsigned *disabled_points_count;    // how many disabled pts in this partition
 
-    // test / debug
-    size_t pts_partition_gridX, pts_gridX_offset;
+    t_GridReal *grid_forces_summary_per_region;
 };
 
 
@@ -110,6 +109,9 @@ struct GPU_Partition
     void send_points();
     void receive_points(const unsigned fromLeft, const unsigned fromRight);
 
+    // render visualized data
+    void render_visualized_data();
+
     // analysis
     void reset_timings();
     void record_timings();
@@ -145,6 +147,9 @@ extern __constant__ SimParams gprms;
 __global__ void partition_kernel_p2g(const PartitionParams pparams);
 __global__ void partition_kernel_update_nodes(const PartitionParams pparams, const t_PointReal simulation_time);
 __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ);
+__global__ void partition_kernel_render_results(const PartitionParams pparams);
+__global__ void partition_kernel_summarize_forces(const PartitionParams pparams);
+
 
 // kernels related to multi-GPU implementation
 __global__ void partition_kernel_receive_subgrid(const PartitionParams pparams,
@@ -188,8 +193,6 @@ __device__ PointVector2r dev_d(PointVector2r Adiag);
 __device__ PointMatrix2r dev(PointMatrix2r A);
 
 __device__ void CalculateWeightCoeffs(const PointVector2r &pos, PointArray2r ww[3]);
-
-__device__ t_PointReal smoothstep(t_PointReal x);
 
 __device__ GridVector2r get_wind_vector(float lat, float lon, float tb);
 

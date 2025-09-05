@@ -77,7 +77,9 @@ void icy::VisualRepresentation::SynchronizeTopology()
     const double range = std::pow(10,ranges[VisualizingVariable]);
 
 
-    if(!model->gpu.original_image_colors_rgb.size()) return;
+//    if(!model->gpu.original_image_colors_rgb.size()) return;
+    if(model->gpu.host_grid_buffer.empty())
+        return;
 
     // (1) background image (but cover the modelled area in blue)
     renderedImage.assign(model->gpu.original_image_colors_rgb.begin(), model->gpu.original_image_colors_rgb.end());
@@ -87,8 +89,6 @@ void icy::VisualRepresentation::SynchronizeTopology()
         for(size_t j=0;j<gy;j++)
         {
             uint8_t status = model->gpu.grid_status_buffer[j + i*gy];
-
-
 
             if(status == 100)
             {
@@ -119,17 +119,39 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, 0.5+vy/range);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
                 }
-
-
                 else if(VisualizingVariable == VisOpt::grid_mass)
                 {
-                    if(!model->snapshot.vis_mass.size())continue;
-                    // visualize Jpinv from the prepared grid / visual array
-                    size_t idx2 = j + i*gy;
-                    float val = model->snapshot.vis_mass[idx2];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::P2, val/range);
+                    size_t idx = (size_t)i * gy + j + gx*gy*SimParams::grid_idx_mass;
+                    t_GridReal val = model->gpu.host_grid_buffer[idx];
+                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
                 }
+                else if(VisualizingVariable == VisOpt::grid_colors)
+                {
+                    size_t idx = (size_t)i * gy + j;
+//                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+
+//                    val_pt_density *= (2./5.);
+//                    float alpha = std::min((double)val_pt_density, 1.);
+
+                    float r = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_r];
+                    float g = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_g];
+                    float b = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_b];
+                    r = std::clamp(r, 0.f,1.f);
+                    g = std::clamp(g, 0.f,1.f);
+                    b = std::clamp(b, 0.f,1.f);
+                    std::array<uint8_t, 3> _rgb;
+                    _rgb[0] = (uint8_t)(r*255);
+                    _rgb[1] = (uint8_t)(g*255);
+                    _rgb[2] = (uint8_t)(b*255);
+
+                    //std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
+
+//                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
+                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = _rgb[k];
+                }
+
+                /*
                 else if(VisualizingVariable == VisOpt::grid_colors)
                 {
                     if(!model->snapshot.vis_mass.size())continue;
@@ -237,7 +259,7 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c, alpha);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
-
+*/
             }
             else
             {
@@ -251,7 +273,7 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pastel, val);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
                 }
-
+/*
                 if(VisualizingVariable == VisOpt::grid_force)
                 {
                     size_t idx2 = j + i*gy;
@@ -262,6 +284,7 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, norm/range);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
                 }
+*/
             }
         }
 
@@ -339,10 +362,9 @@ void icy::VisualRepresentation::SynchronizeValues()
         {
             SOAIterator s = model->gpu.hssoa.begin()+i;
             int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
-            uint8_t r = (rgb >> 16) & 0xff;
-            uint8_t g = (rgb >> 8) & 0xff;
-            uint8_t b = rgb & 0xff;
+            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
+            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
+            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
             pts_colors->SetValue((vtkIdType)(i*3+0), r);
             pts_colors->SetValue((vtkIdType)(i*3+1), g);
             pts_colors->SetValue((vtkIdType)(i*3+2), b);
@@ -383,7 +405,12 @@ void icy::VisualRepresentation::SynchronizeValues()
             double value = (val)/range + 0.5;
             double alpha = abs(val)/range;
             int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
+            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
+            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
+            uint32_t rgb = ((r << 16) | (g << 8) | b);
+
+//            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pressure, value);
             std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
             for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
@@ -399,7 +426,12 @@ void icy::VisualRepresentation::SynchronizeValues()
             double value = (val)/range;
             double alpha = val > 0 ? 1 : 0;
             int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
+            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
+            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
+            uint32_t rgb = ((r << 16) | (g << 8) | b);
+
+            //uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Ridges, value);
             std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
             for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
@@ -420,7 +452,13 @@ void icy::VisualRepresentation::SynchronizeValues()
             double alpha = abs(val)/range;
 
             int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+//            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
+            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
+            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
+            uint32_t rgb = ((r << 16) | (g << 8) | b);
+
+
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pressure, value);
             std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
             for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
@@ -436,7 +474,13 @@ void icy::VisualRepresentation::SynchronizeValues()
             double alpha = abs(val)/range;
 
             int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+//            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
+            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
+            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
+            uint32_t rgb = ((r << 16) | (g << 8) | b);
+
+
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::P2, value);
             std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
 

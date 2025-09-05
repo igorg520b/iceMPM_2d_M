@@ -41,7 +41,7 @@ public:
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void SplitIntoPartitionsAndTransferToDevice();
     void SaveSnapshot(int SimulationStep, double SimulationTime);
-    void PrepareFrameArrays(); // invoked from SaveFrame
+    //void PrepareFrameArrays(); // invoked from SaveFrame
 
     void SaveFrame(int SimulationStep, double SimulationTime);
     void SaveFrameCompressed(int SimulationStep, double SimulationTime);
@@ -74,8 +74,8 @@ private:
     static void generate_points(int gx, int gy, float points_per_cell, std::vector<std::array<float, 2>> &buffer);
 
     void FillModelledAreaWithBlueColor();
-    void SavePointColors();
-    void ReadPointColors();
+//    void SavePointColors();
+//    void ReadPointColors();
 
 
 

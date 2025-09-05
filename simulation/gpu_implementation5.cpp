@@ -117,18 +117,6 @@ void GPU_Implementation5::split_hssoa_into_partitions()
         LOGR("split: P {0:}; grid_offset {1:>7}; grid_size {2:>7}, npts {3:>8}",
              p.pparams.PartitionID, p.pparams.gridX_offset, p.pparams.partition_gridX, p.pparams.count_pts);
     }
-
-
-    // testing only
-    //model->prms.GridHaloSize = 0;
-    for(GPU_Partition &p : partitions)
-    {
-        p.pparams.pts_partition_gridX = p.pparams.partition_gridX;
-        p.pparams.pts_gridX_offset = p.pparams.gridX_offset;
-
-     //   p.pparams.gridX_offset = 0;
-     //   p.pparams.partition_gridX = model->prms.GridXTotal;
-    }
 }
 
 
@@ -206,8 +194,6 @@ void GPU_Implementation5::p2g()
             }
         }
         CUDA_CHECK(cudaEventRecord(p.event_20_grid_halo_sent, p.streamCompute));
-
-        // cudaStreamSynchronize(p.streamCompute);
     }
 
     // receive halos
@@ -250,8 +236,16 @@ void GPU_Implementation5::g2p(const bool recordPQ)
         p.g2p(recordPQ);
         CUDA_CHECK(cudaEventRecord(p.event_50_g2p_completed, p.streamCompute));
     }
-
 }
+
+void GPU_Implementation5::render_visualized_data()
+{
+    for(GPU_Partition &p : partitions)
+    {
+        p.render_visualized_data();
+    }
+}
+
 
 void GPU_Implementation5::point_transfer()
 {
@@ -379,10 +373,11 @@ void GPU_Implementation5::allocate_host_arrays_grid()
 
     // allocate grid arrays
     grid_status_buffer.resize(modeled_grid_total);
-    grid_boundary_normals.resize(2*modeled_grid_total);
     original_image_colors_rgb.resize(3*initial_image_total);
-    grid_boundary_forces.resize(2*modeled_grid_total);
+//    grid_boundary_normals.resize(2*modeled_grid_total);
+//    grid_boundary_forces.resize(2*modeled_grid_total);
 
+    host_grid_buffer.resize(modeled_grid_total*SimParams::nGridArrays);
     LOGV("GPU_Implementation5::allocate_host_arrays_grid() completed");
 }
 
@@ -391,7 +386,7 @@ void GPU_Implementation5::allocate_host_arrays_points()
 {
     const size_t requested_capacity = (size_t)(double(model->prms.nPtsInitial)*(1.+model->prms.extra_space_pts));
     hssoa.Allocate(requested_capacity);
-    point_colors_rgb.resize(model->prms.nPtsInitial);
+    // point_colors_rgb.resize(model->prms.nPtsInitial);
     point_partitions.resize(model->prms.nPtsInitial);
 }
 
@@ -450,6 +445,8 @@ void GPU_Implementation5::transfer_from_device()
     }
     hssoa.size = (unsigned)offset_pts;
 
+    transfer_grid_to_host();
+
     // wait until everything is copied to host
     for(int i=0;i<partitions.size();i++)
     {
@@ -463,9 +460,202 @@ void GPU_Implementation5::transfer_from_device()
             LOGR("P {}; error code {}; this error code {}", p.pparams.PartitionID, p.error_code, this->error_code);
         }
     }
-
 }
 
+
+void GPU_Implementation5::transfer_grid_to_host()
+{
+    LOGV("GPU_Implementation5::transfer_grid_to_host()");
+    const int gx_total = model->prms.GridXTotal;
+    const int gy_total = model->prms.GridYTotal;
+    const int halo = model->prms.GridHaloSize;
+    const int nGridArrays = SimParams::nGridArrays;
+    const size_t grid_plane_size = gx_total * gy_total;
+
+    // Clear the host-side buffer to ensure we start with a clean slate
+    host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
+
+    // A single, reusable temporary buffer for downloading halo regions from any partition.
+    std::vector<t_GridReal> tmp_halo_buffer(gy_total * halo * nGridArrays);
+
+    for (int i = 0; i < partitions.size(); i++)
+    {
+        GPU_Partition &p = partitions[i];
+        CUDA_CHECK(cudaSetDevice(p.Device));
+
+        // --- 1. Transfer the INTERIOR of the grid partition ---
+        // This is the main, non-overlapping part of the data.
+        // We can copy it directly into its final location in the host buffer.
+        {
+            // The source on the device starts after the left halo.
+            const t_GridReal* src_dev = p.pparams.buffer_grid + gy_total * halo;
+
+            // The destination on the host is at this partition's global offset.
+            t_GridReal* dst_host = host_grid_buffer.data() + gy_total * p.pparams.gridX_offset;
+
+            // Since we treat each grid plane as a "row" in the copy, we can use
+            // cudaMemcpy2D to handle the different pitches between device and host.
+            CUDA_CHECK(cudaMemcpy2D(
+                dst_host,                                       // Destination pointer
+                gy_total * gx_total * sizeof(t_GridReal),       // Host pitch (jump to the next grid array)
+                src_dev,                                        // Source pointer
+                p.pparams.pitch_grid * sizeof(t_GridReal),      // Device pitch (jump to the next grid array)
+                p.pparams.partition_gridX * gy_total * sizeof(t_GridReal), // Width of copy (bytes in the interior)
+                nGridArrays,                                    // Height of copy (number of grid arrays)
+                cudaMemcpyDeviceToHost
+                ));
+        }
+
+
+
+        // --- 2. Transfer and ADD the LEFT halo ---
+        if (i > 0) // The first partition doesn't have a left halo to contribute
+        {
+            const t_GridReal* src_dev = p.pparams.buffer_grid; // Left halo is at the start
+            CUDA_CHECK(cudaMemcpy2D(
+                tmp_halo_buffer.data(),
+                gy_total * halo * sizeof(t_GridReal),
+                src_dev,
+                p.pparams.pitch_grid * sizeof(t_GridReal),
+                gy_total * halo * sizeof(t_GridReal),
+                nGridArrays,
+                cudaMemcpyDeviceToHost
+                ));
+
+            // Additively blend this halo into the main host buffer
+            // The destination overlaps with the right edge of the previous partition (i-1)
+            size_t host_x_start = p.pparams.gridX_offset - halo;
+            for (int k = 0; k < nGridArrays; k++) {
+                for (int x = 0; x < halo; x++) {
+                    for (int y = 0; y < gy_total; y++) {
+                        size_t src_idx = k * (gy_total * halo) + x * gy_total + y;
+                        size_t dst_idx = k * grid_plane_size + (host_x_start + x) * gy_total + y;
+                        host_grid_buffer[dst_idx] += tmp_halo_buffer[src_idx];
+                    }
+                }
+            }
+        }
+
+        // --- 3. Transfer and ADD the RIGHT halo ---
+        if (i < partitions.size() - 1) // The last partition doesn't have a right halo to contribute
+        {
+            // Source is after the interior region
+            const t_GridReal* src_dev = p.pparams.buffer_grid + gy_total * (halo + p.pparams.partition_gridX);
+            CUDA_CHECK(cudaMemcpy2D(
+                tmp_halo_buffer.data(),
+                gy_total * halo * sizeof(t_GridReal),
+                src_dev,
+                p.pparams.pitch_grid * sizeof(t_GridReal),
+                gy_total * halo * sizeof(t_GridReal),
+                nGridArrays,
+                cudaMemcpyDeviceToHost
+                ));
+
+            // Additively blend this halo into the main host buffer
+            // The destination overlaps with the left edge of the next partition (i+1)
+            size_t host_x_start = p.pparams.gridX_offset + p.pparams.partition_gridX;
+            for (int k = 0; k < nGridArrays; k++) {
+                for (int x = 0; x < halo; x++) {
+                    for (int y = 0; y < gy_total; y++) {
+                        size_t src_idx = k * (gy_total * halo) + x * gy_total + y;
+                        size_t dst_idx = k * grid_plane_size + (host_x_start + x) * gy_total + y;
+                        host_grid_buffer[dst_idx] += tmp_halo_buffer[src_idx];
+                    }
+                }
+            }
+        }
+
+
+
+    }
+//    render_data_debug();
+}
+
+
+void GPU_Implementation5::render_data_debug()
+{
+    const int nPts = model->gpu.hssoa.size;
+
+    const int gx_total = model->prms.GridXTotal;
+    const int gy_total = model->prms.GridYTotal;
+    const int halo = model->prms.GridHaloSize;
+    const int nGridArrays = SimParams::nGridArrays;
+    const size_t grid_plane_size = gx_total * gy_total;
+
+    // Clear the host-side buffer to ensure we start with a clean slate
+    //host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
+
+//    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_mass, grid_plane_size, 0.f);
+//    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_vis_r, grid_plane_size, 0.f);
+    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_vis_g, grid_plane_size, 0.f);
+//    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_vis_b, grid_plane_size, 0.f);
+
+    t_GridReal *vis_r = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_vis_r];
+    t_GridReal *vis_g = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_vis_g];
+    t_GridReal *vis_b = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_vis_b];
+    t_GridReal *vis_mass = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_mass];
+
+
+    for(int i=0;i<nPts;i++)
+    {
+        SOAIterator s = model->gpu.hssoa.begin()+i;
+        bool disabled = s->getDisabledStatus();
+        if(disabled) continue;
+
+        int cellIdx = s->getCellIndex(gy_total);
+        Eigen::Vector2i cell(cellIdx/gy_total, cellIdx % gy_total);
+
+        float r = (s->getValue(SimParams::idx_pt_color_RGB+0));
+        float g = (s->getValue(SimParams::idx_pt_color_RGB+1));
+        float b = (s->getValue(SimParams::idx_pt_color_RGB+2));
+
+        PointVector2r pos;
+        pos.x() = s->getValue(SimParams::posx+0);
+        pos.y() = s->getValue(SimParams::posx+1);
+
+        const t_PointReal thickness = s->getValue(SimParams::idx_thickness);
+        const double particle_mass = model->prms.ParticleMass * thickness;
+
+        PointArray2r ww[3];
+
+        PointArray2r arr_v0 = 0.5 - pos.array();
+        PointArray2r arr_v1 = pos.array();
+        PointArray2r arr_v2 = pos.array() + 0.5;
+        ww[0] = 0.5*arr_v0*arr_v0;
+        ww[1] = 0.75-arr_v1*arr_v1;
+        ww[2] = 0.5*arr_v2*arr_v2;
+
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const size_t idx_gridnode = (j+cell[1]) + (i+cell[0])*gy_total;
+                const t_PointReal Wip = ww[i+1][0]*ww[j+1][1];
+
+                const t_PointReal incM = Wip*particle_mass;
+//                vis_mass[idx_gridnode] += incM;
+//                vis_r[idx_gridnode] += incM * (float)r;
+                vis_g[idx_gridnode] += incM * (float)g;
+                vis_b[idx_gridnode] += incM * (float)b;
+            }
+    }
+
+
+#pragma omp parallel for
+    for(int i=0;i<grid_plane_size;i++)
+    {
+        float mass = vis_mass[i];
+        if(mass>0)
+        {
+            vis_r[i] /= mass;
+            vis_g[i] /= mass;
+            vis_b[i] /= mass;
+        }
+    }
+}
+
+
+
+/*
 void GPU_Implementation5::finish_transfer_of_forces()
 {
     const size_t GridY = model->prms.GridYTotal;
@@ -499,9 +689,8 @@ void GPU_Implementation5::finish_transfer_of_forces()
 
     for(size_t i=0;i<grid_boundary_forces.size();i++)
         grid_boundary_forces[i]/=(model->prms.UpdateEveryNthStep * model->prms.InitialTimeStep);
-
 }
-
+*/
 
 
 void GPU_Implementation5::synchronize()
