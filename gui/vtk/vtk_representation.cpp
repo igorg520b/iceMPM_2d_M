@@ -65,7 +65,7 @@ icy::VisualRepresentation::VisualRepresentation()
 void icy::VisualRepresentation::SynchronizeTopology()
 {
     //LOGV("SynchronizeTopology()");
-    std::lock_guard<std::mutex> lg(model->accessing_point_data);
+    std::lock_guard<std::mutex> lg(model->lock_data_for_GUI);
 
     const int &width = model->prms.InitializationImageSizeX;
     const int &height = model->prms.InitializationImageSizeY;
@@ -119,6 +119,7 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, 0.5+vy/range);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
                 }
+
                 else if(VisualizingVariable == VisOpt::grid_mass)
                 {
                     size_t idx = (size_t)i * gy + j + gx*gy*SimParams::grid_idx_mass;
@@ -126,140 +127,137 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
                 }
+
                 else if(VisualizingVariable == VisOpt::grid_colors)
                 {
                     size_t idx = (size_t)i * gy + j;
-//                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-
-//                    val_pt_density *= (2./5.);
-//                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    float r = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_r];
-                    float g = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_g];
-                    float b = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_b];
-                    r = std::clamp(r, 0.f,1.f);
-                    g = std::clamp(g, 0.f,1.f);
-                    b = std::clamp(b, 0.f,1.f);
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
                     std::array<uint8_t, 3> _rgb;
-                    _rgb[0] = (uint8_t)(r*255);
-                    _rgb[1] = (uint8_t)(g*255);
-                    _rgb[2] = (uint8_t)(b*255);
-
-                    //std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
-
-//                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = _rgb[k];
-                }
-
-                /*
-                else if(VisualizingVariable == VisOpt::grid_colors)
-                {
-                    if(!model->snapshot.vis_mass.size())continue;
-                    // visualize Jpinv from the prepared grid / visual array
-                    size_t idx2 = j + i*gy;
-
-                    std::array<uint8_t, 3> _rgb;
-                    _rgb[0] = model->snapshot.rgb[idx2*3+0];
-                    _rgb[1] = model->snapshot.rgb[idx2*3+1];
-                    _rgb[2] = model->snapshot.rgb[idx2*3+2];
-
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = _rgb[k];
+                    for(int k=0;k<3;k++)
+                    {
+                        float v = model->gpu.host_grid_buffer[idx + gx*gy*(SimParams::grid_idx_vis_r+k)];
+                        float cv = std::clamp(v, 0.f,1.f);
+                        _rgb[k] = (uint8_t)(cv*255);
+                    }
+                    std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
+                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
+//                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = _rgb[k];
                 }
                 else if(VisualizingVariable == VisOpt::grid_Jpinv)
                 {
-                    if(!model->snapshot.vis_mass.size())continue;
-                    // visualize Jpinv from the prepared grid / visual array
-                    size_t idx2 = j + i*gy;
-
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
                     std::array<uint8_t, 3> _rgb;
-                    _rgb[0] = model->snapshot.rgb[idx2*3+0];
-                    _rgb[1] = model->snapshot.rgb[idx2*3+1];
-                    _rgb[2] = model->snapshot.rgb[idx2*3+2];
-
-                    float alpha = model->snapshot.mass_mask[idx2] ? 1 : 0;
+                    for(int k=0;k<3;k++)
+                    {
+                        float v = model->gpu.host_grid_buffer[idx + gx*gy*(SimParams::grid_idx_vis_r+k)];
+                        float cv = std::clamp(v, 0.f,1.f);
+                        _rgb[k] = (uint8_t)(cv*255);
+                    }
                     std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
 
-                    float val = model->snapshot.vis_Jpinv[idx2];
+
+                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_Jpinv]-1;
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5*val/range + 0.5);
 
                     const float mix_original_color = std::abs(val/range*alpha);
-
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix_original_color);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
-                else if(VisualizingVariable == VisOpt::grid_pointdensity)
-                {
-                    if(!model->snapshot.vis_Jpinv.size()) continue;
-                    size_t idx2 = j + i*gy;
-                    float val = model->snapshot.vis_point_density[idx2]/SimParams::MPM_points_per_cell/range;
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-                }
+
                 else if(VisualizingVariable == VisOpt::grid_P)
                 {
-                    if(!model->snapshot.vis_Jpinv.size()) continue;
-                    size_t idx2 = j + i*gy;
-                    float alpha = model->snapshot.mass_mask[idx2] ? 1 : 0;
-                    float val = model->snapshot.vis_P[idx2];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pressure, 0.5*val/range+0.5);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c, alpha);
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
+
+                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_P];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5*val/range + 0.5);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
+
                 else if(VisualizingVariable == VisOpt::grid_Q)
                 {
-                    if(!model->snapshot.vis_Jpinv.size()) continue;
-                    size_t idx2 = j + i*gy;
-                    float alpha = model->snapshot.mass_mask[idx2] ? 1 : 0;
-                    float val = model->snapshot.vis_Q[idx2];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c, alpha);
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
+
+                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_Q];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
 
                 else if(VisualizingVariable == VisOpt::grid_vnorm)
                 {
-                    if(!model->snapshot.vis_Jpinv.size()) continue;
-                    // visualize Jpinv from the prepared grid / visual array
-                    size_t idx2 = j + i*gy;
-                    float val_x = model->snapshot.vis_vx[idx2];
-                    float val_y = model->snapshot.vis_vy[idx2];
-                    float vnorm = std::sqrt(val_x*val_x + val_y*val_y);
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, vnorm/range);
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
 
-                    std::array<uint8_t, 3> _rgb;
-                    _rgb[0] = model->snapshot.rgb[idx2*3+0];
-                    _rgb[1] = model->snapshot.rgb[idx2*3+1];
-                    _rgb[2] = model->snapshot.rgb[idx2*3+2];
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb, c, vnorm/range);
-
-
-                    float alpha = model->snapshot.mass_mask[idx2] ? 1 : 0;
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(_rgb_water, c2, alpha);
-
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c3[k];
+                    float vx = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_px];
+                    float vy = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_py];
+                    float val = std::sqrt(vx*vx+vy*vy);
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
+
 
                 else if(VisualizingVariable == VisOpt::str_EqvGreenLagrange)
                 {
-                    if(!model->snapshot.vis_Jpinv.size()) continue;
-                    size_t idx2 = j + i*gy;
-                    float alpha = model->snapshot.mass_mask[idx2] ? 1 : 0;
-                    float val = model->snapshot.vis_str_EqvGreenLagrange[idx2];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c, alpha);
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
+
+                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_strain_EqvGreenLagrange];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
+
                 else if(VisualizingVariable == VisOpt::str_vonMises)
                 {
-                    if(!model->snapshot.vis_Jpinv.size()) continue;
-                    size_t idx2 = j + i*gy;
-                    float alpha = model->snapshot.mass_mask[idx2] ? 1 : 0;
-                    float val = model->snapshot.vis_str_vonMises[idx2];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c, alpha);
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
+
+                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_strain_vonMises];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
                     for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
                 }
-*/
+
+                else if(VisualizingVariable == VisOpt::grid_pointdensity)
+                {
+                    size_t idx = (size_t)i * gy + j;
+                    // first obtain rgb colors as in VisOpt::grid_colors
+                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
+                    float val = val_pt_density;
+                    val_pt_density *= (2./5.);
+                    float alpha = std::min((double)val_pt_density, 1.);
+
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, val/range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                }
+
+
             }
             else
             {

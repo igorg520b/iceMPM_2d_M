@@ -34,7 +34,7 @@ void FrameData::UpdateQueue(int frameNumber, int frameTo)
             if(i+frameNumber <= frameTo)
             {
                 LOGR("invoking StartLoadFrameCompressedAsync; i {}; frame {}", i, i+frameNumber);
-                snapshot_pool[i].StartLoadFrameCompressedAsync(ggd.frameDirectory, i+frameNumber);
+//                snapshot_pool[i].StartLoadFrameCompressedAsync(ggd.frameDirectory, i+frameNumber);
             }
     }
     else
@@ -43,7 +43,7 @@ void FrameData::UpdateQueue(int frameNumber, int frameTo)
         if(frame_to_load <= frameTo)
         {
             int last_in_queue = (circular_buffer_top + PREFETCH_BUFFER_SIZE - 1) % snapshot_pool.size();
-            snapshot_pool[last_in_queue].StartLoadFrameCompressedAsync(ggd.frameDirectory, frame_to_load);
+//            snapshot_pool[last_in_queue].StartLoadFrameCompressedAsync(ggd.frameDirectory, frame_to_load);
         }
     }
     frontSnapShot().data_ready_flag_.wait(false); // wait until flag is set to true

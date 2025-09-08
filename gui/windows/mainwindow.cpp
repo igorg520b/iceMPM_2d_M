@@ -309,9 +309,9 @@ void MainWindow::load_parameter_triggered()
 void MainWindow::simulation_data_ready()
 {
     updateGUI();
-    if(ui->actionTake_Screenshots->isChecked())
-        screenshot();
-    model.UnlockCycleMutex();
+//    if(ui->actionTake_Screenshots->isChecked())
+//        screenshot();
+//    model.UnlockCycleMutex();
 }
 
 

@@ -12,7 +12,6 @@ GPU_Partition::GPU_Partition()
 {
     initialized = false;
     error_code = 0;
-    tmp_accumulated_forces = nullptr;
 
     host_disabled_points_count = nullptr;
     pparams.count_pts = 0;
@@ -23,7 +22,8 @@ GPU_Partition::GPU_Partition()
     pparams.buffer_pts = nullptr;
     pparams.buffer_grid_regions = nullptr;
     pparams.grid_forces_summary_per_region = nullptr;
-    host_pud = nullptr;    
+    host_pud = nullptr;
+    host_grid_forces_summary_per_region = nullptr;
 }
 
 GPU_Partition::~GPU_Partition()
@@ -51,8 +51,6 @@ GPU_Partition::~GPU_Partition()
     cudaFree(pparams.halo_transfer_buffer[0]);
     cudaFree(pparams.halo_transfer_buffer[1]);
 
-    delete[] tmp_accumulated_forces;
-//    cudaFreeHost(tmp_accumulated_forces);
     cudaFreeHost(host_pud);
     cudaFreeHost(host_disabled_points_count);
     LOGR("Destructor invoked; partition {} on device {}", pparams.PartitionID, Device);
@@ -104,7 +102,6 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     pparams.pitch_grid /= sizeof(t_GridReal); // assume that this divides without remainder
     pparams.gridX_alloc_capacity = gx_requested;
 
-
     // grid regions identifiers/indices
     const size_t grid_regions_size = sizeof(uint8_t) * gy * (gx_requested + 2*halo);
     CUDA_CHECK(cudaMalloc(&pparams.buffer_grid_regions, grid_regions_size));
@@ -114,11 +111,7 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     CUDA_CHECK(cudaMalloc(&pparams.grid_forces_summary_per_region, sizeof(t_GridReal)*(SimParams::MAX_REGIONS*2)));
 
     // buffer for force transfer form gird
-    // tmp_accumulated_forces
-    const size_t tmp_alloc_elems = 2*pparams.pitch_grid;
-    tmp_accumulated_forces = new t_GridReal[tmp_alloc_elems];
-    //const size_t tmp_alloc_size = 2*sizeof(t_GridReal)*(pparams.pitch_grid);
-    //    CUDA_CHECK(cudaMallocHost(&tmp_accumulated_forces, tmp_alloc_size));
+    CUDA_CHECK(cudaMallocHost(&host_grid_forces_summary_per_region, sizeof(t_GridReal)*SimParams::MAX_REGIONS*2));
 
     // points
     const size_t pts_buffer_requested = sizeof(t_PointReal) * n_points_capacity;
@@ -197,10 +190,12 @@ void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const int point_idx
     CUDA_CHECK(cudaMemcpyAsync(host_disabled_points_count, pparams.disabled_points_count,
                                sizeof(unsigned), cudaMemcpyDeviceToHost, streamCompute));
 
-    // transfer grid data (accumulated forces) to temporary buffers
-    const size_t tmp_bytes_transfer = 2*sizeof(t_GridReal)*pparams.pitch_grid;
+    // transfer accumulated forces
+    const size_t transfer_bytes = sizeof(t_GridReal)*SimParams::MAX_REGIONS*2;
     t_GridReal* const ptr_src = pparams.buffer_grid + pparams.pitch_grid*SimParams::grid_idx_fx;
-    CUDA_CHECK(cudaMemcpyAsync(tmp_accumulated_forces, ptr_src, tmp_bytes_transfer, cudaMemcpyDeviceToHost, streamCompute));
+    CUDA_CHECK(cudaMemcpyAsync(host_grid_forces_summary_per_region,
+                               pparams.grid_forces_summary_per_region,
+                               transfer_bytes, cudaMemcpyDeviceToHost, streamCompute));
 }
 
 

@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <vector>
+#include <array>
 
 #include "parameters_sim.h"
 #include "host_side_soa.h"
@@ -83,7 +84,7 @@ struct GPU_Partition
 
     unsigned *host_disabled_points_count;
     unsigned get_disabled_pts() {return *host_disabled_points_count; }
-    t_GridReal *tmp_accumulated_forces;     // buffer for async transfer; later merged into the global grid buffer
+    t_GridReal *host_grid_forces_summary_per_region;
 
     // preparation
     void initialize(int device, int partition);

@@ -71,6 +71,14 @@ public:
 
     // debugging / testing
     void PrintOutNearestPoint(double pos_x, double pos_y, double gridSize, int GridY);
+
+    // double-buffering for async snpashot saving
+    t_PointReal *getBuffer();
+    void transferToSecondBuffer();
+
+private:
+    std::vector<t_PointReal> second_buffer;
+
 };
 
 #endif // HOSTSIDESOA_H

@@ -307,10 +307,6 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     bgrid[SimParams::grid_idx_vis_g*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_vis_b*pitch_grid + idx] /= mass;
 
-//    bgrid[SimParams::grid_idx_vis_r*pitch_grid + idx] /= pt_density;
-//    bgrid[SimParams::grid_idx_vis_g*pitch_grid + idx] /= pt_density;
-//    bgrid[SimParams::grid_idx_vis_b*pitch_grid + idx] /= pt_density;
-
     bgrid[SimParams::grid_idx_vis_Jpinv*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_vis_P*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_vis_Q*pitch_grid + idx] /= mass;

@@ -41,20 +41,34 @@ bool icy::Model::Step()
         }
     } while((prms.SimulationStep+count_unupdated_steps) % prms.UpdateEveryNthStep != 0);
 
-    processing_current_cycle_data.lock();   // if locked, previous results are not yet processed by the host
-    accessing_point_data.lock();
-
-    gpu.render_visualized_data();
-    gpu.transfer_from_device();
     prms.SimulationTime = simulation_time;
     prms.SimulationStep += count_unupdated_steps;
+
+    if(m_save_future.valid())
+    {
+        LOGV("waiting to finish saving frame");
+        m_save_future.get(); // wait until frame is saved
+    }
+
+    bool saveSnapshot = ((prms.SimulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
+                        (prms.SimulationTime >= prms.SimulationEndTime);
+    // wait until snapshot is saved, only if we need to save it this turn
+    if(saveSnapshot && m_save_full_snapshot_future.valid())
+    {
+        LOGR("waiting to finish saving snapshot; step (after update) {}; time (after update) {}", prms.SimulationStep, prms.SimulationTime);
+        m_save_full_snapshot_future.get();
+    }
+
+    gpu.render_visualized_data();
+
+    lock_data_for_GUI.lock(); // prevent GUI from accessing data
+    gpu.transfer_from_device();
+
     LOGR("finished {:>8.1f} of {:>8.1f} ({}); host pts {}; cap {}; err {:#x}", prms.SimulationTime, prms.SimulationEndTime,
          prms.AnimationFrameNumber(), gpu.hssoa.size, gpu.hssoa.capacity, gpu.error_code);
-
     // print out timings
     LOGR("{0:^3s} {1:^9s} {2:^7s} {3:^7s} | {4:^8s} {5:^5s} {6:^8s} | {7:^5s} {8:^8s} {9:^7s} {10:^5s} {11:^8s} | {12:^8s}",
            "P-D",  "pts", "free",  "dis",    "p2g",  "s2",  "S12",      "u",  "g2p",   "psnt", "prcv",   "S36",    "tot");
-
 
     bool squeeze_required = false;
     for(GPU_Partition &p : gpu.partitions)
@@ -96,12 +110,23 @@ bool icy::Model::Step()
         LOGV("Model::Step() rebalancing done");
     }
 
-    SaveFrameRequest(prms.SimulationStep, prms.SimulationTime);
+    lock_data_for_GUI.unlock();     // allow GUI to access the data
+    if(transfer_completion_callback) transfer_completion_callback();    // signal GUI to udpate
+
+    // request async snapshot
+    m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveFrameTask, this, prms.SimulationStep, prms.SimulationTime);
+
+    if(saveSnapshot)
+    {
+        gpu.hssoa.transferToSecondBuffer();
+        m_save_full_snapshot_future = std::async(std::launch::async, &icy::Model::AsyncSaveFullSnapshotTask, this,
+                                                 prms.SimulationStep, prms.SimulationTime);
+    }
     return (prms.SimulationTime < prms.SimulationEndTime && !gpu.error_code);
 }
 
 
-icy::Model::Model() : frame_ready(false), done(false), wac_interpolator(prms)
+icy::Model::Model() : wac_interpolator(prms)
 {
     snapshot.model = this;
     prms.SimulationStep = 0;
@@ -111,82 +136,19 @@ icy::Model::Model() : frame_ready(false), done(false), wac_interpolator(prms)
     prms.Reset();
     gpu.model = this;
     GPU_Partition::prms = &this->prms;
-    saver_thread = std::thread(&icy::Model::SaveThread, this);
     LOGV("Model constructor");
 }
 
 icy::Model::~Model()
 {
-    {
-        std::lock_guard<std::mutex> lock(frame_mutex);
-        done = true; // Signal that we're done
-        saving_SimulationStep = -1;
-    }
-    frame_cv.notify_one(); // Notify the saver thread
-    saver_thread.join();   // Wait for the thread to finish
-}
-
-
-
-void icy::Model::SaveFrameRequest(int SimulationStep, double SimulationTime)
-{
-    {
-        std::lock_guard<std::mutex> lock(frame_mutex);
-        LOGR("icy::Model::SaveFrameRequest; step {}",SimulationStep);
-        saving_SimulationStep = SimulationStep;
-        saving_SimulationTime = SimulationTime;
-        frame_ready = true; // Indicate that a new frame is ready
-    }
-    frame_cv.notify_one(); // Notify the saver thread
-}
-
-
-// Frame-saving thread function
-void icy::Model::SaveThread()
-{
-    while (true)
-    {
-        // Wait for a frame to save or for the simulation to finish
-        std::unique_lock<std::mutex> lock(frame_mutex);
-        frame_cv.wait(lock, [this] { return frame_ready || done.load(); });
-
-        if (frame_ready) {
-            frame_ready = false; // Mark the frame as consumed
-        } else if (done.load()) {
-            accessing_point_data.unlock();
-            break; // Exit if simulation is finished
-        }
-
-        //gpu.finish_transfer_of_forces();
-        //snapshot.PrepareFrameArrays();
-        if(transfer_completion_callback) transfer_completion_callback();
-
-        // Save the frame
-        if (prms.SaveSnapshots && saving_SimulationStep != -1)
-        {
-            bool saveSnapshot = (saving_SimulationStep/prms.UpdateEveryNthStep)%prms.SnapshotPeriod == 0;
-            if (prms.SimulationTime >= prms.SimulationEndTime) saveSnapshot = true;
-            if(saveSnapshot) snapshot.SaveSnapshot(saving_SimulationStep, saving_SimulationTime);
-            snapshot.SaveFrameCompressed(saving_SimulationStep, saving_SimulationTime);
-            saving_SimulationStep = -1;
-        }
-        accessing_point_data.unlock();
-    }
-}
-
-
-
-void icy::Model::UnlockCycleMutex()
-{
-    // current data was handled by host - allow next cycle to proceed
-    processing_current_cycle_data.unlock();
+    if (m_save_future.valid()) m_save_future.get();
+    if (m_save_full_snapshot_future.valid()) m_save_full_snapshot_future.get();
 }
 
 
 void icy::Model::Prepare()
 {
     LOGV("icy::Model::Prepare()");
-    //abortRequested = false;
     gpu.update_constants();
     wac_interpolator.SetTime(prms.SimulationTime);
     gpu.transfer_wind_and_current_data_to_device();
@@ -202,7 +164,6 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
 
     snapshot.SimulationTitle = additionalFiles["SimulationTitle"];
 
-
     std::filesystem::path outputDir = "output";
     std::filesystem::path logDir = "logs";
     std::filesystem::path targetLogPath = outputDir / snapshot.SimulationTitle / logDir;
@@ -214,8 +175,6 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
     auto lg = std::make_shared<spdlog::logger>("multi_sink", spdlog::sinks_init_list({console_sink, file_sink}));
     spdlog::set_default_logger(lg);
     spdlog::set_pattern("%v");
-
-
 
     snapshot.PrepareGrid(additionalFiles["InputPNG"], additionalFiles["InputMap"]);
 
@@ -244,12 +203,41 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
         prms.UseCurrentData = true;
         wac_interpolator.OpenCustomHDF5(additionalFiles["InputFlowVelocity"]);
     }
-//    snapshot.PrepareFrameArrays();
+
     Prepare();
     gpu.render_visualized_data();
     gpu.transfer_from_device();
 
-    //    if(additionalFiles.count("InputWindData")) model.snapshot.LoadWindData(additionalFiles["InputWindData"]);
+    // saved snapshot at step 0 (if needed, the snapshot can be uploaded and resumed on a remote machine)
+    if(resumeSnapshotFileName.empty())
+    {
+        m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveFrameTask, this,
+                                   prms.SimulationStep, prms.SimulationTime);
+        gpu.hssoa.transferToSecondBuffer();
+        m_save_full_snapshot_future = std::async(std::launch::async, &icy::Model::AsyncSaveFullSnapshotTask, this,
+                                                 prms.SimulationStep, prms.SimulationTime);
+    }
     LOGR("LoadParameterFile done {}", fileName);
 }
 
+
+void icy::Model::AsyncSaveFrameTask(int simulationStep, double simulationTime)
+{
+    // Save the frame
+    if (prms.SaveSnapshots && simulationStep != -1)
+    {
+        snapshot.SaveFrame(simulationStep, simulationTime);
+    }
+}
+
+void icy::Model::AsyncSaveFullSnapshotTask(int simulationStep, double simulationTime)
+{
+    if (prms.SaveSnapshots && simulationStep != -1)
+    {
+        bool saveSnapshot = ((simulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) || (simulationTime >= prms.SimulationEndTime);
+        if(saveSnapshot)
+        {
+            snapshot.SaveSnapshot(simulationStep, simulationTime);
+        }
+    }
+}

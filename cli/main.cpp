@@ -49,7 +49,7 @@ int main(int argc, char** argv)
     model.transfer_completion_callback = [&](){
         // the mutex is locked for the GUI version to display the data
         LOGR("cycle callback {}; ", model.prms.AnimationFrameNumber());
-        model.UnlockCycleMutex();
+//        model.UnlockCycleMutex();
     };
 
 

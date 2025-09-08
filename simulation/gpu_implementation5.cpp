@@ -460,6 +460,14 @@ void GPU_Implementation5::transfer_from_device()
             LOGR("P {}; error code {}; this error code {}", p.pparams.PartitionID, p.error_code, this->error_code);
         }
     }
+
+    grid_forces_summary_per_region.fill(0.f);
+    for(int i=0;i<partitions.size();i++)
+    {
+        GPU_Partition &p = partitions[i];
+        for(int k=0;k<SimParams::MAX_REGIONS*2;k++)
+            grid_forces_summary_per_region[k] += p.host_grid_forces_summary_per_region[k];
+    }
 }
 
 
@@ -469,7 +477,7 @@ void GPU_Implementation5::transfer_grid_to_host()
     const int gx_total = model->prms.GridXTotal;
     const int gy_total = model->prms.GridYTotal;
     const int halo = model->prms.GridHaloSize;
-    const int nGridArrays = SimParams::nGridArrays;
+    const int nGridArrays = SimParams::nGridArrays-2;   // except for the water current arrays, which are constant
     const size_t grid_plane_size = gx_total * gy_total;
 
     // Clear the host-side buffer to ensure we start with a clean slate
@@ -564,95 +572,8 @@ void GPU_Implementation5::transfer_grid_to_host()
                 }
             }
         }
-
-
-
-    }
-//    render_data_debug();
-}
-
-
-void GPU_Implementation5::render_data_debug()
-{
-    const int nPts = model->gpu.hssoa.size;
-
-    const int gx_total = model->prms.GridXTotal;
-    const int gy_total = model->prms.GridYTotal;
-    const int halo = model->prms.GridHaloSize;
-    const int nGridArrays = SimParams::nGridArrays;
-    const size_t grid_plane_size = gx_total * gy_total;
-
-    // Clear the host-side buffer to ensure we start with a clean slate
-    //host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
-
-//    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_mass, grid_plane_size, 0.f);
-//    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_vis_r, grid_plane_size, 0.f);
-    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_vis_g, grid_plane_size, 0.f);
-//    std::fill_n(host_grid_buffer.begin()+grid_plane_size*SimParams::grid_idx_vis_b, grid_plane_size, 0.f);
-
-    t_GridReal *vis_r = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_vis_r];
-    t_GridReal *vis_g = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_vis_g];
-    t_GridReal *vis_b = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_vis_b];
-    t_GridReal *vis_mass = &host_grid_buffer[grid_plane_size*SimParams::grid_idx_mass];
-
-
-    for(int i=0;i<nPts;i++)
-    {
-        SOAIterator s = model->gpu.hssoa.begin()+i;
-        bool disabled = s->getDisabledStatus();
-        if(disabled) continue;
-
-        int cellIdx = s->getCellIndex(gy_total);
-        Eigen::Vector2i cell(cellIdx/gy_total, cellIdx % gy_total);
-
-        float r = (s->getValue(SimParams::idx_pt_color_RGB+0));
-        float g = (s->getValue(SimParams::idx_pt_color_RGB+1));
-        float b = (s->getValue(SimParams::idx_pt_color_RGB+2));
-
-        PointVector2r pos;
-        pos.x() = s->getValue(SimParams::posx+0);
-        pos.y() = s->getValue(SimParams::posx+1);
-
-        const t_PointReal thickness = s->getValue(SimParams::idx_thickness);
-        const double particle_mass = model->prms.ParticleMass * thickness;
-
-        PointArray2r ww[3];
-
-        PointArray2r arr_v0 = 0.5 - pos.array();
-        PointArray2r arr_v1 = pos.array();
-        PointArray2r arr_v2 = pos.array() + 0.5;
-        ww[0] = 0.5*arr_v0*arr_v0;
-        ww[1] = 0.75-arr_v1*arr_v1;
-        ww[2] = 0.5*arr_v2*arr_v2;
-
-        for (int i = -1; i <= 1; i++)
-            for (int j = -1; j <= 1; j++)
-            {
-                const size_t idx_gridnode = (j+cell[1]) + (i+cell[0])*gy_total;
-                const t_PointReal Wip = ww[i+1][0]*ww[j+1][1];
-
-                const t_PointReal incM = Wip*particle_mass;
-//                vis_mass[idx_gridnode] += incM;
-//                vis_r[idx_gridnode] += incM * (float)r;
-                vis_g[idx_gridnode] += incM * (float)g;
-                vis_b[idx_gridnode] += incM * (float)b;
-            }
-    }
-
-
-#pragma omp parallel for
-    for(int i=0;i<grid_plane_size;i++)
-    {
-        float mass = vis_mass[i];
-        if(mass>0)
-        {
-            vis_r[i] /= mass;
-            vis_g[i] /= mass;
-            vis_b[i] /= mass;
-        }
     }
 }
-
 
 
 /*

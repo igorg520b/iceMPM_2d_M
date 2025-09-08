@@ -46,7 +46,6 @@ public:
 
     void Prepare();        // invoked once, at simulation start
     bool Step();           // either invoked by Worker or via GUI
-    void UnlockCycleMutex();
     void SaveFrameRequest(int SimulationStep, double SimulationTime);
 
     SimParams prms;
@@ -56,22 +55,15 @@ public:
     GPU_Implementation5 gpu;
     bool SyncTopologyRequired;  // especially when some points get removed
 
-    std::mutex processing_current_cycle_data; // locked until the current cycle results' are copied to host and processed
-    std::mutex accessing_point_data;
+    std::mutex lock_data_for_GUI; // locked until the current cycle results' are copied to host and processed
 
     int intentionalSlowdown = 0; // add delay after each computation step to unload GPU
     std::function<void()> transfer_completion_callback;     // invoked after frames are prepared for render
 
-
 private:
-    void SaveThread();
-    std::thread saver_thread;
-    std::mutex frame_mutex;
-    std::condition_variable frame_cv;
-    bool frame_ready;
-    std::atomic<bool> done;
-    int saving_SimulationStep = -1;
-    double saving_SimulationTime;
+    std::future<void> m_save_future, m_save_full_snapshot_future;
+    void AsyncSaveFrameTask(int simulationStep, double simulationTime);
+    void AsyncSaveFullSnapshotTask(int simulationStep, double simulationTime);
 };
 
 #endif

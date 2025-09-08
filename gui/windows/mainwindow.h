@@ -39,9 +39,6 @@
 #include <vtkPNGWriter.h>
 #include <vtkInteractorStyleImage.h>
 
-//#include "SpecialSelector2D.h"
-
-
 #include "objectpropertybrowser.h"
 #include "vtk_representation.h"
 #include "model.h"
@@ -125,9 +122,7 @@ private:
 
     // other
     const std::string outputDirectory = "default_output";
-//    vtkNew<SpecialSelector2D> specialSelector2D;
     vtkNew<vtkInteractorStyleImage> interactorStyle;
-
 
     // screenshots
     const std::string screenshot_directory = "screenshots";

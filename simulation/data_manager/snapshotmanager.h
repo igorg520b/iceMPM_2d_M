@@ -17,10 +17,7 @@
 #include "gui/colormap.h"
 #include "parameters_sim.h"
 
-#include <openjpeg.h>
-
 namespace icy {class SnapshotManager; class Model;}
-
 
 class icy::SnapshotManager
 {
@@ -41,27 +38,15 @@ public:
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void SplitIntoPartitionsAndTransferToDevice();
     void SaveSnapshot(int SimulationStep, double SimulationTime);
-    //void PrepareFrameArrays(); // invoked from SaveFrame
 
     void SaveFrame(int SimulationStep, double SimulationTime);
-    void SaveFrameCompressed(int SimulationStep, double SimulationTime);
-    bool LoadFrameCompressed(const std::string&fileNameSnapshotHDF5);
-    void StartLoadFrameCompressedAsync(std::filesystem::path outputDir, int frameIndex);
 
 //    void LoadWindData(std::string fileName);    // netCDF4 data
 //    void ReadSnapshot(std::string fileName);    // custom HDF5 file
 
-    std::vector<float> vis_point_density, vis_mass;
-    std::vector<float> vis_r, vis_g, vis_b, vis_Jpinv, vis_P, vis_Q, vis_vx, vis_vy;
-    std::vector<float> vis_str_EqvGreenLagrange, vis_str_vonMises;
-    static constexpr uint8_t waterColor[3] = {0x15, 0x1f, 0x2f};
-    std::vector<uint8_t> rgb, mass_mask;
-    float forces_per_region[SimParams::MAX_REGIONS*2];
-
+    std::vector<uint8_t> rgb;   // for saving/visualization
 
 private:
-    std::thread decoding_thread_;   // for StartLoadFrameCompressedAsync
-
     ColorMap colormap;
     std::vector<uint8_t> count;   // used for counting points per cell and image generation
 
@@ -74,102 +59,8 @@ private:
     static void generate_points(int gx, int gy, float points_per_cell, std::vector<std::array<float, 2>> &buffer);
 
     void FillModelledAreaWithBlueColor();
-//    void SavePointColors();
-//    void ReadPointColors();
-
-
-
-    // Open JPEG - for saving raster data in compressed way
-    const int DEFAULT_DISCRETIZATION_BITS = 12;
-    const float DEFAULT_OPENJPEG_COMPRESSION_RATE = 10.f;
-    const float DEFAULT_OPENJPEG_COMPRESSION_RATE_RGB = 4.f;
-
-    struct MemoryStream {
-        std::vector<uint8_t>* buffer;
-        size_t position = 0;
-    };
-
-
-    // this will hold the compressed float data
-    struct CompressedArray {
-        std::vector<uint8_t> compressed_blob;
-        int width;
-        int height;
-        int discretization_bits;
-        float min_value;
-        float max_value;
-        std::string name;
-    };
-
-
-    static OPJ_SIZE_T mem_stream_read(void* p_buffer, OPJ_SIZE_T size, void* p_user_data);
-    static OPJ_OFF_T mem_stream_read_skip(OPJ_OFF_T n, void* p_user_data);
-    static OPJ_BOOL mem_stream_read_seek(OPJ_OFF_T pos, void* p_user_data);
-
-    static OPJ_SIZE_T mem_stream_write(void* p_buffer, OPJ_SIZE_T size, void* p_user_data);
-    static OPJ_OFF_T mem_stream_skip(OPJ_OFF_T n, void* p_user_data);
-    static OPJ_BOOL mem_stream_seek(OPJ_OFF_T pos, void* p_user_data);
-
-
-    bool compress_grayscale_jp2(const uint16_t* data_ptr,
-                                const int width, const int height,
-                                std::vector<uint8_t>& out_compressed_data) const;
-
-    void normalize_and_discretize(const std::vector<float>& input,
-                                  std::vector<uint16_t>& output,
-                                  float& minVal, float& maxVal,
-                                  int bits) const;
-
-
-    bool compress_rgb_jp2(const uint8_t* data_ptr,
-                                                const int width, const int height,
-                          std::vector<uint8_t>& out_compressed_data) const;
-
-
-    // function for async compression
-    CompressedArray prepare_compressed_float_array( const std::string& dataset_name,
-        const std::vector<float>& data_vec, int width, int height) const;
-
-    CompressedArray prepare_compressed_rgb_array(const std::string& name,
-                                                 const std::vector<uint8_t>& rgb_data,
-                                                 int width, int height) const;
-
-    // write after async compression
-    void write_compressed_array_to_hdf5(H5::H5File& file, const CompressedArray& result) const;
-
-
-//    void save_compressed_float_array_hdf5(H5::H5File &file, const std::string& dataset_name,
-//                                          const std::vector<float>& data_vec,
-//                                          int width, int height) const;
-
-//    void save_compressed_rgb_array_hdf5(H5::H5File &file, const std::string& dataset_name,
-//                                        const std::vector<uint8_t>& rgb_data, // interleaved
- //                                       int width, int height) const;
-
-
-    // decompress
-    // Counterpart to compress_grayscale_jp2
-    bool decompress_grayscale_jp2(std::vector<uint8_t>& compressed_data,
-                                  std::vector<uint16_t>& out_data, // Always uint16_t for simplicity
-                                  int& width, int& height, int& bits_per_sample) const;
-
-    // Counterpart to compress_rgb_jp2
-    bool decompress_rgb_jp2(std::vector<uint8_t>& compressed_data,
-                            std::vector<uint8_t>& out_data, // Interleaved RGB
-                            int& width, int& height) const;
-
-    // Counterpart to normalize_and_discretize
-    void restore_from_discretized(std::vector<uint16_t>& input,
-                                  std::vector<float>& output,
-                                  float minVal, float maxVal,
-                                  int bits) const;
-
-    // Loaders from HDF5
-    void load_compressed_float_array_hdf5(H5::H5File &file, const std::string& dataset_name,
-                                          std::vector<float>& data_vec) const; // Note: removed expected width/height
-
-    void load_compressed_rgb_array_hdf5(H5::H5File &file, const std::string& dataset_name,
-                                        std::vector<uint8_t>& rgb_data) const; // Note: removed expected width/height
+    void PrepareRGB_Buffer(); // invoked from SaveFrame
+    void SaveForces(const int frame);
 };
 
 #endif // SNAPSHOTWRITER_H

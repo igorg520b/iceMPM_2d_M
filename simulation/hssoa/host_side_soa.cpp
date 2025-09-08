@@ -61,6 +61,8 @@ void HostSideSOA::Allocate(int pts_capacity)
     delete[] host_buffer;
     host_buffer = new t_PointReal[allocation_elems];
 
+    second_buffer.resize(allocation_elems);
+
     /*
     cudaFreeHost(host_buffer);
     cudaError_t err = cudaMallocHost(&host_buffer, allocation_size);
@@ -77,6 +79,16 @@ void HostSideSOA::Allocate(int pts_capacity)
     LOGR("HSSOA allocate capacity {} pt; toal {} Gb", capacity, (double)allocation_size/(1024.*1024.*1024.));
 }
 
+
+t_PointReal *HostSideSOA::getBuffer()
+{
+    return second_buffer.data();
+}
+
+void HostSideSOA::transferToSecondBuffer()
+{
+    second_buffer.assign(host_buffer, host_buffer + (capacity*SimParams::nPtsArrays));
+}
 
 
 
@@ -136,4 +148,5 @@ SOAIterator& SOAIterator::operator=(const SOAIterator& other)
     m_point.pitch = other.m_point.pitch;
     return *this;
 }
+
 

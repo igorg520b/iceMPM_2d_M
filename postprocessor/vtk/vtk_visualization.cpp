@@ -90,6 +90,8 @@ void VTKVisualization::ChangeVisualizationOption(int option)
 
 void VTKVisualization::SynchronizeValues()
 {
+    /*
+
     // Get a reference to the currently active snapshot via the parent FrameData
     // This is the core change:
     const icy::SnapshotManager& active_snapshot = frameData.frontSnapShot();
@@ -253,6 +255,7 @@ void VTKVisualization::SynchronizeValues()
     } else { // Includes VisOpt::colors and VisOpt::none
         scalarBar->VisibilityOff();
     }
+*/
 }
 
 
