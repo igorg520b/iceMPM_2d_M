@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <thread>
 #include <future>
+#include <chrono>
 
 #include <H5Cpp.h>
 #include <Eigen/Core>

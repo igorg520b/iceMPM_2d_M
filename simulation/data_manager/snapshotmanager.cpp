@@ -567,7 +567,7 @@ void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)
     H5::DSetCreatPropList proplist2;
     hsize_t chunk_dims2[3] = {128, 128, 3};
     proplist2.setChunk(3, chunk_dims2);
-    proplist2.setDeflate(4);
+    proplist2.setDeflate(7);
 
     H5::DataSet ds_rgb = file.createDataSet("rgb", H5::PredType::NATIVE_UINT8, dataspace_rgb, proplist2);
     ds_rgb.write(rgb.data(), H5::PredType::NATIVE_UINT8);
@@ -585,21 +585,23 @@ void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)
     H5::DSetCreatPropList pl;
     hsize_t chunk_dims[2] = {256, 256};
     pl.setChunk(2, chunk_dims);
-    pl.setDeflate(4);
+    pl.setDeflate(8);
 
     H5::DataType dtype;
     if constexpr(std::is_same_v<t_GridReal, float>) dtype = H5::PredType::NATIVE_FLOAT;
     else dtype = H5::PredType::NATIVE_DOUBLE;
 
-    file.createDataSet("grid_idx_px", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_px], dtype);
-    file.createDataSet("grid_idx_py", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_py], dtype);
-    file.createDataSet("grid_idx_mass", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_mass], dtype);
-    file.createDataSet("grid_idx_vis_pts_density", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_pts_density], dtype);
-    file.createDataSet("grid_idx_vis_Jpinv", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_Jpinv], dtype);
-    file.createDataSet("grid_idx_vis_P", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_P], dtype);
-    file.createDataSet("grid_idx_vis_Q", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_Q], dtype);
-    file.createDataSet("grid_idx_vis_strain_EqvGreenLagrange", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_strain_EqvGreenLagrange], dtype);
-    file.createDataSet("grid_idx_vis_strain_vonMises", dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_strain_vonMises], dtype);
+    H5::DataType file_dtype = H5::PredType::NATIVE_FLOAT; // how we save it
+
+    file.createDataSet("grid_idx_px", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_px], dtype);
+    file.createDataSet("grid_idx_py", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_py], dtype);
+    file.createDataSet("grid_idx_mass", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_mass], dtype);
+    file.createDataSet("grid_idx_vis_pts_density", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_pts_density], dtype);
+    file.createDataSet("grid_idx_vis_Jpinv", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_Jpinv], dtype);
+    file.createDataSet("grid_idx_vis_P", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_P], dtype);
+    file.createDataSet("grid_idx_vis_Q", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_Q], dtype);
+//    file.createDataSet("grid_idx_vis_strain_EqvGreenLagrange", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_strain_EqvGreenLagrange], dtype);
+    file.createDataSet("grid_idx_vis_strain_vonMises", file_dtype, dspg, pl).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_strain_vonMises], dtype);
 
     // additionally, save region forces in a separate file
     SaveForces(frame);
@@ -675,7 +677,169 @@ void icy::SnapshotManager::SaveForces(const int frame)
 
 //==========================================================================
 
+void icy::SnapshotManager::SaveSnapshot(int SimulationStep, double SimulationTime)
+{
+    const int delay_milliseconds = 300;
+    LOGR("SnapshotManager::SaveSnapshot (uncompressed): step {}, time {}", SimulationStep, SimulationTime);
 
+    // Ensure that the output directory exists
+    fs::path outputDir = "output";
+    fs::path snapshotsDir = "snapshots";
+    fs::path targetPath = outputDir / SimulationTitle / snapshotsDir;
+    fs::create_directories(targetPath);
+
+    // Save current state
+    const int frame = SimulationStep / model->prms.UpdateEveryNthStep;
+    std::string baseName = fmt::format(fmt::runtime("s{:05d}.h5"), frame);
+
+    fs::path fullPath = targetPath / baseName;
+    H5::H5File file(fullPath.string(), H5F_ACC_TRUNC);
+
+    // --- Step 1: Define the TOTAL size of the dataset on disk ---
+    const auto nPts = model->gpu.hssoa.size;
+    hsize_t dims_points[2] = {SimParams::nPtsArrays, nPts};
+    H5::DataSpace dataspace_points(2, dims_points); // This is the FILE dataspace
+
+    // Define the data type
+    H5::DataType dtype;
+    if constexpr(std::is_same_v<t_PointReal, float>) dtype = H5::PredType::NATIVE_FLOAT;
+    else dtype = H5::PredType::NATIVE_DOUBLE;
+
+    // --- Step 2: Create the dataset using the default properties ---
+    H5::DataSet dataset_pts = file.createDataSet("pts_data", dtype, dataspace_points, H5::DSetCreatPropList::DEFAULT);
+
+    // --- Step 3: Define the TOTAL size of the data source in memory (no change) ---
+    hsize_t mem_dims[2] = {SimParams::nPtsArrays, model->gpu.hssoa.capacity};
+    H5::DataSpace memspace(2, mem_dims); // This is the MEMORY dataspace
+
+    LOGV("SnapshotManager::SaveSnapshot starting slab writes (uncompressed)...");
+
+    // --- Step 4: Loop and write hyperslabs (no change to this logic) ---
+    for (int i = 0; i < SimParams::nPtsArrays; ++i)
+    {
+        // Define the hyperslab for the file (destination)
+        hsize_t file_offset[2] = {(hsize_t)i, 0};
+        hsize_t file_count[2]  = {1, nPts};
+        dataspace_points.selectHyperslab(H5S_SELECT_SET, file_count, file_offset);
+
+        // Define the hyperslab for the memory buffer (source)
+        hsize_t mem_offset[2] = {(hsize_t)i, 0};
+        hsize_t mem_count[2]  = {1, nPts};
+        memspace.selectHyperslab(H5S_SELECT_SET, mem_count, mem_offset);
+
+        // Write this specific slab
+        dataset_pts.write(model->gpu.hssoa.getBuffer(), dtype, memspace, dataspace_points);
+
+        // Pause to yield the I/O resource
+        if (i < SimParams::nPtsArrays - 1)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_milliseconds));
+        }
+    }
+
+    LOGV("SnapshotManager::SaveSnapshot finished slab writes, writing attributes...");
+
+    // --- Step 5: Write all metadata attributes (no change) ---
+    H5::DataSpace att_dspace(H5S_SCALAR);
+    dataset_pts.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &SimulationStep);
+    dataset_pts.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &SimulationTime);
+    dataset_pts.createAttribute("HSSOA_size", H5::PredType::NATIVE_UINT, att_dspace).write(H5::PredType::NATIVE_UINT, &nPts);
+    int nPtsArrays = SimParams::nPtsArrays;
+    dataset_pts.createAttribute("nPtsArrays", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &nPtsArrays);
+    dataset_pts.createAttribute("nPtsInitial", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &model->prms.nPtsInitial);
+    dataset_pts.createAttribute("ParticleVolume", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &model->prms.ParticleVolume);
+
+    LOGV("SnapshotManager::SaveSnapshot done");
+}
+
+
+
+/*
+void icy::SnapshotManager::SaveSnapshot(int SimulationStep, double SimulationTime)
+{
+    const int delay_milliseconds = 200;
+    LOGR("SnapshotManager::SaveSnapshot: step {}, time {}", SimulationStep, SimulationTime);
+
+    // Ensure that the output directory exists
+    fs::path outputDir = "output";
+    fs::path snapshotsDir = "snapshots";
+    fs::path targetPath = outputDir / SimulationTitle / snapshotsDir;
+    fs::create_directories(targetPath);
+
+    // Save current state
+    const int frame = SimulationStep / model->prms.UpdateEveryNthStep;
+    std::string baseName = fmt::format(fmt::runtime("s{:05d}.h5"), frame);
+
+    fs::path fullPath = targetPath / baseName;
+    H5::H5File file(fullPath.string(), H5F_ACC_TRUNC);
+
+    // --- Step 1: Define the TOTAL size and properties of the dataset on disk ---
+    const auto nPts = model->gpu.hssoa.size;
+    hsize_t dims_points[2] = {SimParams::nPtsArrays, nPts};
+    H5::DataSpace dataspace_points(2, dims_points); // This is the FILE dataspace
+
+    // We are zipping the data, so using chunks is required and improves performance
+    H5::DSetCreatPropList proplist;
+    hsize_t chunk_size = (hsize_t)std::min((unsigned)256 * 1024, nPts);
+    hsize_t chunk_dims[2] = {1, chunk_size}; // Chunk one row at a time for efficient slab writes
+    proplist.setChunk(2, chunk_dims);
+    proplist.setDeflate(2);
+
+    // Define the data type
+    H5::DataType dtype;
+    if constexpr(std::is_same_v<t_PointReal, float>) dtype = H5::PredType::NATIVE_FLOAT;
+    else dtype = H5::PredType::NATIVE_DOUBLE;
+
+    // --- Step 2: Create the dataset ONCE with its full final dimensions ---
+    H5::DataSet dataset_pts = file.createDataSet("pts_data", dtype, dataspace_points, proplist);
+
+    // --- Step 3: Define the TOTAL size of the data source in memory ---
+    hsize_t mem_dims[2] = {SimParams::nPtsArrays, model->gpu.hssoa.capacity};
+    H5::DataSpace memspace(2, mem_dims); // This is the MEMORY dataspace
+
+    LOGV("SnapshotManager::SaveSnapshot starting slab writes...");
+
+    // --- Step 4: Loop through each slice (nPtsArrays) and write it as a hyperslab ---
+    for (int i = 0; i < SimParams::nPtsArrays; ++i)
+    {
+        // Define the hyperslab for the file (destination)
+        hsize_t file_offset[2] = {(hsize_t)i, 0}; // Start at row 'i', column 0
+        hsize_t file_count[2]  = {1, nPts};       // Select 1 row, 'nPts' columns
+        dataspace_points.selectHyperslab(H5S_SELECT_SET, file_count, file_offset);
+
+        // Define the hyperslab for the memory buffer (source)
+        hsize_t mem_offset[2] = {(hsize_t)i, 0}; // Start reading from row 'i', column 0
+        hsize_t mem_count[2]  = {1, nPts};       // Select 1 row, 'nPts' columns
+        memspace.selectHyperslab(H5S_SELECT_SET, mem_count, mem_offset);
+
+        // Write this specific slab
+        dataset_pts.write(model->gpu.hssoa.getBuffer(), dtype, memspace, dataspace_points);
+
+        // --- The crucial pause to yield the I/O resource ---
+        // Avoid sleeping after the very last write
+        if (i < SimParams::nPtsArrays - 1)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_milliseconds));
+        }
+    }
+
+    LOGV("SnapshotManager::SaveSnapshot finished slab writes, writing attributes...");
+
+    // --- Step 5: Write all metadata attributes after the data is complete ---
+    H5::DataSpace att_dspace(H5S_SCALAR);
+    dataset_pts.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &SimulationStep);
+    dataset_pts.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &SimulationTime);
+    dataset_pts.createAttribute("HSSOA_size", H5::PredType::NATIVE_UINT, att_dspace).write(H5::PredType::NATIVE_UINT, &nPts);
+    int nPtsArrays = SimParams::nPtsArrays;
+    dataset_pts.createAttribute("nPtsArrays", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &nPtsArrays);
+    dataset_pts.createAttribute("nPtsInitial", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &model->prms.nPtsInitial);
+    dataset_pts.createAttribute("ParticleVolume", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &model->prms.ParticleVolume);
+
+    LOGV("SnapshotManager::SaveSnapshot done");
+}
+*/
+
+/*
 void icy::SnapshotManager::SaveSnapshot(int SimulationStep, double SimulationTime)
 {
     LOGR("SnapshotManager::SaveSnapshot: step {}, time {}", SimulationStep, SimulationTime);
@@ -731,7 +895,7 @@ void icy::SnapshotManager::SaveSnapshot(int SimulationStep, double SimulationTim
 
     LOGV("SnapshotManager::SaveSnapshot done");
 }
-
+*/
 
 
 
