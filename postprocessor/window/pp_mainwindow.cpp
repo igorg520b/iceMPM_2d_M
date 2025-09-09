@@ -16,36 +16,30 @@
 
 #include "pp_mainwindow.h"
 #include "./ui_pp_mainwindow.h"
-
+#include "vtk_representation.h"
 
 
 PPMainWindow::~PPMainWindow() {delete ui;}
 
 PPMainWindow::PPMainWindow(QWidget *parent)
-    : QMainWindow(parent), frameData(ggd,1)
+    : QMainWindow(parent), frameData(ggd)
     , ui(new Ui::PPMainWindow)
 {
     ui->setupUi(this);
 
     // VTK
     qt_vtk_widget = new QVTKOpenGLNativeWidget();
+    qt_vtk_widget->setRenderWindow(renderWindow);
     setCentralWidget(qt_vtk_widget);
 
-    renderWindow = qt_vtk_widget->renderWindow();
-
-//    qt_vtk_widget->setRenderWindow(renderWindow);
-
-
-    renderer->SetBackground(1.0,0.95,0.95);
+    renderer->SetBackground(1.0,1.0,1.0);
     renderWindow->AddRenderer(renderer);
-
     renderWindow->GetInteractor()->SetInteractorStyle(interactor);
 
-    renderer->AddActor(frameData.representation.raster_actor);
-    renderer->AddActor(frameData.representation.actor_text);
-    renderer->AddActor(frameData.representation.scalarBar);
-    renderer->AddActor(frameData.representation.actor_text_title);
 
+    renderer->AddActor(representation.raster_actor);
+//    renderer->AddActor(representation.scalarBar);
+//    renderer->AddActor(representation.actorText);
 
     // toolbar - combobox
     comboBox_visualizations = new QComboBox();
@@ -73,7 +67,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     connect(slider2, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
 
     // populate combobox
-    QMetaEnum qme = QMetaEnum::fromType<VTKVisualization::VisOpt>();
+    QMetaEnum qme = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
     for(int i=0;i<qme.keyCount();i++) comboBox_visualizations->addItem(qme.key(i));
 
 
@@ -111,14 +105,14 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         if(!var.isNull())
         {
             QByteArray ba = var.toByteArray();
-            memcpy(frameData.representation.ranges, ba.constData(), ba.size());
+            memcpy(representation.ranges, ba.constData(), ba.size());
         }
 
         var = settings.value("vis_option");
         if(!var.isNull())
         {
             comboBox_visualizations->setCurrentIndex(var.toInt());
-            qdsbValRange->setValue(frameData.representation.ranges[var.toInt()]);
+            qdsbValRange->setValue(representation.ranges[var.toInt()]);
         }
     }
     else
@@ -126,18 +120,10 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         cameraReset_triggered();
     }
 
-
-
     connect(ui->action_camera_reset, &QAction::triggered, this, &PPMainWindow::cameraReset_triggered);
     connect(ui->actionRender_Frame, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
     connect(ui->actionRender_All, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
-
-//    connect(ui->actionOpen_Frame, &QAction::triggered, this, &PPMainWindow::open_frame_triggered);
     connect(ui->actionGenerate_Script, &QAction::triggered, this, &PPMainWindow::generate_ffmpeg_script);
-//    connect(ui->actionShow_Wind, &QAction::triggered, this, &PPMainWindow::toggle_wind_visualization);
-//    connect(ui->actionRender_All_2, &QAction::triggered, this, &PPMainWindow::render_all2_triggered);
-//    connect(ui->actionLoad_Selected_Frame, &QAction::triggered, this, &PPMainWindow::load_selected_frame_triggered);
-
     connect(qdsbValRange,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
 
     // off-screen rendering
@@ -172,7 +158,7 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
     QByteArray arr((char*)data, sizeof(data));
     settings.setValue("camData", arr);
 
-    QByteArray ranges((char*)frameData.representation.ranges, sizeof(frameData.representation.ranges));
+    QByteArray ranges((char*)representation.ranges, sizeof(representation.ranges));
     settings.setValue("visualization_ranges", ranges);
 
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
@@ -184,9 +170,9 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
 void PPMainWindow::limits_changed(double val_)
 {
     qDebug() << "limits_changed";
-    int idx = (int)frameData.representation.VisualizingVariable;
-    frameData.representation.ranges[idx] = val_;
-    frameData.representation.SynchronizeValues();
+    int idx = (int)representation.VisualizingVariable;
+    representation.ranges[idx] = val_;
+    representation.SynchronizeTopology();
     renderWindow->Render();
 }
 
@@ -228,6 +214,14 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
 {
     qDebug() << "PPMainWindow::LoadFramesDirectory: " << framesDirectory;
     ggd.ScanDirectory(framesDirectory.toStdString());
+
+    if(ggd.countFrames <= 0)
+    {
+        slider2->setEnabled(false);
+        QMessageBox::warning(this, "No Frames Found", "The specified directory does not contain any valid frame files.");
+        return;
+    }
+
     slider2->setMaximum(ggd.countFrames);
 
     qsbFrameTo->setMaximum(ggd.countFrames);
@@ -235,10 +229,6 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
 
     qsbFrameFrom->setMaximum(ggd.countFrames-1);
     qsbFrameFrom->setValue(1);
-
-//    frameData.UpdateQueue(1, ggd.countFrames-1);
-//    frameData.representation.SynchronizeValues();
-//    renderWindow->Render();
     slider2->setValue(ggd.countFrames);
 
     generate_ffmpeg_script();
@@ -247,16 +237,23 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
 void PPMainWindow::sliderValueChanged(int val)
 {
     qDebug() << "slider set to " << val;
-    frameData.UpdateQueue(val, ggd.countFrames);
-    frameData.representation.SynchronizeValues();
+
+    bool success = frameData.LoadFrame(val);
+    if(!success)
+    {
+        LOGR("Failed to load and display frame {}.", val);
+        return;
+    }
+    frameData.LinkRepresentation(this->representation);
+    this->representation.SynchronizeTopology();
     renderWindow->Render();
 }
 
 
 void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 {
-    frameData.representation.ChangeVisualizationOption(index);
-    qdsbValRange->setValue(frameData.representation.ranges[index]);
+    representation.ChangeVisualizationOption(index);
+    qdsbValRange->setValue(representation.ranges[index]);
     renderWindow->Render();
 }
 
@@ -264,6 +261,7 @@ void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 
 void PPMainWindow::render_frame_triggered()
 {
+    /*
     qDebug() << "render_frame_triggered() ";
     try
     {
@@ -284,12 +282,13 @@ void PPMainWindow::render_frame_triggered()
     {
         qDebug() << "something went wrong";
     }
-
+*/
 }
 
 
 void PPMainWindow::render_all_triggered()
 {
+    /*
     const int frameFrom = qsbFrameFrom->value();
     const int frameTo = qsbFrameTo->value();
     const int totalFramesInRange = (frameTo - frameFrom) + 1;
@@ -392,6 +391,7 @@ void PPMainWindow::render_all_triggered()
         QMessageBox::information(this, "Rendering Complete", "All selected frames and visualization types have been rendered.");
     }
     qDebug() << "PPMainWindow::render_all_triggered() finished.";
+*/
 }
 
 void PPMainWindow::generate_ffmpeg_script()
@@ -416,8 +416,32 @@ void PPMainWindow::generate_ffmpeg_script()
     scriptFile << cmd_P << '\n' << cmd_Q << '\n' << cmd_Jp_inv << '\n' << cmd_colors << '\n' << cmd_Ridges << '\n' << cmd_vel;
     scriptFile.close();
     int result = std::system(("chmod +x " + filename).c_str());
-
-    //std::string concat = R"(ffmpeg -i P.mp4 -i Q.mp4 -i Jp_inv.mp4 -i colors.mp4 -filter_complex "[0:v:0][1:v:0][2:v:0][3:v:0]concat=n=4:v=1[outv]" -map "[outv]" output.mp4)";
-//    std::string cmd1 = fmt::format("ffmpeg -y -r {} -f image2 -start_number 1 -i \"P/%05d.png\" -vframes {} -vcodec libx264 -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -crf 21  -pix_fmt yuv420p \"P.mp4\"\n", fps, frames);
 }
 
+
+
+
+/*
+void MainWindow::screenshot()
+{
+    if(model.prms.SimulationStep % model.prms.UpdateEveryNthStep) return;
+    QString outputPath = QDir::currentPath()+ "/" + screenshot_directory.c_str() + "/" +
+                         QString::number(model.prms.AnimationFrameNumber()).rightJustified(5, '0') + ".png";
+
+    QDir pngDir(QDir::currentPath()+ "/"+ screenshot_directory.c_str());
+    if(!pngDir.exists()) pngDir.mkdir(QDir::currentPath()+ "/"+ screenshot_directory.c_str());
+
+    renderWindow->DoubleBufferOff();
+    renderWindow->Render();
+    windowToImageFilter->SetInputBufferTypeToRGBA(); //also record the alpha (transparency) channel
+    renderWindow->WaitForCompletion();
+
+    windowToImageFilter->Update();
+    windowToImageFilter->Modified();
+
+    writerPNG->Modified();
+    writerPNG->SetFileName(outputPath.toUtf8().constData());
+    writerPNG->Write();
+    renderWindow->DoubleBufferOn();
+}
+*/

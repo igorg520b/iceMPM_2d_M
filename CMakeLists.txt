@@ -23,7 +23,6 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
-find_package(OpenJPEG REQUIRED)
 
 
 
@@ -131,9 +130,6 @@ FetchContent_MakeAvailable(PBrowser)
     # spdlog
     target_link_libraries(gm2m PRIVATE spdlog::spdlog)
 
-    target_include_directories(gm2m PRIVATE ${OPENJPEG_INCLUDE_DIRS})
-    target_link_libraries(gm2m PRIVATE ${OPENJPEG_LIBRARIES})
-
     # OpenMP
     target_compile_options(gm2m PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
     target_link_libraries(gm2m PRIVATE gomp)
@@ -206,9 +202,6 @@ endif()
 
 target_include_directories(cm2m PRIVATE ${HDF5_INCLUDE_DIRS})
 
-target_include_directories(cm2m PRIVATE ${OPENJPEG_INCLUDE_DIRS})
-target_link_libraries(cm2m PRIVATE ${OPENJPEG_LIBRARIES})
-
 target_compile_options(cm2m PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
 target_link_libraries(cm2m PRIVATE gomp)
 
@@ -247,8 +240,8 @@ if(BUILD_POSTPROCESSOR)
     	postprocessor/window/pp_mainwindow.ui
         icons.qrc
         
-        postprocessor/vtk/vtk_visualization.cpp
-        postprocessor/vtk/vtk_visualization.h
+        gui/vtk/vtk_representation.cpp
+        gui/vtk/vtk_representation.h
 
         # simulation
         simulation/parameters_sim.h
@@ -289,7 +282,7 @@ if(BUILD_POSTPROCESSOR)
     )
     set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
 
-    target_include_directories(pp PRIVATE postprocessor postprocessor/window postprocessor/vtk gui External)
+    target_include_directories(pp PRIVATE postprocessor postprocessor/window gui External gui/vtk)
     target_include_directories(pp PRIVATE simulation simulation/hssoa simulation/data_manager)
     target_link_libraries(pp PRIVATE Qt5::Widgets Qt5::Core)
 
@@ -311,9 +304,6 @@ if(BUILD_POSTPROCESSOR)
     TARGETS pp
     MODULES ${VTK_LIBRARIES}
     )
-
-    target_include_directories(pp PRIVATE ${OPENJPEG_INCLUDE_DIRS})
-    target_link_libraries(pp PRIVATE ${OPENJPEG_LIBRARIES})
 
     set_target_properties(pp PROPERTIES CUDA_ARCHITECTURES "80;89")
     set_target_properties(pp PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)

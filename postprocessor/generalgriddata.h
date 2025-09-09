@@ -20,7 +20,7 @@ struct GeneralGridData
     int countFrames;
     std::string frameDirectory;
 
-    std::vector<int> path_indices;
+    std::vector<uint8_t> grid_status_buffer;        // Generated from map file
     std::vector<uint8_t> original_image_colors_rgb; // from PNG image
 };
 

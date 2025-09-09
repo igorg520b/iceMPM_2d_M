@@ -5,53 +5,32 @@
 
 #include <string>
 #include <vector>
-#include <algorithm>
-#include <mutex>
-#include <iostream>
-
-#include <H5Cpp.h>
 #include <spdlog/spdlog.h>
-#include <Eigen/Core>
+
 #include "parameters_sim.h"
-#include "vtk_visualization.h"
 #include "generalgriddata.h"
 
-#include <vtkRenderWindow.h>
-#include <vtkWindowToImageFilter.h>
-#include <vtkJPEGWriter.h>
-#include <vtkRenderer.h>
-#include <vtkOpenGLRenderWindow.h>
-#include <vtkCamera.h>
-
-#include "snapshotmanager.h"
-
-
+// Forward declaration is sufficient
+namespace icy { class VisualRepresentation; }
 
 struct FrameData
 {
-    FrameData(GeneralGridData &ggd_, int prefetch_buffer_size_);
-
     GeneralGridData &ggd;
-    VTKVisualization representation;
+    std::vector<uint8_t> rgb;
+    std::vector<t_GridReal> host_grid_buffer;
+    int currentFrameNumber = -1;
+    double simulationTime = 0.0;
+    int simulationStep = 0;
 
-    void SetUpOffscreenRender(const FrameData &guiFD, vtkCamera* sourceGuiCamera);
-    void RenderFrame(VTKVisualization::VisOpt visopt);
-    void UpdateQueue(int frameNumber, int frameTo);
+    FrameData(GeneralGridData &ggd_);
+    bool LoadFrame(int frameNumber);  // Loads a specific frame from disk.
 
-    double getSimulationTime() {return frontSnapShot().SimulationTime;};
-    icy::SnapshotManager& frontSnapShot() {return snapshot_pool[circular_buffer_top];}; // for rendering
-
-    vtkNew<vtkRenderer> renderer;
+    // Links the data stored in this object to a representation object.
+    void LinkRepresentation(icy::VisualRepresentation &representation);
 
 private:
-    const int PREFETCH_BUFFER_SIZE;
-    int circular_buffer_top;    // which snapshot is the front of the queue
-    std::vector<icy::SnapshotManager> snapshot_pool;
-
-    // offscreenrender
-    vtkNew<vtkRenderWindow> offscreenRenderWindow;
-    vtkNew<vtkWindowToImageFilter> windowToImageFilter;
-    vtkNew<vtkJPEGWriter> writer;
+    static void readGridDataset(const H5::H5File& file, const std::string& dataset_name,
+                                std::vector<t_GridReal>& dest_buffer, size_t offset, size_t plane_size);
 };
 
 #endif // FRAMEDATA_H

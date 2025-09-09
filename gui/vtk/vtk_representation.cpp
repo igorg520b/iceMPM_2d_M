@@ -94,6 +94,10 @@ void icy::VisualRepresentation::SynchronizeTopology()
     // --- Step 1: Safety checks ---
     if (!prms || !host_grid_buffer || !grid_status_buffer || !original_image_colors_rgb) {
         LOGV("VisualRepresentation::SynchronizeTopology - Aborting: Essential data pointers are not set.");
+        if(!prms) LOGV("prms is null");
+        if(!host_grid_buffer) LOGV("host_grid_buffer is null");
+        if(!grid_status_buffer) LOGV("grid_status_buffer is null");
+        if(!original_image_colors_rgb) LOGV("original_image_colors_rgb is null");
         return;
     }
 

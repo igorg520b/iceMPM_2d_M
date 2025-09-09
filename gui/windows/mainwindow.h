@@ -125,9 +125,6 @@ private:
 
     // screenshots
     const std::string screenshot_directory = "screenshots";
-    vtkNew<vtkWindowToImageFilter> windowToImageFilter;
-    vtkNew<vtkPNGWriter> writerPNG;
-    void screenshot();
 
     friend class SpecialSelector2D;
 

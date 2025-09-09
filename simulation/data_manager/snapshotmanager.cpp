@@ -27,9 +27,6 @@
 #include <fmt/format.h>
 #include <fmt/std.h>
 
-#include <openjpeg.h>
-
-
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 

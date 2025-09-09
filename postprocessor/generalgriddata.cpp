@@ -12,70 +12,92 @@
 
 void GeneralGridData::ReadParameterFile(std::string parameterFileName)
 {
-    std::map<std::string,std::string> additionalFiles = prms.ParseFile(parameterFileName);
-
+    // --- 1. Parse Parameter File ---
+    std::map<std::string, std::string> additionalFiles = prms.ParseFile(parameterFileName);
     std::string pngFile = additionalFiles["InputPNG"];
     std::string mapFile = additionalFiles["InputMap"];
 
-
-    // load HDF5
-    H5::H5File file(mapFile, H5F_ACC_RDONLY);
-
-    H5::DataSet ds_path_indices = file.openDataSet("path_indices");
-    ds_path_indices.openAttribute("width").read(H5::PredType::NATIVE_INT, &prms.InitializationImageSizeX);
-    ds_path_indices.openAttribute("height").read(H5::PredType::NATIVE_INT, &prms.InitializationImageSizeY);
-
-    ds_path_indices.openAttribute("ModeledRegionOffsetX").read(H5::PredType::NATIVE_INT, &prms.ModeledRegionOffsetX);
-    ds_path_indices.openAttribute("ModeledRegionOffsetY").read(H5::PredType::NATIVE_INT, &prms.ModeledRegionOffsetY);
-    ds_path_indices.openAttribute("GridXTotal").read(H5::PredType::NATIVE_INT, &prms.GridXTotal);
-    ds_path_indices.openAttribute("GridYTotal").read(H5::PredType::NATIVE_INT, &prms.GridYTotal);
-
-    const int &width = prms.InitializationImageSizeX;
-    const int &height = prms.InitializationImageSizeY;
-    prms.cellsize = prms.DimensionHorizontal / (prms.InitializationImageSizeX-1);
-    prms.cellsize_inv = 1.0/prms.cellsize;
-
-    path_indices.resize(width*height);
-    ds_path_indices.read(path_indices.data(), H5::PredType::NATIVE_INT);
-    file.close();
+    // --- 2. Load Grid Parameters and Path Indices from HDF5 Map File ---
 
 
 
+    std::vector<int> path_indices;
 
-    // load image data
-    // (3) Load PNG image (only for rendering)
-    int channels, imgx, imgy;
-    unsigned char *png_data = stbi_load(pngFile.c_str(), &imgx, &imgy, &channels, 3); // expect 3 channels - RGB
-    if(!png_data || channels != 3 || imgx != width || imgy != height)
+    // Scoped H5File object ensures it's closed automatically
     {
-        LOGR("filename {} not loaded; channels {}", pngFile, channels);
-        LOGR("png expected size {} x {}; actual size {} x {}", width, height, imgx, imgy);
-        throw std::runtime_error("png1 not loaded");
+        LOGV("Loading path_indices");
+        H5::H5File file(mapFile, H5F_ACC_RDONLY);
+        H5::DataSet ds_path_indices = file.openDataSet("path_indices");
+
+        ds_path_indices.openAttribute("width").read(H5::PredType::NATIVE_INT, &prms.InitializationImageSizeX);
+        ds_path_indices.openAttribute("height").read(H5::PredType::NATIVE_INT, &prms.InitializationImageSizeY);
+
+        ds_path_indices.openAttribute("ModeledRegionOffsetX").read(H5::PredType::NATIVE_INT, &prms.ModeledRegionOffsetX);
+        ds_path_indices.openAttribute("ModeledRegionOffsetY").read(H5::PredType::NATIVE_INT, &prms.ModeledRegionOffsetY);
+        ds_path_indices.openAttribute("GridXTotal").read(H5::PredType::NATIVE_INT, &prms.GridXTotal);
+        ds_path_indices.openAttribute("GridYTotal").read(H5::PredType::NATIVE_INT, &prms.GridYTotal);
+        prms.cellsize = prms.DimensionHorizontal / (prms.InitializationImageSizeX-1);
+        prms.cellsize_inv = 1.0/prms.cellsize;
+
+        path_indices.resize(prms.InitializationImageSizeX*prms.InitializationImageSizeY);
+
+        LOGV("Loading path_indices - dataset opened");
+        // Parameters are already loaded by ParseFile, so we just need the dataset
+        ds_path_indices.read(path_indices.data(), H5::PredType::NATIVE_INT);
+        LOGV("Loading path_indices - done");
+    } // file is closed here
+
+
+    const int width = prms.InitializationImageSizeX;
+    const int height = prms.InitializationImageSizeY;
+    const int ox = prms.ModeledRegionOffsetX;
+    const int oy = prms.ModeledRegionOffsetY;
+    const int gx = prms.GridXTotal;
+    const int gy = prms.GridYTotal;
+
+    // --- 3. Load PNG Image ---
+    int channels, imgx, imgy;
+    unsigned char* png_data = stbi_load(pngFile.c_str(), &imgx, &imgy, &channels, 3);
+    if (!png_data || channels != 3 || imgx != width || imgy != height) {
+        LOGR("Fatal Error: PNG file '{}' could not be loaded or has incorrect dimensions.", pngFile);
+        throw std::runtime_error("Failed to load PNG for background image.");
     }
 
-    // function for obtaining index in png_data from the pixel's 2D index (i,j)
-    auto idxInPng = [&](int i, int j) -> int { return 3*((height - j - 1)*width + i); };
+    // --- 4. Populate `original_image_colors_rgb` ---
+    original_image_colors_rgb.resize(width * height * 3);
+    auto idxInPng = [&](int i, int j) -> int { return 3 * ((height - j - 1) * width + i); };
 
-    // save original colors for the whole image
-    constexpr uint8_t waterColor[3] = {0x15, 0x1f, 0x2f};
-    original_image_colors_rgb.resize(imgx*imgy*3);
-    for(int i=0;i<width;i++)
-        for(int j=0;j<height;j++)
-            for(int k=0;k<3;k++)
-            {
-                if(path_indices[i+j*width] == 1000)
-                {
-                    original_image_colors_rgb[(i+j*width)*3+k] = waterColor[k];
-                }
-                else
-                {
-                    original_image_colors_rgb[(i+j*width)*3+k] = png_data[idxInPng(i, j)+k];
-                }
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            for (int k = 0; k < 3; k++) {
+                original_image_colors_rgb[((j * width) + i) * 3 + k] = png_data[idxInPng(i, j) + k];
             }
-
+        }
+    }
     stbi_image_free(png_data);
 
-    LOGV("GeneralGridData::ReadParameterFile: done");
+    // --- 5. Generate `grid_status_buffer` (The Core Logic) ---
+    // This replicates the logic from SnapshotManager::PrepareGrid
+    grid_status_buffer.resize((size_t)gx * gy);
+
+    auto transformPathIdx = [](const int &idx) -> uint8_t {
+        if (idx < 1000) return (uint8_t)(idx + 1);
+        else if (idx == 1000) return (uint8_t)(100); // 1000 -> 100 (modeled area)
+        else return (uint8_t)(idx - 1000 + 1);
+    };
+
+    for (int i = 0; i < gx; i++) {
+        for (int j = 0; j < gy; j++) {
+            // Index in the full-size image/path_indices map (row-major)
+            size_t image_map_idx = (size_t)(i + ox) + (size_t)(j + oy) * width;
+            // Index in the grid-sized status buffer (column-major)
+            size_t grid_buffer_idx = (size_t)j + (size_t)i * gy;
+
+            grid_status_buffer[grid_buffer_idx] = transformPathIdx(path_indices[image_map_idx]);
+        }
+    }
+
+    LOGV("GeneralGridData::ReadParameterFile: Done.");
 }
 
 

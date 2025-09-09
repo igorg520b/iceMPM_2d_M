@@ -137,13 +137,6 @@ MainWindow::MainWindow(QWidget *parent)
             memcpy(representation.ranges, ba.constData(), ba.size());
         }
 
-        var = settings.value("take_screenshots");
-        if(!var.isNull())
-        {
-            bool b = var.toBool();
-            ui->actionTake_Screenshots->setChecked(b);
-        }
-
         comboBox_visualizations->setCurrentIndex(settings.value("vis_option").toInt());
 
         var = settings.value("splitter_size_0");
@@ -165,13 +158,6 @@ MainWindow::MainWindow(QWidget *parent)
     {
         cameraReset_triggered();
     }
-
-
-    windowToImageFilter->SetInput(renderWindow);
-    windowToImageFilter->SetScale(1); // image quality
-    windowToImageFilter->SetInputBufferTypeToRGBA(); //also record the alpha (transparency) channel
-    windowToImageFilter->ReadFrontBufferOn(); // read from the back buffer
-    writerPNG->SetInputConnection(windowToImageFilter->GetOutputPort());
 
     connect(ui->action_quit, &QAction::triggered, this, &MainWindow::quit_triggered);
     connect(ui->action_camera_reset, &QAction::triggered, this, &MainWindow::cameraReset_triggered);
@@ -230,7 +216,6 @@ void MainWindow::quit_triggered()
     settings.setValue("splitter_size_0", szs[0]);
     settings.setValue("splitter_size_1", szs[1]);
 
-    settings.setValue("take_screenshots", ui->actionTake_Screenshots->isChecked());
     QApplication::quit();
 }
 
@@ -340,29 +325,6 @@ void MainWindow::background_worker_paused()
     ui->actionStart_Pause->setChecked(false);
     ui->actionStart_Pause->blockSignals(false);
     statusLabel->setText("simulation stopped");
-}
-
-void MainWindow::screenshot()
-{
-    if(model.prms.SimulationStep % model.prms.UpdateEveryNthStep) return;
-    QString outputPath = QDir::currentPath()+ "/" + screenshot_directory.c_str() + "/" +
-                         QString::number(model.prms.AnimationFrameNumber()).rightJustified(5, '0') + ".png";
-
-    QDir pngDir(QDir::currentPath()+ "/"+ screenshot_directory.c_str());
-    if(!pngDir.exists()) pngDir.mkdir(QDir::currentPath()+ "/"+ screenshot_directory.c_str());
-
-    renderWindow->DoubleBufferOff();
-    renderWindow->Render();
-    windowToImageFilter->SetInputBufferTypeToRGBA(); //also record the alpha (transparency) channel
-    renderWindow->WaitForCompletion();
-
-    windowToImageFilter->Update();
-    windowToImageFilter->Modified();
-
-    writerPNG->Modified();
-    writerPNG->SetFileName(outputPath.toUtf8().constData());
-    writerPNG->Write();
-    renderWindow->DoubleBufferOn();
 }
 
 

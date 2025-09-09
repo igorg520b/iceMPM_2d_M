@@ -40,8 +40,9 @@
 
 #include <vtkWindowToImageFilter.h>
 #include <vtkPNGWriter.h>
+#include <vtkJPEGWriter.h>
 
-#include "vtk_visualization.h"
+#include "vtk_representation.h"
 #include "framedata.h"
 
 
@@ -79,8 +80,7 @@ private Q_SLOTS:
 private:
     GeneralGridData ggd;
     FrameData frameData;
-
-    void OpenSnapshot(QString fileName);
+    icy::VisualRepresentation representation;
 
     QString settingsFileName;       // includes current dir
     QComboBox *comboBox_visualizations;
@@ -89,11 +89,12 @@ private:
     QSlider *slider2;
 
     // VTK
-    vtkRenderWindow *renderWindow;
-//    vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;
+    vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;
     QVTKOpenGLNativeWidget *qt_vtk_widget;
     vtkNew<vtkRenderer> renderer;
 
+    vtkNew<vtkWindowToImageFilter> windowToImageFilter;
+    vtkNew<vtkJPEGWriter> writer;
     // other
     vtkNew<vtkInteractorStyleImage> interactor;
 };
