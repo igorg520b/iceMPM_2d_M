@@ -39,6 +39,9 @@
 #include <vtkUniformGrid.h>
 
 #include "colormap.h"
+#include "parameters_sim.h"
+#include "host_side_soa.h"
+#include "windandcurrentinterpolator.h"
 
 namespace icy { class VisualRepresentation; class Model;}
 
@@ -49,8 +52,17 @@ class icy::VisualRepresentation : public QObject
 public:
     VisualRepresentation();
 
-    icy::Model *model;
+    const SimParams* prms = nullptr;
+    HostSideSOA* hssoa = nullptr;
+    const WindAndCurrentInterpolator* wac_interpolator = nullptr;
+    const uint8_t *grid_status_buffer = nullptr;
+    const t_GridReal *host_grid_buffer = nullptr;
+    const std::vector<uint8_t>* original_image_colors_rgb = nullptr;
+    const std::vector<uint8_t>* point_partitions = nullptr;
+
     double wind_visualization_time;
+
+//    icy::Model *model;
 
     enum VisOpt { none, status, Jp_inv, P, Q, color, v_u, v_v, v_norm, thickness, regions, ridges,
                   grid_Jpinv, grid_mass, grid_pointdensity, grid_P, grid_Q, grid_colors,
@@ -88,7 +100,5 @@ private:
     vtkNew<vtkPlaneSource> raster_plane;
     vtkNew<vtkTexture> raster_texture;
     vtkNew<vtkPolyDataMapper> raster_mapper;
-
-
 };
 #endif

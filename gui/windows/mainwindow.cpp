@@ -20,7 +20,6 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     params = new ParamsWrapper(&model.prms);
-    representation.model = &model;
     worker = new BackgroundWorker(&model);
 
     // VTK
@@ -103,7 +102,7 @@ MainWindow::MainWindow(QWidget *parent)
     slider1->setTracking(true);
     slider1->setMinimum(0);
     slider1->setMaximum(10000);
-    connect(slider1, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
+//    connect(slider1, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
 
 
     // read/restore saved settings
@@ -176,7 +175,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->action_quit, &QAction::triggered, this, &MainWindow::quit_triggered);
     connect(ui->action_camera_reset, &QAction::triggered, this, &MainWindow::cameraReset_triggered);
-    connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::open_snapshot_triggered);
     connect(ui->actionStart_Pause, &QAction::triggered, this, &MainWindow::simulation_start_pause);
     connect(ui->actionLoad_Parameters, &QAction::triggered, this, &MainWindow::load_parameter_triggered);
     connect(ui->actionPrint_Camera_Params, &QAction::triggered, this, &MainWindow::print_camera_params);
@@ -249,6 +247,7 @@ void MainWindow::limits_changed(double val_)
 {
     int idx = (int)representation.VisualizingVariable;
     representation.ranges[idx] = val_;
+    std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
     representation.SynchronizeTopology();
     renderWindow->Render();
 }
@@ -270,30 +269,6 @@ void MainWindow::cameraReset_triggered()
 }
 
 
-void MainWindow::open_snapshot_triggered()
-{
-    QString defaultPath = QDir::currentPath() + "/_data/snapshots";
-
-    // Check if the directory exists
-    if (!QDir(defaultPath).exists()) {
-        // Fall back to the current path if the default directory does not exist
-        defaultPath = QDir::currentPath();
-    }
-
-    QString qFileName = QFileDialog::getOpenFileName(this, "Open Simulation Snapshot", defaultPath, "HDF5 Files (*.h5)");
-    if(qFileName.isNull())return;
-    OpenSnapshot(qFileName);
-}
-
-void MainWindow::OpenSnapshot(QString fileName)
-{
-/*
-    model.snapshot.ReadSnapshot(fileName.toStdString());
-    representation.SynchronizeTopology();
-    pbrowser->setActiveObject(params);
-    updateGUI();
-*/
-}
 
 
 void MainWindow::load_parameter_triggered()
@@ -309,9 +284,6 @@ void MainWindow::load_parameter_triggered()
 void MainWindow::simulation_data_ready()
 {
     updateGUI();
-//    if(ui->actionTake_Screenshots->isChecked())
-//        screenshot();
-//    model.UnlockCycleMutex();
 }
 
 
@@ -334,17 +306,13 @@ void MainWindow::updateGUI()
 
     //statusLabel->setText(QString("per cycle: %1 ms").arg(model.compute_time_per_cycle,0,'f',3));
 
-    if(model.SyncTopologyRequired)
     {
+        std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
         model.SyncTopologyRequired = false;
         representation.SynchronizeTopology();
     }
-    else
-    {
-        representation.SynchronizeTopology();
-    }
-    renderWindow->Render();
 
+    renderWindow->Render();
     worker->visual_update_requested = false;
 }
 
@@ -404,9 +372,16 @@ void MainWindow::LoadParameterFile(QString qFileName, QString resumeSnapshot)
     model.LoadParameterFile(qFileName.toStdString(), resumeSnapshot.toStdString());
 
     this->setWindowTitle(qFileName);
-
-    representation.SynchronizeTopology();
     pbrowser->setActiveObject(params);
+
+    representation.prms = &model.prms;
+    representation.hssoa = &model.gpu.hssoa;
+    representation.wac_interpolator = &model.wac_interpolator;
+    representation.grid_status_buffer = model.gpu.grid_status_buffer.data();
+    representation.host_grid_buffer = model.gpu.host_grid_buffer.data();
+
+    representation.original_image_colors_rgb = &model.gpu.original_image_colors_rgb;
+    representation.point_partitions = &model.gpu.point_partitions;
     updateGUI();
 }
 
@@ -449,6 +424,7 @@ void MainWindow::sliderValueChanged(int val)
 void MainWindow::parameters_updated()
 {
     qDebug() << "MainWindow::parameters_updated(); ptsize " << model.prms.ParticleViewSize;
+    std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
     representation.SynchronizeTopology();
     renderWindow->Render();
 }

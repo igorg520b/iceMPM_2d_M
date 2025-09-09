@@ -2,7 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <thread>
-
+#include "parameters_sim.h"
 
 bool icy::Model::Step()
 {

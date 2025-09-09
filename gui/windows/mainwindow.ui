@@ -28,7 +28,6 @@
     <property name="title">
      <string>File</string>
     </property>
-    <addaction name="actionOpen"/>
     <addaction name="actionLoad_Parameters"/>
     <addaction name="actionLoad_FLUENT_Result"/>
     <addaction name="separator"/>
@@ -99,18 +98,6 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+Q</string>
-   </property>
-  </action>
-  <action name="actionOpen">
-   <property name="icon">
-    <iconset resource="../../icons.qrc">
-     <normaloff>:/gui/icons/open-file-folder-svgrepo-com.svg</normaloff>:/gui/icons/open-file-folder-svgrepo-com.svg</iconset>
-   </property>
-   <property name="text">
-    <string>Open Snapshot...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+O</string>
    </property>
   </action>
   <action name="actionStart_Pause">

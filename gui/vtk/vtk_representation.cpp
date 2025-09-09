@@ -1,33 +1,30 @@
-#include "vtk_representation.h"
-#include "model.h"
-#include "parameters_sim.h"
-#include "gpu_partition.h"
-//#include <omp.h>
+#include "vtk_representation.h" // Assuming your header is now vtk_representation.hh or similar
 #include <algorithm>
 #include <iostream>
 #include <spdlog/spdlog.h>
 
+#include "parameters_sim.h"
+#include "host_side_soa.h"
+#include "windandcurrentinterpolator.h"
 
+
+
+// Constructor remains the same
 icy::VisualRepresentation::VisualRepresentation()
 {
+    LOGV("icy::VisualRepresentation::VisualRepresentation() constructor");
     populateLut(ColorMap::Palette::Pressure, lut_Pressure);
     populateLut(ColorMap::Palette::P2, lut_P2);
     populateLut(ColorMap::Palette::ANSYS, lut_ANSYS);
     populateLut(ColorMap::Palette::Ridges, lut_Ridges);
 
-
-    // points
     pts_colors->SetNumberOfComponents(3);
     pts_colors->SetName("pts_colors");
-
     points_polydata->SetPoints(points);
     points_polydata->GetPointData()->AddArray(pts_colors);
-
     points_filter->SetInputData(points_polydata);
     points_filter->Update();
-
     points_mapper->SetInputData(points_filter->GetOutput());
-
     actor_points->SetMapper(points_mapper);
     actor_points->GetProperty()->SetPointSize(2);
     actor_points->GetProperty()->SetVertexColor(1,0,0);
@@ -36,9 +33,6 @@ icy::VisualRepresentation::VisualRepresentation()
     actor_points->GetProperty()->ShadingOff();
     actor_points->GetProperty()->SetInterpolationToFlat();
     actor_points->PickableOff();
-
-    // scalar bar
-    //scalarBar->SetLookupTable(lutMPM);
     scalarBar->SetMaximumWidthInPixels(150);
     scalarBar->SetBarRatio(0.1);
     scalarBar->SetMaximumHeightInPixels(200);
@@ -49,8 +43,6 @@ icy::VisualRepresentation::VisualRepresentation()
     scalarBar->GetLabelTextProperty()->ItalicOff();
     scalarBar->GetLabelTextProperty()->ShadowOff();
     scalarBar->GetLabelTextProperty()->SetColor(0.1,0.1,0.1);
-
-    // text
     vtkTextProperty* txtprop = actorText->GetTextProperty();
     txtprop->SetFontFamilyToArial();
     txtprop->BoldOff();
@@ -58,464 +50,331 @@ icy::VisualRepresentation::VisualRepresentation()
     txtprop->ShadowOff();
     txtprop->SetColor(0,0,0);
     actorText->SetDisplayPosition(500, 30);
+    LOGV("icy::VisualRepresentation::VisualRepresentation() constructor done");
 }
+
+void icy::VisualRepresentation::ChangeVisualizationOption(int option)
+{
+    LOGR("void icy::VisualRepresentation::ChangeVisualizationOption {}", option);
+    // This function remains unchanged as it only modifies internal state
+    VisualizingVariable = (VisOpt)option;
+    SynchronizeTopology();
+}
+
+
+// The populateLut helper function has no dependencies and remains unchanged.
+void icy::VisualRepresentation::populateLut(ColorMap::Palette palette, vtkNew<vtkLookupTable>& table)
+{
+    const std::vector<Eigen::Vector3f>& colorTable = ColorMap::getColorTable(palette);
+    int size = static_cast<int>(colorTable.size());
+    if (size < 2) { return; }
+    const int m = 256;
+    table->SetNumberOfTableValues(m);
+    table->Build();
+    for (int i = 0; i < m; ++i) {
+        float t = static_cast<float>(i) / (m - 1);
+        float scaledT = t * (size - 1);
+        int lowerIdx = static_cast<int>(std::floor(scaledT));
+        int upperIdx = static_cast<int>(std::ceil(scaledT));
+        float localT = scaledT - lowerIdx;
+        const Eigen::Vector3f& lowerColor = colorTable[lowerIdx];
+        const Eigen::Vector3f& upperColor = colorTable[upperIdx];
+        Eigen::Vector3f interpolatedColor = (1.0f - localT) * lowerColor + localT * upperColor;
+        table->SetTableValue(i, interpolatedColor[0], interpolatedColor[1], interpolatedColor[2], 1.0);
+    }
+}
+
+
 
 
 
 void icy::VisualRepresentation::SynchronizeTopology()
 {
-    //LOGV("SynchronizeTopology()");
-    std::lock_guard<std::mutex> lg(model->lock_data_for_GUI);
-
-    const int &width = model->prms.InitializationImageSizeX;
-    const int &height = model->prms.InitializationImageSizeY;
-    const int &ox = model->prms.ModeledRegionOffsetX;
-    const int &oy = model->prms.ModeledRegionOffsetY;
-    const int &gx = model->prms.GridXTotal;
-    const int &gy = model->prms.GridYTotal;
-    const double &h = model->prms.cellsize;
-    const double range = std::pow(10,ranges[VisualizingVariable]);
-
-
-//    if(!model->gpu.original_image_colors_rgb.size()) return;
-    if(model->gpu.host_grid_buffer.empty())
+    LOGR("icy::VisualRepresentation::SynchronizeTopology(): {}", (int) VisualizingVariable);
+    // --- Step 1: Safety checks ---
+    if (!prms || !host_grid_buffer || !grid_status_buffer || !original_image_colors_rgb) {
+        LOGV("VisualRepresentation::SynchronizeTopology - Aborting: Essential data pointers are not set.");
         return;
+    }
 
-    // (1) background image (but cover the modelled area in blue)
-    renderedImage.assign(model->gpu.original_image_colors_rgb.begin(), model->gpu.original_image_colors_rgb.end());
+    // --- Step 2: Cache frequently used parameters ---
+    const int width = prms->InitializationImageSizeX;
+    const int height = prms->InitializationImageSizeY;
+    const int ox = prms->ModeledRegionOffsetX;
+    const int oy = prms->ModeledRegionOffsetY;
+    const int gx = prms->GridXTotal;
+    const int gy = prms->GridYTotal;
+    const size_t gridSize = (size_t)gx * gy;
+    const double h = prms->cellsize;
+    const double range = std::pow(10, ranges[VisualizingVariable]);
+
+    // --- Step 3: Update Raster (Background) Image ---
+    renderedImage.assign(original_image_colors_rgb->begin(), original_image_colors_rgb->end());
     const std::array<uint8_t, 3> _rgb_water = {0x15, 0x1f, 0x2f};
 
-    for(size_t i=0;i<gx;i++)
-        for(size_t j=0;j<gy;j++)
-        {
-            uint8_t status = model->gpu.grid_status_buffer[j + i*gy];
+    for (int i = 0; i < gx; i++) {
+        for (int j = 0; j < gy; j++) {
+            const size_t grid_idx = (size_t)j + (size_t)i * gy;
+            const size_t render_idx = ((i + ox) + (j + oy) * width) * 3;
 
-            if(status == 100)
-            {
-                if(VisualizingVariable == VisOpt::v_norm)
-                {
-                    // visualize current flow
-                    size_t idx2 = j + i*gy;
-                    t_GridReal vx = model->wac_interpolator.current_flow_data[idx2];
-                    t_GridReal vy = model->wac_interpolator.current_flow_data[idx2 + gx*gy];
-                    float norm = sqrt(vx*vx + vy*vy);
+            if (grid_status_buffer[grid_idx] == 100) { // Modeled area
+                // Common alpha calculation for blended visualizations
+                t_GridReal val_pt_density = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_pts_density];
+                float alpha = std::min((double)val_pt_density * (2.0 / 5.0), 1.0);
 
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, norm/range);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-                }
-                else if(VisualizingVariable == VisOpt::v_u)
-                {
-                    // visualize current flow
-                    size_t idx2 = j + i*gy;
-                    t_GridReal vx = model->wac_interpolator.current_flow_data[idx2];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, 0.5+vx/range);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-                }
-                else if(VisualizingVariable == VisOpt::v_v)
-                {
-                    // visualize current flow
-                    size_t idx2 = j + i*gy;
-                    t_GridReal vy = model->wac_interpolator.current_flow_data[idx2 + gx*gy];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, 0.5+vy/range);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-                }
-
-                else if(VisualizingVariable == VisOpt::grid_mass)
-                {
-                    size_t idx = (size_t)i * gy + j + gx*gy*SimParams::grid_idx_mass;
-                    t_GridReal val = model->gpu.host_grid_buffer[idx];
+                if (VisualizingVariable == VisOpt::grid_mass) {
+                    t_GridReal val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_mass];
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
                 }
-
-                else if(VisualizingVariable == VisOpt::grid_colors)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
+                else if (VisualizingVariable == VisOpt::grid_colors) {
                     std::array<uint8_t, 3> _rgb;
-                    for(int k=0;k<3;k++)
-                    {
-                        float v = model->gpu.host_grid_buffer[idx + gx*gy*(SimParams::grid_idx_vis_r+k)];
-                        float cv = std::clamp(v, 0.f,1.f);
-                        _rgb[k] = (uint8_t)(cv*255);
+                    for (int k = 0; k < 3; k++) {
+                        float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
+                        _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
                     }
                     std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-//                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = _rgb[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
                 }
-                else if(VisualizingVariable == VisOpt::grid_Jpinv)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
+                else if (VisualizingVariable == VisOpt::grid_Jpinv) {
                     std::array<uint8_t, 3> _rgb;
-                    for(int k=0;k<3;k++)
-                    {
-                        float v = model->gpu.host_grid_buffer[idx + gx*gy*(SimParams::grid_idx_vis_r+k)];
-                        float cv = std::clamp(v, 0.f,1.f);
-                        _rgb[k] = (uint8_t)(cv*255);
+                    for (int k = 0; k < 3; k++) {
+                        float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
+                        _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
                     }
                     std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
-
-
-                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_Jpinv]-1;
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5*val/range + 0.5);
-
-                    const float mix_original_color = std::abs(val/range*alpha);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix_original_color);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Jpinv] - 1.0f;
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
+                    const float mix = std::abs(val / range * alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-                else if(VisualizingVariable == VisOpt::grid_P)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_P];
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5*val/range + 0.5);
+                else if (VisualizingVariable == VisOpt::grid_P) {
+                    float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_P];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-                else if(VisualizingVariable == VisOpt::grid_Q)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_Q];
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                else if (VisualizingVariable == VisOpt::grid_Q) {
+                    float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Q];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-                else if(VisualizingVariable == VisOpt::grid_vnorm)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    float vx = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_px];
-                    float vy = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_py];
-                    float val = std::sqrt(vx*vx+vy*vy);
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                else if (VisualizingVariable == VisOpt::grid_vnorm) {
+                    float vx = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_px];
+                    float vy = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_py];
+                    float val = std::sqrt(vx * vx + vy * vy);
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-
-                else if(VisualizingVariable == VisOpt::str_EqvGreenLagrange)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_strain_EqvGreenLagrange];
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange) {
+                    float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_EqvGreenLagrange];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-                else if(VisualizingVariable == VisOpt::str_vonMises)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    float val = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_strain_vonMises];
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
+                else if (VisualizingVariable == VisOpt::str_vonMises) {
+                    float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_vonMises];
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-                else if(VisualizingVariable == VisOpt::grid_pointdensity)
-                {
-                    size_t idx = (size_t)i * gy + j;
-                    // first obtain rgb colors as in VisOpt::grid_colors
-                    t_GridReal val_pt_density = model->gpu.host_grid_buffer[idx + gx*gy*SimParams::grid_idx_vis_pts_density];
-                    float val = val_pt_density;
-                    val_pt_density *= (2./5.);
-                    float alpha = std::min((double)val_pt_density, 1.);
-
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, val/range);
+                else if (VisualizingVariable == VisOpt::grid_pointdensity) {
+                    float val = val_pt_density; // Use the value before alpha scaling
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, val / range);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c2[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-
-
-            }
-            else
-            {
-                // not modelled area
-                if(VisualizingVariable == VisOpt::regions)
-                {
-                    // visualize current flow
-                    size_t idx2 = j + i*gy;
-                    uint8_t region_id = model->gpu.grid_status_buffer[idx2];
-                    float val = (region_id % 13) / 12.;
+                // Wind/current data visualization
+                else if (wac_interpolator) {
+                    if(VisualizingVariable == VisOpt::v_norm) {
+                        t_GridReal vx = wac_interpolator->current_flow_data[grid_idx];
+                        t_GridReal vy = wac_interpolator->current_flow_data[grid_idx + gridSize];
+                        float norm = sqrt(vx * vx + vy * vy);
+                        std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, norm / range);
+                        for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
+                    } else if(VisualizingVariable == VisOpt::v_u) {
+                        t_GridReal vx = wac_interpolator->current_flow_data[grid_idx];
+                        std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, 0.5 + vx / range);
+                        for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
+                    } else if(VisualizingVariable == VisOpt::v_v) {
+                        t_GridReal vy = wac_interpolator->current_flow_data[grid_idx + gridSize];
+                        std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, 0.5 + vy / range);
+                        for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
+                    }
+                }
+            } else { // Non-modeled area
+                if(VisualizingVariable == VisOpt::regions) {
+                    uint8_t region_id = grid_status_buffer[grid_idx];
+                    float val = (region_id % 13) / 12.0f;
                     std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pastel, val);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
                 }
-/*
-                if(VisualizingVariable == VisOpt::grid_force)
-                {
-                    size_t idx2 = j + i*gy;
-                    t_GridReal fx = model->gpu.grid_boundary_forces[idx2];
-                    t_GridReal fy = model->gpu.grid_boundary_forces[idx2 + gx*gy];
-                    float norm = sqrt(fx*fx + fy*fy);
-
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, norm/range);
-                    for(int k=0;k<3;k++) renderedImage[((i+ox) + (j+oy)*width)*3+k] = c[k];
-                }
-*/
             }
         }
+    }
 
-
-    raster_scalars->SetNumberOfComponents(3);          // RGB has 3 components
+    // --- Step 4: Update VTK objects for the raster image ---
+    raster_scalars->SetNumberOfComponents(3);
     raster_scalars->SetArray(renderedImage.data(), renderedImage.size(), 1);
     raster_scalars->Modified();
-
-    raster_imageData->SetDimensions(width, height, 1); // 2D image, depth = 1
-    raster_imageData->SetSpacing(1.0, 1.0, 1.0);      // Pixel spacing
-    raster_imageData->SetOrigin(0.0, 0.0, 0.0);       // Origin at (0,0,0)
+    raster_imageData->SetDimensions(width, height, 1);
     raster_imageData->GetPointData()->SetScalars(raster_scalars);
-
-    raster_plane->SetOrigin(-h/2, -h/2, -1.0);           // Bottom-left corner
-    raster_plane->SetPoint1((width-0.5)*h, -h/2, -1.0);         // Bottom-right (x-axis)
-    raster_plane->SetPoint2(-h/2, (height-0.5)*h, -1.0);        // Top-left (y-axis)
-    raster_plane->SetNormal(0.0, 0.0, 1.0);           // Normal along z-axis (facing forward)
-
+    raster_plane->SetOrigin(-h / 2, -h / 2, -1.0);
+    raster_plane->SetPoint1((width - 0.5) * h, -h / 2, -1.0);
+    raster_plane->SetPoint2(-h / 2, (height - 0.5) * h, -1.0);
     raster_mapper->SetInputConnection(raster_plane->GetOutputPort());
-
     raster_texture->SetInputData(raster_imageData);
-    raster_texture->InterpolateOff(); // Smooth texture rendering
-
     raster_actor->SetMapper(raster_mapper);
     raster_actor->SetTexture(raster_texture);
-
     raster_mapper->Update();
     raster_texture->Update();
 
-
-
-    // (2) points
-    const int nPts = model->gpu.hssoa.size;
-    if(!nPts) return;
-
-    points->SetNumberOfPoints(nPts);
-    pts_colors->SetNumberOfValues(nPts*3);
-
+    // --- Step 5: Update Points ---
     SynchronizeValues();
 }
 
-
 void icy::VisualRepresentation::SynchronizeValues()
 {
-    const int &width = model->prms.InitializationImageSizeX;
-    const int &height = model->prms.InitializationImageSizeY;
-    const int &ox = model->prms.ModeledRegionOffsetX;
-    const int &oy = model->prms.ModeledRegionOffsetY;
-    const int &gx = model->prms.GridXTotal;
-    const int &gy = model->prms.GridYTotal;
-    const double &h = model->prms.cellsize;
-
-    // points' coordinates
-    const int nPts = model->gpu.hssoa.size;
-    for(int i=0;i<nPts;i++)
-    {
-        SOAIterator s = model->gpu.hssoa.begin()+i;
-        PointVector2r pos = s->getPos(model->prms.cellsize);
-        points->SetPoint((vtkIdType)i, pos[0]+ox*h, pos[1]+oy*h, 1.0);
+    // --- Step 1: Safety checks and parameter caching ---
+    if (!prms || !hssoa) {
+        actor_points->VisibilityOff();
+        return;
+    }
+    const int nPts = hssoa->size;
+    if (nPts == 0) {
+        actor_points->VisibilityOff();
+        return;
     }
 
+    // --- Step 2: Update point geometry and color arrays ---
+    points->SetNumberOfPoints(nPts);
+    pts_colors->SetNumberOfValues(nPts * 3);
 
-    // point visibility and color
+    const int ox = prms->ModeledRegionOffsetX;
+    const int oy = prms->ModeledRegionOffsetY;
+    const double h = prms->cellsize;
+
+    for (int i = 0; i < nPts; i++) {
+        SOAIterator s = hssoa->begin() + i;
+        PointVector2r pos = s->getPos(prms->cellsize);
+        points->SetPoint((vtkIdType)i, pos[0] + ox * h, pos[1] + oy * h, 1.0);
+    }
+
+    // --- Step 3: Update point visibility and colors ---
     actor_points->VisibilityOn();
     scalarBar->VisibilityOff();
     points_mapper->ScalarVisibilityOn();
     points_mapper->SetColorModeToDirectScalars();
-    points_mapper->Modified();
 
-    const double range = std::pow(10,ranges[VisualizingVariable]);
+    const double range = std::pow(10, ranges[VisualizingVariable]);
 
-    if(VisualizingVariable == VisOpt::color)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
-            int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
-            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
-            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
-            pts_colors->SetValue((vtkIdType)(i*3+0), r);
-            pts_colors->SetValue((vtkIdType)(i*3+1), g);
-            pts_colors->SetValue((vtkIdType)(i*3+2), b);
+    if (VisualizingVariable == VisOpt::color) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
+            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 0) * 255);
+            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 1) * 255);
+            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 2) * 255);
+            pts_colors->SetTuple3((vtkIdType)i, r, g, b);
         }
-    }
-    else if(VisualizingVariable == VisOpt::status)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
-            bool crushed = s->getCrushedStatus();
-            bool disabled = s->getDisabledStatus();
-
-            double val = 0;
-            if(crushed) val = 1;
-            if(disabled) val = 2;
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, val/2.);
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c[k]);
+    } else if (VisualizingVariable == VisOpt::status) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
+            double val = s->getCrushedStatus() ? 1.0 : (s->getDisabledStatus() ? 2.0 : 0.0);
+            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, val / 2.0);
+            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
-    }
-    else if(VisualizingVariable == VisOpt::none || VisualizingVariable == VisOpt::regions)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-//            SOAIterator s = model->gpu.hssoa.begin()+i;
-            pts_colors->SetValue((vtkIdType)(i*3+0), 240);
-            pts_colors->SetValue((vtkIdType)(i*3+1), 122);
-            pts_colors->SetValue((vtkIdType)(i*3+2), 122);
+    } else if (VisualizingVariable == VisOpt::none || VisualizingVariable == VisOpt::regions) {
+        for (int i = 0; i < nPts; i++) {
+            pts_colors->SetTuple3((vtkIdType)i, 240, 122, 122);
         }
-    }
-    else if(VisualizingVariable == VisOpt::Jp_inv)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
-
-            double val = s->getValue(SimParams::idx_Jp_inv)-1.;
-            double value = (val)/range + 0.5;
-            double alpha = abs(val)/range;
-            int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
-            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
-            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
-            uint32_t rgb = ((r << 16) | (g << 8) | b);
-
-//            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
+    } else if (VisualizingVariable == VisOpt::Jp_inv) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
+            double val = s->getValue(SimParams::idx_Jp_inv) - 1.0;
+            double value = (val) / range + 0.5;
+            double alpha = std::min(1.0, std::abs(val) / range);
+            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 0) * 255);
+            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 1) * 255);
+            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 2) * 255);
+            std::array<uint8_t, 3> original_color = {r, g, b};
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pressure, value);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
+            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
-    }
-    else if(VisualizingVariable == VisOpt::ridges)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
-
-            double val = s->getValue(SimParams::idx_Jp_inv)-1.;
-            double value = (val)/range;
-            double alpha = val > 0 ? 1 : 0;
-            int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
-            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
-            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
-            uint32_t rgb = ((r << 16) | (g << 8) | b);
-
-            //uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Ridges, value);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
+    } else if (VisualizingVariable == VisOpt::ridges) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
+            double val = s->getValue(SimParams::idx_Jp_inv) - 1.0;
+            double alpha = val > 0 ? 1.0 : 0.0;
+            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 0) * 255);
+            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 1) * 255);
+            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 2) * 255);
+            std::array<uint8_t, 3> original_color = {r, g, b};
+            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Ridges, val / range);
+            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
         lut_Ridges->SetTableRange(0, range);
         scalarBar->SetLookupTable(lut_Ridges);
         scalarBar->SetLabelFormat("%.2f");
         scalarBar->VisibilityOn();
-    }
-    else if(VisualizingVariable == VisOpt::P)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
-
+    } else if (VisualizingVariable == VisOpt::P) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
             const double val = s->getValue(SimParams::idx_P);
-            double value = (val)/range+0.5;
-            double alpha = abs(val)/range;
-
-            int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-//            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
-            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
-            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
-            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
-            uint32_t rgb = ((r << 16) | (g << 8) | b);
-
-
+            double value = val / range + 0.5;
+            double alpha = std::min(1.0, std::abs(val) / range);
+            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 0) * 255);
+            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 1) * 255);
+            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 2) * 255);
+            std::array<uint8_t, 3> original_color = {r, g, b};
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pressure, value);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
+            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
-    }
-    else if(VisualizingVariable == VisOpt::Q)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
+    } else if (VisualizingVariable == VisOpt::Q) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
             double val = s->getValue(SimParams::idx_Q);
-            double value = (val)/range+0.5;
-            double alpha = abs(val)/range;
-
-            int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-//            uint32_t rgb = model->gpu.point_colors_rgb[pt_idx];
-            uint32_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+0)*255);
-            uint32_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+1)*255);
-            uint32_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB+2)*255);
-            uint32_t rgb = ((r << 16) | (g << 8) | b);
-
-
+            double value = val / range + 0.5;
+            double alpha = std::min(1.0, std::abs(val) / range);
+            uint8_t r = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 0) * 255);
+            uint8_t g = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 1) * 255);
+            uint8_t b = (uint8_t)(s->getValue(SimParams::idx_pt_color_RGB + 2) * 255);
+            std::array<uint8_t, 3> original_color = {r, g, b};
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::P2, value);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(rgb, c, alpha);
-
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c2[k]);
+            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
-    }
-    else if(VisualizingVariable == VisOpt::thickness)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
+    } else if (VisualizingVariable == VisOpt::thickness) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
             double val = s->getValue(SimParams::idx_thickness);
-            double value = (val)/range;
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, value);
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c[k]);
+            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
         lut_ANSYS->SetTableRange(0, range);
         scalarBar->SetLookupTable(lut_ANSYS);
         scalarBar->SetLabelFormat("%.2f");
         scalarBar->VisibilityOn();
-    }
-    else if(VisualizingVariable == VisOpt::partitions)
-    {
-        for(int i=0;i<nPts;i++)
-        {
-            SOAIterator s = model->gpu.hssoa.begin()+i;
+    } else if (VisualizingVariable == VisOpt::partitions && point_partitions) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa->begin() + i;
             int pt_idx = s->getValueInt(SimParams::integer_point_idx);
-            uint8_t partition_idx = model->gpu.point_partitions[pt_idx];
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, partition_idx/8.);
-            for(int k=0;k<3;k++) pts_colors->SetValue((vtkIdType)(i*3+k), c[k]);
+            if (pt_idx < point_partitions->size()) {
+                uint8_t partition_idx = (*point_partitions)[pt_idx];
+                std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, partition_idx / 8.0);
+                pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
+            }
         }
-    }
-    else
-    {
+    } else {
         actor_points->VisibilityOff();
     }
 
+    // --- Step 4: Notify VTK that data has changed ---
     points_filter->Update();
 
     points_polydata->GetPointData()->SetActiveScalars("pts_colors");
@@ -523,51 +382,8 @@ void icy::VisualRepresentation::SynchronizeValues()
     points_polydata->Modified();
     points->Modified();
 
-    actor_points->GetProperty()->SetPointSize(model->prms.ParticleViewSize);
+    actor_points->GetProperty()->SetPointSize(prms->ParticleViewSize);
 }
 
-
-void icy::VisualRepresentation::ChangeVisualizationOption(int option)
-{
-    VisualizingVariable = (VisOpt)option;
-    SynchronizeTopology();
-}
-
-
-
-
-void icy::VisualRepresentation::populateLut(ColorMap::Palette palette, vtkNew<vtkLookupTable>& table)
-{
-    const std::vector<Eigen::Vector3f>& colorTable = ColorMap::getColorTable(palette);
-    int size = static_cast<int>(colorTable.size());
-
-    if (size < 2) {
-        std::cerr << "Error: Colormap must have at least two colors." << std::endl;
-        return;
-    }
-
-    const int m = 256;  // Number of colors in the lookup table
-    table->SetNumberOfTableValues(m);
-    table->Build();
-
-    for (int i = 0; i < m; ++i) {
-        float t = static_cast<float>(i) / (m - 1); // Normalize index to [0, 1]
-
-        // Scale t to the range [0, size-1] for interpolation
-        float scaledT = t * (size - 1);
-        int lowerIdx = static_cast<int>(std::floor(scaledT));
-        int upperIdx = static_cast<int>(std::ceil(scaledT));
-        float localT = scaledT - lowerIdx; // Fractional part for interpolation
-
-        // Interpolate RGB components
-        const Eigen::Vector3f& lowerColor = colorTable[lowerIdx];
-        const Eigen::Vector3f& upperColor = colorTable[upperIdx];
-
-        Eigen::Vector3f interpolatedColor = (1.0f - localT) * lowerColor + localT * upperColor;
-
-        // Set interpolated color in the lookup table
-        table->SetTableValue(i, interpolatedColor[0], interpolatedColor[1], interpolatedColor[2], 1.0);
-    }
-}
 
 

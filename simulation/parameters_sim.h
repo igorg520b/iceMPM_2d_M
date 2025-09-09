@@ -2,10 +2,10 @@
 #define P_SIM_H
 
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/fmt.h>
 
 #define LOGR(fmtstr, ...) spdlog::info(fmt::format(fmt::runtime(fmtstr), __VA_ARGS__))
 #define LOGV(fmtstr) spdlog::info(fmtstr)
-
 
 #include <iostream>
 #include <string>

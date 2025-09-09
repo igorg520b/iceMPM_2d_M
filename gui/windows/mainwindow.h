@@ -79,7 +79,6 @@ private Q_SLOTS:
 
     void simulation_start_pause(bool checked);
     void cameraReset_triggered();
-    void open_snapshot_triggered();
     void load_parameter_triggered();
 
     void comboboxIndexChanged_visualizations(int index);
