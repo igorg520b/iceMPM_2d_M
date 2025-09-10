@@ -573,7 +573,6 @@ void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)
     ds_rgb.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &SimulationStep);
     ds_rgb.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &SimulationTime);
 
-
     // save vx, vy, Jpinv, P, Q, point_density, mass, str_EqvGreenLagrange, str_vonMises
 
     hsize_t dims_grid[2] = {(hsize_t)gx, (hsize_t)gy};

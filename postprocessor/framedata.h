@@ -30,7 +30,7 @@ struct FrameData
 
 private:
     static void readGridDataset(const H5::H5File& file, const std::string& dataset_name,
-                                std::vector<t_GridReal>& dest_buffer, size_t offset, size_t plane_size);
+                                std::vector<t_GridReal>& dest_buffer, size_t offset);
 };
 
 #endif // FRAMEDATA_H

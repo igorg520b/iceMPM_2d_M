@@ -27,10 +27,14 @@ PPMainWindow::PPMainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    setCentralWidget(scrollArea);
     // VTK
     qt_vtk_widget = new QVTKOpenGLNativeWidget();
     qt_vtk_widget->setRenderWindow(renderWindow);
-    setCentralWidget(qt_vtk_widget);
+    scrollArea->setWidget(qt_vtk_widget);
+
 
     renderer->SetBackground(1.0,1.0,1.0);
     renderWindow->AddRenderer(renderer);
@@ -38,8 +42,8 @@ PPMainWindow::PPMainWindow(QWidget *parent)
 
 
     renderer->AddActor(representation.raster_actor);
-//    renderer->AddActor(representation.scalarBar);
-//    renderer->AddActor(representation.actorText);
+    renderer->AddActor(representation.scalarBar);
+    renderer->AddActor(representation.actorText);
 
     // toolbar - combobox
     comboBox_visualizations = new QComboBox();
@@ -87,7 +91,6 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         QSettings settings(settingsFileName,QSettings::IniFormat);
         QVariant var;
 
-
         var = settings.value("camData");
         if(!var.isNull())
         {
@@ -123,7 +126,6 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     connect(ui->action_camera_reset, &QAction::triggered, this, &PPMainWindow::cameraReset_triggered);
     connect(ui->actionRender_Frame, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
     connect(ui->actionRender_All, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
-    connect(ui->actionGenerate_Script, &QAction::triggered, this, &PPMainWindow::generate_ffmpeg_script);
     connect(qdsbValRange,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
 
     // off-screen rendering
@@ -224,14 +226,12 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
 
     slider2->setMaximum(ggd.countFrames);
 
-    qsbFrameTo->setMaximum(ggd.countFrames);
-    qsbFrameTo->setValue(ggd.countFrames);
+    qsbFrameTo->setMaximum(ggd.countFrames-1);
+    qsbFrameTo->setValue(ggd.countFrames-1);
 
     qsbFrameFrom->setMaximum(ggd.countFrames-1);
-    qsbFrameFrom->setValue(1);
-    slider2->setValue(ggd.countFrames);
-
-    generate_ffmpeg_script();
+    qsbFrameFrom->setValue(0);
+    slider2->setValue(ggd.countFrames-1);
 }
 
 void PPMainWindow::sliderValueChanged(int val)
@@ -261,187 +261,193 @@ void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 
 void PPMainWindow::render_frame_triggered()
 {
-    /*
-    qDebug() << "render_frame_triggered() ";
-    try
-    {
-        const int selectedFrame = slider2->value();
-        qDebug() << "render_frame_triggered() " << selectedFrame;
+    qDebug() << "render_frame_triggered()";
+    std::string visName = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>().valueToKey(representation.VisualizingVariable);
+    const int selectedFrame = slider2->value();
+    std::string filename = visName + "_" + std::to_string(selectedFrame) + ".jpg";
 
+    const QSizePolicy originalPolicy = qt_vtk_widget->sizePolicy();
 
-        FrameData fd(ggd,1);
+    scrollArea->setWidgetResizable(false);
+    qt_vtk_widget->setFixedSize(1920, 1080);
+    QCoreApplication::processEvents();
 
-        vtkCamera *cam = renderer->GetActiveCamera();
-        fd.SetUpOffscreenRender(this->frameData, cam);
-        qDebug() << "fd.SetUpOffscreenRender(this->frameData, cam);";
-        fd.UpdateQueue(selectedFrame, ggd.countFrames);
-        qDebug() << "fd.UpdateQueue(selectedFrame, ggd.countFrames);";
-        fd.RenderFrame(frameData.representation.VisualizingVariable);
-    }
-    catch(...)
-    {
-        qDebug() << "something went wrong";
-    }
-*/
+    windowToImageFilter->SetInput(renderWindow);
+    writer->SetInputConnection(windowToImageFilter->GetOutputPort());
+
+    renderWindow->DoubleBufferOff();
+    renderWindow->Render();
+    windowToImageFilter->SetInputBufferTypeToRGB();
+    renderWindow->WaitForCompletion();
+
+    writer->SetFileName(filename.c_str());
+    writer->Write();
+
+    renderWindow->DoubleBufferOn();
+
+    qt_vtk_widget->setMinimumSize(0, 0);
+    qt_vtk_widget->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    qt_vtk_widget->setSizePolicy(originalPolicy);
+    scrollArea->setWidgetResizable(true);
+    QCoreApplication::processEvents();
 }
 
 
 void PPMainWindow::render_all_triggered()
 {
-    /*
+    qDebug() << "render_all_triggered() started.";
+
+    // --- 1. Define the Batch Job & Validate Inputs ---
     const int frameFrom = qsbFrameFrom->value();
     const int frameTo = qsbFrameTo->value();
-    const int totalFramesInRange = (frameTo - frameFrom) + 1;
+    generate_ffmpeg_script(frameFrom, frameTo);
 
-    if (totalFramesInRange <= 0) {
-        qDebug() << "PPMainWindow::render_all_triggered() - Invalid frame range.";
+
+    if (frameTo < frameFrom) {
         QMessageBox::warning(this, "Invalid Range", "Frame 'To' must be greater than or equal to Frame 'From'.");
         return;
     }
+    const int totalFrames = (frameTo - frameFrom) + 1;
 
-    qDebug() << "PPMainWindow::render_all_triggered() from frame" << frameFrom << "to" << frameTo;
+    // --- 2. Set Up Progress Dialog ---
+    const int totalOperations = totalFrames * m_visOptsToRender.size();
+    QProgressDialog progress("Rendering all frames...", "Abort", 0, totalOperations, this);
+    progress.setWindowModality(Qt::WindowModal);
+    QCoreApplication::processEvents();
 
-    std::vector<VTKVisualization::VisOpt> visOptsToRender = {
-                                                             VTKVisualization::VisOpt::ridges
-        ,VTKVisualization::VisOpt::Jp_inv
-//        ,VTKVisualization::VisOpt::colors
-        ,VTKVisualization::VisOpt::P
-        ,VTKVisualization::VisOpt::Q
-//        ,VTKVisualization::VisOpt::grid_vnorm
-    };
+    // --- 3. Prepare for Batch Rendering (Done ONCE) ---
+    const QSizePolicy originalPolicy = qt_vtk_widget->sizePolicy();
+    scrollArea->setWidgetResizable(false);
+    qt_vtk_widget->setFixedSize(1920, 1080);
+    QCoreApplication::processEvents();
 
-    if (visOptsToRender.empty()) {
-        qDebug() << "No visualization options selected for rendering.";
-        QMessageBox::information(this, "Nothing to Render", "No visualization types were specified for batch rendering.");
+    renderWindow->DoubleBufferOff();
+    windowToImageFilter->SetInput(renderWindow);
+    windowToImageFilter->SetInputBufferTypeToRGB();
+    writer->SetInputConnection(windowToImageFilter->GetOutputPort());
+
+    // --- 4. Main Batch Processing Loop ---
+    int operationCount = 0;
+    for (int frameNum = frameFrom; frameNum <= frameTo; ++frameNum) {
+        if (progress.wasCanceled()) break;
+
+        progress.setLabelText(QString("Loading frame %1...").arg(frameNum));
+        QCoreApplication::processEvents();
+
+        if (!frameData.LoadFrame(frameNum)) {
+            LOGR("Failed to load frame {}, skipping.", frameNum);
+            operationCount += m_visOptsToRender.size();
+            progress.setValue(operationCount);
+            continue;
+        }
+        frameData.LinkRepresentation(this->representation);
+
+        for (const auto& visOpt : m_visOptsToRender) {
+            if (progress.wasCanceled()) break;
+            operationCount++;
+
+            const QMetaEnum metaEnum = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
+            const QString visName = metaEnum.valueToKey(visOpt);
+
+            progress.setValue(operationCount);
+            progress.setLabelText(QString("Frame %1/%2 : Rendering %3")
+                                      .arg(frameNum - frameFrom + 1).arg(totalFrames).arg(visName));
+            QCoreApplication::processEvents();
+
+            // --- CRITICAL FIX: Update state and render BEFORE capturing ---
+            representation.ChangeVisualizationOption(visOpt);
+            renderWindow->Render();
+            windowToImageFilter->Modified(); // This is extra important
+
+            // --- Construct Correct Output Path ---
+            QDir frameDir(QString::fromStdString(ggd.frameDirectory));
+            frameDir.cdUp(); // Go up to the parent (e.g., .../cb2k/)
+            const QString rasterBasePath = frameDir.filePath("raster");
+            const QString subDir = QString("%1/%2").arg(rasterBasePath).arg(visName);
+            QDir().mkpath(subDir); // Use QDir to create the full path
+            const QString outputPath = QString("%1/%2.jpg").arg(subDir).arg(frameNum, 5, 10, QChar('0'));
+
+            // --- Capture and Write ---
+            writer->SetFileName(outputPath.toStdString().c_str());
+            writer->Write();
+        }
+    }
+
+    // --- 5. Restore GUI State (Done ONCE) ---
+    qt_vtk_widget->setMinimumSize(0, 0);
+    qt_vtk_widget->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    qt_vtk_widget->setSizePolicy(originalPolicy);
+    scrollArea->setWidgetResizable(true);
+    renderWindow->DoubleBufferOn();
+    QCoreApplication::processEvents();
+
+    // Refresh the final interactive view to match the last rendered item
+    renderWindow->Render();
+
+    // --- 6. Finalize ---
+    progress.setValue(totalOperations);
+    QMessageBox::information(this, "Rendering Complete", "Batch rendering has finished or was canceled.");
+}
+
+
+
+// --- Core Logic Function (Rewritten) ---
+// This is the clean, reusable implementation.
+void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
+{
+    qDebug() << "Generating ffmpeg script for frames" << frameFrom << "to" << frameTo;
+
+    const int totalFrames = (frameTo - frameFrom) + 1;
+    if (totalFrames <= 0) {
+        qDebug() << "Invalid frame range provided to generate_ffmpeg_script.";
+        return;
+    }
+    const int fps = 30;
+
+    // Correctly determine the output "raster" directory path.
+    QDir frameDir(QString::fromStdString(ggd.frameDirectory));
+    frameDir.cdUp(); // Go from ".../output/cb2k/frames" to ".../output/cb2k/"
+    const QString rasterPath = frameDir.filePath("raster");
+    QDir().mkpath(rasterPath); // Ensure the raster directory exists
+    const std::string scriptFilename = QDir(rasterPath).filePath("genvideo.sh").toStdString();
+
+    std::ofstream scriptFile(scriptFilename);
+    if (!scriptFile.is_open()) {
+        LOGR("Failed to open script file for writing: {}", scriptFilename);
         return;
     }
 
-    const int prefetch_buffer_size = 4;
-    FrameData fd(ggd,prefetch_buffer_size);
-    vtkCamera* currentGuiCamera = this->renderer->GetActiveCamera();
-    fd.SetUpOffscreenRender(this->frameData, currentGuiCamera); // Sets up canonical camera for fd.renderer
+    // Write a standard, robust script header.
+    scriptFile << "#!/bin/bash\n";
+    scriptFile << "# This script will generate mp4 videos from the rendered JPG frames.\n";
+    scriptFile << "# It is designed to be run from within the 'raster' directory.\n";
+    scriptFile << "cd \"$(dirname \"$0\")\"\n\n";
 
-    int totalOperations = totalFramesInRange * visOptsToRender.size();
-    QProgressDialog progress("Rendering all frames...", "Abort", 0, totalOperations, this);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setValue(0);
-    progress.show();
-    QCoreApplication::processEvents(); // Ensure dialog is shown
+    // Define the ffmpeg command template.
+    // Using -1 for padding automatically centers the image.
+    const std::string fmtStr = R"(ffmpeg -y -r {0:} -f image2 -start_number {1:} -i "{2:}" -vframes {3:} -vcodec libx264 -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:white" -crf 21 -pix_fmt yuv420p "{4:}")";
+    const QMetaEnum metaEnum = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
 
-    int operationCount = 0;
-    bool abortRendering = false;
+    // Loop through the class member list to generate a command for each visualization.
+    for (const auto& visOpt : m_visOptsToRender) {
+        const std::string visName = metaEnum.valueToKey(visOpt);
+        const std::string inputFilePattern = visName + "/%05d.jpg";
+        const std::string outputVideoFile = visName + ".mp4";
 
-    qDebug() << "Starting batch rendering. Total frames:" << totalFramesInRange << "Total VisOpts:" << visOptsToRender.size();
+        std::string command = fmt::format(fmt::runtime(fmtStr),
+                                          fps,
+                                          frameFrom,
+                                          inputFilePattern,
+                                          totalFrames,
+                                          outputVideoFile);
 
-    // Outer loop: Iterate through frames
-    for (int frameNum = frameFrom; frameNum <= frameTo; ++frameNum) {
-        if (abortRendering) {
-            break; // Exit outer loop if aborted
-        }
-
-        progress.setLabelText(QString("Processing Frame %1/%2...")
-                                  .arg(frameNum - frameFrom + 1)
-                                  .arg(totalFramesInRange));
-        QCoreApplication::processEvents();
-
-        qDebug() << "--- Loading HDF5 data for frame:" << frameNum << "---";
-        fd.UpdateQueue(frameNum, frameTo); // Load frame data ONCE per frame
-
-        // Inner loop: Iterate through visualization options for the current frame
-        for (VTKVisualization::VisOpt currentVisOpt : visOptsToRender) {
-            if (progress.wasCanceled()) {
-                qDebug() << "Batch rendering aborted by user during VisOpt loop.";
-                abortRendering = true;
-                break; // Exit inner (VisOpt) loop
-            }
-            if (abortRendering) { // Double check, though outer loop break should handle it
-                break;
-            }
-
-            operationCount++;
-            QMetaEnum qme = QMetaEnum::fromType<VTKVisualization::VisOpt>();
-            QString visOptName = qme.valueToKey(static_cast<int>(currentVisOpt));
-
-            progress.setValue(operationCount);
-            progress.setLabelText(QString("Rendering Frame %1 (%2/%3) - Vis: %4 (Op %5/%6)")
-                                      .arg(frameNum)
-                                      .arg(frameNum - frameFrom + 1)
-                                      .arg(totalFramesInRange)
-                                      .arg(visOptName)
-                                      .arg(operationCount)
-                                      .arg(totalOperations));
-            QCoreApplication::processEvents(); // Keep GUI responsive
-
-            qDebug() << "Rendering frame" << frameNum << "with VisOpt" << visOptName;
-            fd.RenderFrame(currentVisOpt); // Render current VisOpt for the loaded frame
-                // RenderFrame calls representation.ChangeVisualizationOption -> SynchronizeValues
-
-            // QCoreApplication::processEvents(); // Process events after each render might be too frequent
-            // but good for very slow single renders.
-            // The one at the start of the inner loop is usually enough.
-        }
-        qDebug() << "--- Finished all VisOpts for frame:" << frameNum << "---";
-        QCoreApplication::processEvents(); // Process events after all VisOpts for a frame are done
+        scriptFile << "# Generate video for " << visName << "\n";
+        scriptFile << command << "\n\n";
     }
 
-    progress.setValue(totalOperations); // Ensure progress bar shows 100% if not aborted
-    if (abortRendering) {
-        QMessageBox::information(this, "Rendering Aborted", "Batch rendering was aborted by the user.");
-    } else {
-        QMessageBox::information(this, "Rendering Complete", "All selected frames and visualization types have been rendered.");
-    }
-    qDebug() << "PPMainWindow::render_all_triggered() finished.";
-*/
-}
-
-void PPMainWindow::generate_ffmpeg_script()
-{
-    const int frameFrom = qsbFrameFrom->value();
-    const int frameTo = qsbFrameTo->value();
-    const int frames = ggd.countFrames;
-    const int fps = 30;
-    std::filesystem::create_directories("output/raster");
-    const std::string filename = "output/raster/genvideo.sh";
-    std::ofstream scriptFile(filename);
-
-    const std::string fmtStr = R"(ffmpeg -y -r {0:} -f image2 -start_number {1:} -i "{2:}" -vframes {3:} -vcodec libx264 -vf "scale=1920:1080:force_original_aspect_ratio=decrease, pad=1920:1080:(ow-iw)/2:(oh-ih)/2:white" -crf 21 -pix_fmt yuv420p "{4:}")";
-
-    std::string cmd_P = fmt::format(fmt::runtime(fmtStr), fps, frameFrom, R"(P/%05d.jpg)", frameTo, R"(P.mp4)");
-    std::string cmd_Q = fmt::format(fmt::runtime(fmtStr), fps, frameFrom, R"(Q/%05d.jpg)", frameTo, R"(Q.mp4)");
-    std::string cmd_Jp_inv = fmt::format(fmt::runtime(fmtStr), fps, frameFrom, R"(Jpinv/%05d.jpg)", frameTo, R"(Jp_inv.mp4)");
-    std::string cmd_colors = fmt::format(fmt::runtime(fmtStr), fps, frameFrom, R"(colors/%05d.jpg)", frameTo, R"(colors.mp4)");
-    std::string cmd_Ridges = fmt::format(fmt::runtime(fmtStr), fps, frameFrom, R"(Ridges/%05d.jpg)", frameTo, R"(Ridges.mp4)");
-    std::string cmd_vel = fmt::format(fmt::runtime(fmtStr), fps, frameFrom, R"(velocity/%05d.jpg)", frameTo, R"(velocity.mp4)");
-
-    scriptFile << cmd_P << '\n' << cmd_Q << '\n' << cmd_Jp_inv << '\n' << cmd_colors << '\n' << cmd_Ridges << '\n' << cmd_vel;
     scriptFile.close();
-    int result = std::system(("chmod +x " + filename).c_str());
+    // Make the script executable.
+    int result = std::system(("chmod +x " + scriptFilename).c_str());
+
+    ui->statusbar->showMessage(QString("Generated genvideo.sh in %1").arg(rasterPath), 5000);
 }
-
-
-
-
-/*
-void MainWindow::screenshot()
-{
-    if(model.prms.SimulationStep % model.prms.UpdateEveryNthStep) return;
-    QString outputPath = QDir::currentPath()+ "/" + screenshot_directory.c_str() + "/" +
-                         QString::number(model.prms.AnimationFrameNumber()).rightJustified(5, '0') + ".png";
-
-    QDir pngDir(QDir::currentPath()+ "/"+ screenshot_directory.c_str());
-    if(!pngDir.exists()) pngDir.mkdir(QDir::currentPath()+ "/"+ screenshot_directory.c_str());
-
-    renderWindow->DoubleBufferOff();
-    renderWindow->Render();
-    windowToImageFilter->SetInputBufferTypeToRGBA(); //also record the alpha (transparency) channel
-    renderWindow->WaitForCompletion();
-
-    windowToImageFilter->Update();
-    windowToImageFilter->Modified();
-
-    writerPNG->Modified();
-    writerPNG->SetFileName(outputPath.toUtf8().constData());
-    writerPNG->Write();
-    renderWindow->DoubleBufferOn();
-}
-*/

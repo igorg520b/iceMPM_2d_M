@@ -43,7 +43,6 @@ public:
     void SaveFrame(int SimulationStep, double SimulationTime);
 
 //    void LoadWindData(std::string fileName);    // netCDF4 data
-//    void ReadSnapshot(std::string fileName);    // custom HDF5 file
 
     std::vector<uint8_t> rgb;   // for saving/visualization
 

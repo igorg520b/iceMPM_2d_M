@@ -52,6 +52,13 @@ class icy::VisualRepresentation : public QObject
 public:
     VisualRepresentation();
 
+    vtkNew<vtkActor> actor_points;
+    vtkNew<vtkActor> raster_actor;
+    vtkNew<vtkTextActor> actorText;
+    vtkNew<vtkTextActor> actor_text_title;
+    vtkNew<vtkScalarBarActor> scalarBar;
+
+
     const SimParams* prms = nullptr;
     HostSideSOA* hssoa = nullptr;
     const WindAndCurrentInterpolator* wac_interpolator = nullptr;
@@ -61,6 +68,7 @@ public:
     const std::vector<uint8_t>* point_partitions = nullptr;
 
     double wind_visualization_time;
+    double simulationTime = 0;
 
     enum VisOpt { none, status, Jp_inv, P, Q, color, v_u, v_v, v_norm, thickness,
                   regions, ridges, grid_Jpinv, grid_mass, grid_pointdensity, grid_P, grid_Q, grid_colors, grid_vnorm, grid_force,
@@ -71,11 +79,9 @@ public:
 
     void SynchronizeTopology();
     void ChangeVisualizationOption(int option);  // invoked from GUI/main thread
+    void ConfigureScalarBar();
+    void UpdateTimeText();
 
-    vtkNew<vtkActor> actor_points;
-    vtkNew<vtkActor> raster_actor;
-    vtkNew<vtkTextActor> actorText;
-    vtkNew<vtkScalarBarActor> scalarBar;
 
 private:
     ColorMap colormap;

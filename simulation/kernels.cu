@@ -268,10 +268,6 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams)
             atomicAdd(&bgrid[SimParams::grid_idx_vis_g*pitch_g + idx_gridnode], (t_GridReal)(rG*incM));
             atomicAdd(&bgrid[SimParams::grid_idx_vis_b*pitch_g + idx_gridnode], (t_GridReal)(rB*incM));
 
-//            atomicAdd(&bgrid[SimParams::grid_idx_vis_r*pitch_g + idx_gridnode], (t_GridReal)(rR*Wip));
-//            atomicAdd(&bgrid[SimParams::grid_idx_vis_g*pitch_g + idx_gridnode], (t_GridReal)(rG*Wip));
-//            atomicAdd(&bgrid[SimParams::grid_idx_vis_b*pitch_g + idx_gridnode], (t_GridReal)(rB*Wip));
-
             atomicAdd(&bgrid[SimParams::grid_idx_vis_Jpinv*pitch_g + idx_gridnode], (t_GridReal)(Jp_inv*incM));
             atomicAdd(&bgrid[SimParams::grid_idx_vis_P*pitch_g + idx_gridnode], (t_GridReal)(P*incM));
             atomicAdd(&bgrid[SimParams::grid_idx_vis_Q*pitch_g + idx_gridnode], (t_GridReal)(Q*incM));
@@ -312,6 +308,8 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     bgrid[SimParams::grid_idx_vis_Q*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_vis_strain_EqvGreenLagrange*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_vis_strain_vonMises*pitch_grid + idx] /= mass;
+
+    bgrid[SimParams::grid_idx_mass*pitch_grid + idx] /= (gprms.cellsize*gprms.cellsize); // make it mass per area
 
     t_GridReal fx = bgrid[SimParams::grid_idx_fx*pitch_grid + idx];
     t_GridReal fy = bgrid[SimParams::grid_idx_fy*pitch_grid + idx];

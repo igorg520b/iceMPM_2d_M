@@ -255,25 +255,25 @@ if(BUILD_POSTPROCESSOR)
         gui/colormap.h
         gui/colormap.cpp
 
-        simulation/model.cpp
-        simulation/model.h
+#        simulation/model.cpp
+#        simulation/model.h
 
-        simulation/givens.cuh
-        simulation/helper_math.cuh
-        simulation/gpu_implementation5.h
-        simulation/gpu_implementation5.cpp
+#        simulation/givens.cuh
+#        simulation/helper_math.cuh
+#        simulation/gpu_implementation5.h
+#        simulation/gpu_implementation5.cpp
 
         simulation/hssoa/host_side_soa.h
         simulation/hssoa/host_side_soa.cpp
         simulation/hssoa/proxypoint2d.h
         simulation/hssoa/proxypoint2d.cpp
 
-        simulation/gpu_partition.h
-        simulation/gpu_partition.cpp
-        simulation/kernels.cu
+#        simulation/gpu_partition.h
+#        simulation/gpu_partition.cpp
+#        simulation/kernels.cu
 
-        simulation/data_manager/snapshotmanager.h
-        simulation/data_manager/snapshotmanager.cpp
+#        simulation/data_manager/snapshotmanager.h
+#        simulation/data_manager/snapshotmanager.cpp
         simulation/data_manager/windandcurrentinterpolator.cpp
         simulation/data_manager/windandcurrentinterpolator.h
 

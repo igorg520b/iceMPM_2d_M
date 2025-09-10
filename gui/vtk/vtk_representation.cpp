@@ -43,13 +43,23 @@ icy::VisualRepresentation::VisualRepresentation()
     scalarBar->GetLabelTextProperty()->ItalicOff();
     scalarBar->GetLabelTextProperty()->ShadowOff();
     scalarBar->GetLabelTextProperty()->SetColor(0.1,0.1,0.1);
+
     vtkTextProperty* txtprop = actorText->GetTextProperty();
     txtprop->SetFontFamilyToArial();
-    txtprop->BoldOff();
-    txtprop->SetFontSize(14);
+    txtprop->BoldOn();
+    txtprop->SetFontSize(30);
     txtprop->ShadowOff();
-    txtprop->SetColor(0,0,0);
-    actorText->SetDisplayPosition(500, 30);
+    txtprop->SetColor(0,0.8,0);
+    actorText->SetDisplayPosition(1600, 10);
+
+    txtprop = actor_text_title->GetTextProperty();
+    txtprop->SetFontFamilyToArial();
+    txtprop->BoldOff();
+    txtprop->SetFontSize(20);
+    txtprop->ShadowOff();
+    txtprop->SetColor(0,0.8,0);
+    actor_text_title->SetDisplayPosition(10, 500);
+
     LOGV("icy::VisualRepresentation::VisualRepresentation() constructor done");
 }
 
@@ -114,14 +124,14 @@ void icy::VisualRepresentation::SynchronizeTopology()
 
     // --- Step 3: Update Raster (Background) Image ---
     renderedImage.assign(original_image_colors_rgb->begin(), original_image_colors_rgb->end());
-    const std::array<uint8_t, 3> _rgb_water = {0x15, 0x1f, 0x2f};
 
     for (int i = 0; i < gx; i++) {
         for (int j = 0; j < gy; j++) {
             const size_t grid_idx = (size_t)j + (size_t)i * gy;
             const size_t render_idx = ((i + ox) + (j + oy) * width) * 3;
 
-            if (grid_status_buffer[grid_idx] == 100) { // Modeled area
+            if (grid_status_buffer[grid_idx] == 100)
+            { // Modeled area
                 // Common alpha calculation for blended visualizations
                 t_GridReal val_pt_density = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_pts_density];
                 float alpha = std::min((double)val_pt_density * (2.0 / 5.0), 1.0);
@@ -137,7 +147,7 @@ void icy::VisualRepresentation::SynchronizeTopology()
                         float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
                         _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
                     }
-                    std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
+                    std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
                 }
                 else if (VisualizingVariable == VisOpt::grid_Jpinv) {
@@ -146,23 +156,39 @@ void icy::VisualRepresentation::SynchronizeTopology()
                         float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
                         _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
                     }
-                    std::array<uint8_t, 3> c = ColorMap::mergeColors(_rgb_water, _rgb, alpha);
+                    std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Jpinv] - 1.0f;
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
                     const float mix = std::abs(val / range * alpha);
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
+
+                else if (VisualizingVariable == VisOpt::grid_ridges) {
+                    std::array<uint8_t, 3> _rgb;
+                    for (int k = 0; k < 3; k++) {
+                        float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
+                        _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
+                    }
+                    std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
+                    float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Jpinv] - 1.0f;
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Ridges, 0.5 * val / range + 0.5);
+
+                    const float mix = (val > 0) ? (alpha * val / range) : 0.0f;
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
+                }
+
                 else if (VisualizingVariable == VisOpt::grid_P) {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_P];
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 else if (VisualizingVariable == VisOpt::grid_Q) {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Q];
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 else if (VisualizingVariable == VisOpt::grid_vnorm) {
@@ -170,25 +196,25 @@ void icy::VisualRepresentation::SynchronizeTopology()
                     float vy = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_py];
                     float val = std::sqrt(vx * vx + vy * vy);
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange) {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_EqvGreenLagrange];
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 else if (VisualizingVariable == VisOpt::str_vonMises) {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_vonMises];
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 else if (VisualizingVariable == VisOpt::grid_pointdensity) {
                     float val = val_pt_density; // Use the value before alpha scaling
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(_rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 // Wind/current data visualization
@@ -238,6 +264,8 @@ void icy::VisualRepresentation::SynchronizeTopology()
 
     // --- Step 5: Update Points ---
     SynchronizeValues();
+    ConfigureScalarBar();
+    UpdateTimeText();
 }
 
 void icy::VisualRepresentation::SynchronizeValues()
@@ -390,4 +418,73 @@ void icy::VisualRepresentation::SynchronizeValues()
 }
 
 
+void icy::VisualRepresentation::ConfigureScalarBar()
+{
+    const double range = std::pow(10, ranges[VisualizingVariable]);
 
+    // Default to visible; we will hide it only in the default case.
+    scalarBar->VisibilityOn();
+
+    // A switch statement is perfect here for clarity and performance.
+    switch (VisualizingVariable)
+    {
+    case VisOpt::grid_ridges:
+    case VisOpt::ridges:
+    case VisOpt::thickness: // Assuming thickness also uses ridges/ANSYS LUT
+        lut_Ridges->SetTableRange(0, range);
+        scalarBar->SetLookupTable(lut_Ridges);
+        scalarBar->SetLabelFormat("%.2f");
+        break;
+
+    case VisOpt::Jp_inv: // Note: Live sim uses grid_Jpinv
+    case VisOpt::P:      // Note: Live sim uses grid_P
+    case VisOpt::grid_Jpinv:
+    case VisOpt::grid_P:
+        lut_Pressure->SetTableRange(-range, range);
+        scalarBar->SetLookupTable(lut_Pressure);
+        scalarBar->SetLabelFormat("%.1e");
+        break;
+
+    case VisOpt::Q: // Note: Live sim uses grid_Q
+    case VisOpt::grid_Q:
+    case VisOpt::grid_vnorm:
+    case VisOpt::str_EqvGreenLagrange:
+    case VisOpt::str_vonMises:
+    case VisOpt::grid_pointdensity:
+    case VisOpt::grid_mass:
+    case VisOpt::v_norm: // For wind/current
+        lut_ANSYS->SetTableRange(0, range);
+        scalarBar->SetLookupTable(lut_ANSYS);
+        scalarBar->SetLabelFormat("%.1e");
+        break;
+
+        // For any other case, hide the scalar bar.
+    default:
+        scalarBar->VisibilityOff();
+        break;
+    }
+}
+
+
+void icy::VisualRepresentation::UpdateTimeText()
+{
+    if (prms) { // Ensure prms is valid before accessing time
+        // Convert total seconds (double) to a whole number of seconds for calculation.
+        long long total_seconds = static_cast<long long>(simulationTime);
+
+        const long long seconds_per_day = 24 * 3600;
+        const long long seconds_per_hour = 3600;
+
+        // Calculate days, hours, and minutes.
+        int days = total_seconds / seconds_per_day;
+        long long remaining_seconds = total_seconds % seconds_per_day;
+        int hours = remaining_seconds / seconds_per_hour;
+        remaining_seconds %= seconds_per_hour;
+        int minutes = remaining_seconds / 60;
+
+        // Format the string with zero-padding.
+        char buffer[100];
+        snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", days, hours, minutes);
+        actorText->SetInput(buffer);
+    }
+}

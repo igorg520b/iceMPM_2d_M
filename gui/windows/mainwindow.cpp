@@ -294,6 +294,7 @@ void MainWindow::updateGUI()
     {
         std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
         model.SyncTopologyRequired = false;
+        representation.simulationTime = model.prms.SimulationTime;
         representation.SynchronizeTopology();
     }
 
