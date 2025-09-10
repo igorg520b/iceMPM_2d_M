@@ -27,6 +27,9 @@
 #include <vtkTextActor.h>
 #include <vtkPlaneSource.h>
 #include <vtkTexture.h>
+#include <vtkActor2D.h>
+#include <vtkPolyDataMapper2D.h>
+#include <vtkProperty2D.h>
 
 #include <vtkRegularPolygonSource.h>
 #include <vtkCylinderSource.h>
@@ -55,9 +58,9 @@ public:
     vtkNew<vtkActor> actor_points;
     vtkNew<vtkActor> raster_actor;
     vtkNew<vtkTextActor> actorText;
-    vtkNew<vtkTextActor> actor_text_title;
     vtkNew<vtkScalarBarActor> scalarBar;
-
+    vtkNew<vtkActor2D> textBgActor;
+    vtkNew<vtkActor2D> scalarBarBgActor;
 
     const SimParams* prms = nullptr;
     HostSideSOA* hssoa = nullptr;
@@ -83,6 +86,8 @@ public:
     void UpdateTimeText();
 
 
+
+
 private:
     ColorMap colormap;
     void SynchronizeValues();
@@ -104,5 +109,8 @@ private:
     vtkNew<vtkPlaneSource> raster_plane;
     vtkNew<vtkTexture> raster_texture;
     vtkNew<vtkPolyDataMapper> raster_mapper;
+
+    void UpdateOverlayBackgrounds(vtkRenderer* renderer);
+
 };
 #endif

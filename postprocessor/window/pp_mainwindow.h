@@ -38,6 +38,7 @@
 #include <vtkProperty.h>
 #include <vtkNew.h>
 #include <vtkInteractorStyleImage.h>
+#include <vtkRendererCollection.h>
 
 #include <vtkWindowToImageFilter.h>
 #include <vtkPNGWriter.h>

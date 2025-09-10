@@ -49,16 +49,63 @@ icy::VisualRepresentation::VisualRepresentation()
     txtprop->BoldOn();
     txtprop->SetFontSize(30);
     txtprop->ShadowOff();
-    txtprop->SetColor(0,0.8,0);
+    txtprop->SetColor(0.1,0.1,0.1);
     actorText->SetDisplayPosition(1600, 10);
 
-    txtprop = actor_text_title->GetTextProperty();
-    txtprop->SetFontFamilyToArial();
-    txtprop->BoldOff();
-    txtprop->SetFontSize(20);
-    txtprop->ShadowOff();
-    txtprop->SetColor(0,0.8,0);
-    actor_text_title->SetDisplayPosition(10, 500);
+
+    // backgrounds for scalarBar and actorText
+    // 1. Setup for the text background
+    vtkNew<vtkPoints> textBgPoints;
+    textBgPoints->InsertNextPoint(1580, 5, 0);  // Bottom-left
+    textBgPoints->InsertNextPoint(1910, 5, 0);  // Bottom-right
+    textBgPoints->InsertNextPoint(1910, 60, 0); // Top-right
+    textBgPoints->InsertNextPoint(1580, 60, 0); // Top-left
+
+    vtkNew<vtkCellArray> textBgPoly;
+    vtkIdType textIds[4] = {0, 1, 2, 3};
+    textBgPoly->InsertNextCell(4, textIds);
+
+    vtkNew<vtkPolyData> textBgPolyData;
+    textBgPolyData->SetPoints(textBgPoints);
+    textBgPolyData->SetPolys(textBgPoly);
+
+    vtkNew<vtkPolyDataMapper2D> textBgMapper;
+    textBgMapper->SetInputData(textBgPolyData);
+
+    textBgActor->SetMapper(textBgMapper);
+    textBgActor->GetProperty()->SetColor(1.0, 1.0, 1.0); // White
+    textBgActor->GetProperty()->SetOpacity(0.8);
+    textBgActor->SetLayerNumber(2); // Draw first (bottom layer)
+
+    // 2. Setup for the scalar bar background
+    // These coordinates should match the scalar bar's position, plus padding.
+    // The scalar bar is at (0.01, 0.015) in normalized display coordinates.
+    // In a 1920x1080 window, this is approx (19, 16).
+    vtkNew<vtkPoints> sbBgPoints;
+    sbBgPoints->InsertNextPoint(10, 10, 0);   // Bottom-left
+    sbBgPoints->InsertNextPoint(200, 10, 0);  // Bottom-right
+    sbBgPoints->InsertNextPoint(200, 280, 0); // Top-right
+    sbBgPoints->InsertNextPoint(10, 280, 0);  // Top-left
+
+    vtkNew<vtkCellArray> sbBgPoly;
+    vtkIdType sbIds[4] = {0, 1, 2, 3};
+    sbBgPoly->InsertNextCell(4, sbIds);
+
+    vtkNew<vtkPolyData> sbBgPolyData;
+    sbBgPolyData->SetPoints(sbBgPoints);
+    sbBgPolyData->SetPolys(sbBgPoly);
+
+    vtkNew<vtkPolyDataMapper2D> sbBgMapper;
+    sbBgMapper->SetInputData(sbBgPolyData);
+
+    scalarBarBgActor->SetMapper(sbBgMapper);
+    scalarBarBgActor->GetProperty()->SetColor(1.0, 1.0, 1.0);
+    scalarBarBgActor->GetProperty()->SetOpacity(0.8);
+    scalarBarBgActor->SetLayerNumber(2); // Also in the bottom layer
+
+    // 3. Set the foreground actors to a higher layer to ensure they draw on top.
+    actorText->SetLayerNumber(1);
+    scalarBar->SetLayerNumber(1);
 
     LOGV("icy::VisualRepresentation::VisualRepresentation() constructor done");
 }
@@ -424,6 +471,7 @@ void icy::VisualRepresentation::ConfigureScalarBar()
 
     // Default to visible; we will hide it only in the default case.
     scalarBar->VisibilityOn();
+    scalarBarBgActor->VisibilityOn();
 
     // A switch statement is perfect here for clarity and performance.
     switch (VisualizingVariable)
@@ -461,6 +509,7 @@ void icy::VisualRepresentation::ConfigureScalarBar()
         // For any other case, hide the scalar bar.
     default:
         scalarBar->VisibilityOff();
+        scalarBarBgActor->VisibilityOff();
         break;
     }
 }
@@ -488,3 +537,5 @@ void icy::VisualRepresentation::UpdateTimeText()
         actorText->SetInput(buffer);
     }
 }
+
+

@@ -41,9 +41,13 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     renderWindow->GetInteractor()->SetInteractorStyle(interactor);
 
 
+    renderer->AddActor(representation.textBgActor);
+    renderer->AddActor(representation.scalarBarBgActor);
+
     renderer->AddActor(representation.raster_actor);
     renderer->AddActor(representation.scalarBar);
     renderer->AddActor(representation.actorText);
+
 
     // toolbar - combobox
     comboBox_visualizations = new QComboBox();

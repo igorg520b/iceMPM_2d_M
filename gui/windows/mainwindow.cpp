@@ -83,6 +83,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->statusbar->addPermanentWidget(labelStepCount);
 
 // anything that includes the Model
+    renderer->AddActor(representation.textBgActor);
+    renderer->AddActor(representation.scalarBarBgActor);
+
     renderer->AddActor(representation.actor_points);
     renderer->AddActor(representation.raster_actor);
     renderer->AddActor(representation.actorText);
