@@ -192,7 +192,6 @@ void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const int point_idx
 
     // transfer accumulated forces
     const size_t transfer_bytes = sizeof(t_GridReal)*SimParams::MAX_REGIONS*2;
-    t_GridReal* const ptr_src = pparams.buffer_grid + pparams.pitch_grid*SimParams::grid_idx_fx;
     CUDA_CHECK(cudaMemcpyAsync(host_grid_forces_summary_per_region,
                                pparams.grid_forces_summary_per_region,
                                transfer_bytes, cudaMemcpyDeviceToHost, streamCompute));

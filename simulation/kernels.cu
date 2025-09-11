@@ -279,7 +279,7 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
     if(mass == 0) return;
 
-    t_GridReal pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
+  //  t_GridReal pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
 
 
     bgrid[SimParams::grid_idx_px*pitch_grid + idx] /= mass;
@@ -654,21 +654,18 @@ const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquar
 
     t_PointReal q_yield = 0;
     t_PointReal q_n_1 = 0, p_n_1 = 0;
-    int case1 = -1;
 
     if(p_tr < DP_threshold_p)
     {
         // tension
         if(Jp_inv < 0.1)
         {
-            case1 = 0;
             t_PointReal sqrt_Je_new = sqrt(Je_tr);
             PointVector2r vSigma_new(sqrt_Je_new,sqrt_Je_new); //= Vector2d::Constant(1.)*sqrt(Je_new);  //Matrix2d::Identity() * pow(Je_new, 1./(double)d);
             Fe = U*vSigma_new.asDiagonal()*V.transpose();
         }
         else
         {
-            case1 = 1;
             // stretching in tension - no resistance
             PointVector2r vSigma_new(1.0,1.0);
             Fe = U*vSigma_new.asDiagonal()*V.transpose();
@@ -677,8 +674,6 @@ const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquar
     }
     else
     {
-        case1 = 2;
-
         // determine q_yeld from the combination of DP / elliptic yield surface, whichever is lower
         if(p_tr < pmax)
         {
@@ -694,7 +689,6 @@ const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquar
 
         if(q_tr > q_yield)
         {
-            case1 = 3;
             // plasticity will be applied
 
             // estimate the new P based on the ridge height
