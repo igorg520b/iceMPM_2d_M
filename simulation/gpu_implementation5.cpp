@@ -374,9 +374,6 @@ void GPU_Implementation5::allocate_host_arrays_grid()
     // allocate grid arrays
     grid_status_buffer.resize(modeled_grid_total);
     original_image_colors_rgb.resize(3*initial_image_total);
-//    grid_boundary_normals.resize(2*modeled_grid_total);
-//    grid_boundary_forces.resize(2*modeled_grid_total);
-
     host_grid_buffer.resize(modeled_grid_total*SimParams::nGridArrays);
     LOGV("GPU_Implementation5::allocate_host_arrays_grid() completed");
 }
@@ -386,7 +383,6 @@ void GPU_Implementation5::allocate_host_arrays_points()
 {
     const size_t requested_capacity = (size_t)(double(model->prms.nPtsInitial)*(1.+model->prms.extra_space_pts));
     hssoa.Allocate(requested_capacity);
-    // point_colors_rgb.resize(model->prms.nPtsInitial);
     point_partitions.resize(model->prms.nPtsInitial);
 }
 
@@ -575,43 +571,6 @@ void GPU_Implementation5::transfer_grid_to_host()
     }
 }
 
-
-/*
-void GPU_Implementation5::finish_transfer_of_forces()
-{
-    const size_t GridY = model->prms.GridYTotal;
-    const size_t modeled_grid_total = model->prms.GridXTotal * GridY;
-    grid_boundary_forces.assign(2*modeled_grid_total, 0);
-
-    for(GPU_Partition &p : partitions)
-    {
-        const size_t offset = p.pparams.gridX_offset;
-        const size_t grid_size = p.pparams.partition_gridX;
-        //    const size_t nGridNodes = prms->GridYTotal * (pparams.partition_gridX + 2*prms->GridHaloSize);
-
-        for(size_t idx_x = 0; idx_x < (grid_size+model->prms.GridHaloSize*2); idx_x++)
-        {
-            for(size_t idx_y = 0; idx_y < GridY; idx_y++)
-            {
-                const size_t idx_in_partition = idx_y + idx_x * GridY;
-                t_GridReal &fx = p.tmp_accumulated_forces[idx_in_partition];
-                t_GridReal &fy = p.tmp_accumulated_forces[idx_in_partition + p.pparams.pitch_grid];
-
-                const int x_in_host = (int)(idx_x+offset)-(int)model->prms.GridHaloSize;
-                if(x_in_host >= 0 && x_in_host < model->prms.GridXTotal)
-                {
-                    const size_t idx_in_host = idx_y + x_in_host * GridY;
-                    grid_boundary_forces[idx_in_host] += fx;
-                    grid_boundary_forces[idx_in_host + modeled_grid_total] += fy;
-                }
-            }
-        }
-    }
-
-    for(size_t i=0;i<grid_boundary_forces.size();i++)
-        grid_boundary_forces[i]/=(model->prms.UpdateEveryNthStep * model->prms.InitialTimeStep);
-}
-*/
 
 
 void GPU_Implementation5::synchronize()
