@@ -41,24 +41,15 @@ int main(int argc, char** argv)
         return 0; // Exit successfully as requested
     }
 
-
     model.LoadParameterFile(parameter_filename, resume_filename);
     model.prms.Printout();
     model.Prepare();
-
-    model.transfer_completion_callback = [&](){
-        // the mutex is locked for the GUI version to display the data
-        LOGR("cycle callback {}; ", model.prms.AnimationFrameNumber());
-//        model.UnlockCycleMutex();
-    };
-
 
     bool step_result;
     do
     {
         step_result = model.Step();
     } while(step_result);
-
 
     model.gpu.synchronize();
     std::cout << "cm done\n";

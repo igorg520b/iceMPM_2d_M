@@ -105,9 +105,9 @@ private:
     QLabel *statusLabel;                    // statusbar
     QLabel *labelElapsedTime;
     QLabel *labelStepCount;
-    QLabel *labelWindSpeed, *labelWindDirection;
     QComboBox *comboBox_visualizations;
     QDoubleSpinBox *qdsbValRange;   // high and low limits for value scale
+    QDoubleSpinBox *qdsbTransparency;
     QSpinBox *qsbIntentionalSlowdown;
 
     ObjectPropertyBrowser *pbrowser;    // to show simulation settings/properties

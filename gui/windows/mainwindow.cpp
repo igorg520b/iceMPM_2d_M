@@ -52,6 +52,13 @@ MainWindow::MainWindow(QWidget *parent)
     qdsbValRange->setSingleStep(0.25);
     ui->toolBar->addWidget(qdsbValRange);
 
+    qdsbTransparency = new QDoubleSpinBox();
+    qdsbTransparency->setRange(0, 1);
+    qdsbTransparency->setValue(0);
+    qdsbTransparency->setDecimals(1);
+    qdsbTransparency->setSingleStep(0.1);
+    ui->toolBar->addWidget(qdsbTransparency);
+
     qsbIntentionalSlowdown = new QSpinBox();
     qsbIntentionalSlowdown->setRange(0,1000);
     qsbIntentionalSlowdown->setValue(0);
@@ -61,8 +68,6 @@ MainWindow::MainWindow(QWidget *parent)
     statusLabel = new QLabel();
     labelElapsedTime = new QLabel();
     labelStepCount = new QLabel();
-    labelWindSpeed = new QLabel();
-    labelWindDirection = new QLabel();
 
     QSizePolicy sp;
     const int status_width = 90;
@@ -71,14 +76,8 @@ MainWindow::MainWindow(QWidget *parent)
     labelStepCount->setFixedWidth(status_width);
     labelElapsedTime->setSizePolicy(sp);
     labelElapsedTime->setFixedWidth(status_width);
-    labelWindSpeed->setSizePolicy(sp);
-    labelWindSpeed->setFixedWidth(status_width);
-    labelWindDirection->setSizePolicy(sp);
-    labelWindDirection->setFixedWidth(status_width);
 
     ui->statusbar->addWidget(statusLabel);
-    ui->statusbar->addPermanentWidget(labelWindSpeed);
-    ui->statusbar->addPermanentWidget(labelWindDirection);
     ui->statusbar->addPermanentWidget(labelElapsedTime);
     ui->statusbar->addPermanentWidget(labelStepCount);
 
@@ -140,6 +139,13 @@ MainWindow::MainWindow(QWidget *parent)
             memcpy(representation.ranges, ba.constData(), ba.size());
         }
 
+        var = settings.value("transparency_coeffs");
+        if(!var.isNull())
+        {
+            QByteArray ba = var.toByteArray();
+            memcpy(representation.transparency_coeffs, ba.constData(), ba.size());
+        }
+
         comboBox_visualizations->setCurrentIndex(settings.value("vis_option").toInt());
 
         var = settings.value("splitter_size_0");
@@ -169,7 +175,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionPrint_Camera_Params, &QAction::triggered, this, &MainWindow::print_camera_params);
     connect(ui->actionView_ScalarBar, &QAction::triggered, this, &MainWindow::toggle_scalarbar);
 
-    connect(qdsbValRange,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &MainWindow::limits_changed);
+    connect(qdsbValRange, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &MainWindow::limits_changed);
+    connect(qdsbTransparency, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &MainWindow::limits_changed);
     connect(qsbIntentionalSlowdown,QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::spinbox_slowdown_value_changed);
 
     connect(worker, SIGNAL(workerPaused()), SLOT(background_worker_paused()));
@@ -212,6 +219,9 @@ void MainWindow::quit_triggered()
     QByteArray ranges((char*)representation.ranges, sizeof(representation.ranges));
     settings.setValue("visualization_ranges", ranges);
 
+    QByteArray transparency_coeffs((char*)representation.transparency_coeffs, sizeof(representation.transparency_coeffs));
+    settings.setValue("transparency_coeffs", transparency_coeffs);
+
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
 
 
@@ -227,14 +237,20 @@ void MainWindow::quit_triggered()
 void MainWindow::comboboxIndexChanged_visualizations(int index)
 {
     representation.ChangeVisualizationOption(index);
+    qdsbValRange->blockSignals(true);
+    qdsbTransparency->blockSignals(true);
     qdsbValRange->setValue(representation.ranges[index]);
+    qdsbTransparency->setValue(representation.transparency_coeffs[index]);
+    qdsbValRange->blockSignals(false);
+    qdsbTransparency->blockSignals(false);
     renderWindow->Render();
 }
 
 void MainWindow::limits_changed(double val_)
 {
     int idx = (int)representation.VisualizingVariable;
-    representation.ranges[idx] = val_;
+    representation.ranges[idx] = qdsbValRange->value();
+    representation.transparency_coeffs[idx] = qdsbTransparency->value();
     std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
     representation.SynchronizeTopology();
     renderWindow->Render();
@@ -280,8 +296,6 @@ void MainWindow::updateGUI()
     //LOGV("updateGUI");
     labelStepCount->setText(QString::number(model.prms.SimulationStep));
     labelElapsedTime->setText(QString("%1 s").arg(model.prms.SimulationTime,0,'f',0));
-//    labelWindSpeed->setText(QString("%1 m/s").arg(model.windSpeed,0,'f',2));
-//    labelWindDirection->setText(QString("%1 deg").arg(model.windAngle,0,'f',0));
 
     // display date
     int64_t display_date = (int64_t)model.prms.SimulationTime + model.prms.SimulationStartUnixTime;
@@ -362,28 +376,7 @@ void MainWindow::spinbox_slowdown_value_changed(int val)
 void MainWindow::sliderValueChanged(int val)
 {
     LOGR("sliderValueChanged {}", val);
-//    model.fluent_interpolatror.SetTime((double)val);
-//    representation.SynchronizeValues();
-//    renderWindow->Render();
-
-    //model.fluent_interpolatror.LoadDataFrame(val);
-
- /*
-    float b_val = (float)val/1000.;
-    float max_val = 11.0*24*3600;
-    float set_val = b_val*max_val;
-
-    representation.wind_visualization_time = b_val*max_val;
-
-    int64_t display_date = (int64_t)set_val + model.prms.SimulationStartUnixTime;
-
-    std::time_t unix_time = display_date;
-    std::tm* tm_time = std::gmtime(&unix_time);
-    // Format the time
-    char buffer[100];
-    std::strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S UTC", tm_time);
-    representation.actorText->SetInput(buffer);
-*/
+    // currently not used
 }
 
 

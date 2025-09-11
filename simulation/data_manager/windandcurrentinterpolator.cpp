@@ -57,8 +57,8 @@ void WindAndCurrentInterpolator::ReadStaticFlowData()
         {
             size_t idx = (i+ox) + (j+oy)*width;
             size_t idx2 = j + i*gy;
-            current_flow_data[idx2] = (t_GridReal)velocity_field[idx].x();
-            current_flow_data[gx*gy + idx2] = (t_GridReal)velocity_field[idx].y();
+            current_flow_data[idx2] = (t_GridReal)velocity_field[idx].x()*prms.WaterCurrentVelocityMultiplier;
+            current_flow_data[gx*gy + idx2] = (t_GridReal)velocity_field[idx].y()*prms.WaterCurrentVelocityMultiplier;
         }
 }
 

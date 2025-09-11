@@ -61,6 +61,15 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     qdsbValRange->setSingleStep(0.25);
     ui->toolBar->addWidget(qdsbValRange);
 
+    qdsbTransparency = new QDoubleSpinBox();
+    qdsbTransparency->setRange(0, 1);
+    qdsbTransparency->setValue(0);
+    qdsbTransparency->setDecimals(1);
+    qdsbTransparency->setSingleStep(0.1);
+    ui->toolBar->addWidget(qdsbTransparency);
+
+    ui->toolBar->addSeparator();
+
     qsbFrameFrom = new QSpinBox();
     qsbFrameTo = new QSpinBox();
     ui->toolBar->addWidget(qsbFrameFrom);
@@ -115,6 +124,13 @@ PPMainWindow::PPMainWindow(QWidget *parent)
             memcpy(representation.ranges, ba.constData(), ba.size());
         }
 
+        var = settings.value("transparency_coeffs");
+        if(!var.isNull())
+        {
+            QByteArray ba = var.toByteArray();
+            memcpy(representation.transparency_coeffs, ba.constData(), ba.size());
+        }
+
         var = settings.value("vis_option");
         if(!var.isNull())
         {
@@ -131,6 +147,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     connect(ui->actionRender_Frame, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
     connect(ui->actionRender_All, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
     connect(qdsbValRange,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
+    connect(qdsbTransparency,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
 
     // off-screen rendering
     // Copy the renderers from the current render window
@@ -167,6 +184,9 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
     QByteArray ranges((char*)representation.ranges, sizeof(representation.ranges));
     settings.setValue("visualization_ranges", ranges);
 
+    QByteArray transparency_coeffs((char*)representation.transparency_coeffs, sizeof(representation.transparency_coeffs));
+    settings.setValue("transparency_coeffs", transparency_coeffs);
+
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
 
     event->accept();
@@ -177,7 +197,8 @@ void PPMainWindow::limits_changed(double val_)
 {
     qDebug() << "limits_changed";
     int idx = (int)representation.VisualizingVariable;
-    representation.ranges[idx] = val_;
+    representation.ranges[idx] = qdsbValRange->value();
+    representation.transparency_coeffs[idx] = qdsbTransparency->value();
     representation.SynchronizeTopology();
     renderWindow->Render();
 }
@@ -257,7 +278,14 @@ void PPMainWindow::sliderValueChanged(int val)
 void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 {
     representation.ChangeVisualizationOption(index);
+
+    qdsbValRange->blockSignals(true);
+    qdsbTransparency->blockSignals(true);
     qdsbValRange->setValue(representation.ranges[index]);
+    qdsbTransparency->setValue(representation.transparency_coeffs[index]);
+    qdsbValRange->blockSignals(false);
+    qdsbTransparency->blockSignals(false);
+
     renderWindow->Render();
 }
 

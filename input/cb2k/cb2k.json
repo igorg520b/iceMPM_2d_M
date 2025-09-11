@@ -25,10 +25,12 @@
 "IceShearStrength":2.5e6,
 "DP_phi":62,
 "DP_threshold_p":-1e4,
-"RidgeFormationCoeff":0.1,
 
-"waterDragEffectiveLinear":0.00,
-"waterDragEffectiveQuadratic":0.01,
+"RidgeFormationCoeff":1.0,
+"WaterCurrentVelocityMultiplier":1.0,
+
+"waterDragEffectiveLinear":0.001,
+"waterDragEffectiveQuadratic":0.005,
 
 "tpb_P2G":256,
 "tpb_Upd":512,

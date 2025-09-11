@@ -156,20 +156,6 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams, con
         t_GridReal vcy = bgrid[SimParams::grid_idx_current_vy*pitch_grid + idx];
 
         GridVector2r v_w(vcx, vcy);
-        v_w *= gprms.WaterCurrentVelocityMultiplier;
-
-        //v_w[0]=v_w[1]=-0.3;
-        //v_w *= (1+min(simulation_time/(3600*2), 2.));
-
-        // only for Ringeisen setup
-//        const double acceleration = 0.0005;
-//        const double x_boundary = simulation_time*simulation_time*acceleration/2 + 19*gprms.cellsize;
-//        v_w.setZero();
-//        if(gnpos.x() <= x_boundary)
-//        {
-//            velocity.x() = acceleration*simulation_time;
-//            velocity.y() = 0;
-//        }
 
         const double kL = gprms.waterDragEffectiveLinear * dt; // linear param
         const double kQp = gprms.waterDragEffectiveQuadratic * dt; // quadratic
@@ -507,8 +493,6 @@ __global__ void partition_kernel_check_if_transfer_needed(const PartitionParams 
     const size_t &pitch_pts = pparams.pitch_pts;
     const size_t &gridX_offset = pparams.gridX_offset;
     const size_t &gridX = pparams.partition_gridX;
-//    const size_t &gridX = pparams.pts_partition_gridX;
-//    const size_t &gridX_offset = pparams.pts_gridX_offset;
 
     // skip if a point is disabled
     const uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::idx_utility_data]);
@@ -539,12 +523,8 @@ __global__ void partition_kernel_point_transfer(const PartitionParams pparams)
 
     t_PointReal* const &bpts = pparams.buffer_pts;
     const size_t &pitch_pts = pparams.pitch_pts;
-//    const size_t &gridX_offset = pparams.pts_gridX_offset;
-//    const size_t &gridX = pparams.pts_partition_gridX;
-
     const size_t &gridX_offset = pparams.gridX_offset;
     const size_t &gridX = pparams.partition_gridX;
-
 
     // skip if a point is disabled
     uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::idx_utility_data]);
@@ -616,8 +596,6 @@ __forceinline__ __device__ void CalculateWeightCoeffs(const PointVector2r &pos, 
 }
 
 
-
-
 __device__ void ComputePQ(t_PointReal &Je_tr, t_PointReal &p_tr, t_PointReal &q_tr,
     const double &kappa, const double &mu, const PointMatrix2r &F)
 {
@@ -629,13 +607,17 @@ __device__ void ComputePQ(t_PointReal &Je_tr, t_PointReal &p_tr, t_PointReal &q_
 
 
 
-
 __device__ void CheckIfPointIsInsideFailureSurface(uint32_t &utility_data, const uint16_t &grain,
                             const t_PointReal &p, const t_PointReal &q, const t_PointReal &strength)
 {
-    t_PointReal beta, M_sq, pmin, pmax, qmax, pmin2;
-    GetParametersForGrain(grain, pmin, pmax, qmax, beta, M_sq, pmin2);
-//    qmax *= strength;
+    const t_PointReal pmax = gprms.IceCompressiveStrength;
+    const t_PointReal pmin = -gprms.IceTensileStrength;
+
+    const t_PointReal qmax = gprms.IceShearStrength;
+    const t_PointReal pmin2 = -gprms.IceTensileStrength2;
+
+    const t_PointReal beta = gprms.IceTensileStrength/gprms.IceCompressiveStrength;
+    const t_PointReal M_sq = (4.*qmax*qmax*(1.+2.*beta))/((pmax-pmin)*(pmax-pmin));
 
     if(p<0)
     {
@@ -663,12 +645,10 @@ const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquar
     const double &mu = gprms.mu;
     const double &kappa = gprms.kappa;
     t_PointReal DP_threshold_p = gprms.DP_threshold_p;
-    //    DP_threshold_p *= Jp_inv;
-
     const t_PointReal pmin = -gprms.IceTensileStrength;
 
     const double &pmax = gprms.IceCompressiveStrength;
-    const double &qmax = gprms.IceShearStrength;// * 2.5;
+    const double &qmax = gprms.IceShearStrength;
 
     const t_PointReal tan_phi = tan(gprms.DP_phi*SimParams::pi/180);
 
@@ -718,10 +698,7 @@ const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquar
             // plasticity will be applied
 
             // estimate the new P based on the ridge height
-//            const t_PointReal p_ridge_max = gprms.RidgeFormationCoeff * SimParams::g * gprms.IceDensity * initial_thickness * (pow(Jp_inv,1));
-//            const t_PointReal p_ridge_max = gprms.RidgeFormationCoeff * SimParams::g * gprms.IceDensity * initial_thickness * (Jp_inv*Jp_inv);
             const t_PointReal p_ridge_max = gprms.RidgeFormationCoeff * SimParams::g * gprms.IceDensity * initial_thickness * (Jp_inv);
-
             p_n_1 = min(p_tr, p_ridge_max);
 
             // re-evaluate q (to find the new "projected" value)
@@ -753,17 +730,8 @@ const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquar
     // check if something went wrong
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1)))
     {
-        printf("after invoking Wolper Drucker Prager, Fe is NaN\n");
-        printf("trial p, q  %e, %e\n", p_tr, q_tr);
-        printf("pmax %f; qmax %f;  Jpinv %f\n", pmax, qmax, Jp_inv);
-        printf("q_yield %e\n", q_yield);
-        printf("projected p, q %e, %e\n", p_n_1, q_n_1);
-        printf("case %d\n", case1);
         gpu_error_indicator |= error_code_point_Fe_nan;
     }
-
-//    t_PointReal smstp = smoothstep((Jp_inv-0.5)/2.);
-
 }
 
 
@@ -818,36 +786,6 @@ __device__ PointMatrix2r KirchhoffStress_Wolper(const PointMatrix2r &F)
     return PFt;
 }
 
-
-__device__ void GetParametersForGrain(uint32_t utility_data, t_PointReal &pmin, t_PointReal &pmax, t_PointReal &qmax,
-                                      t_PointReal &beta, t_PointReal &mSq, t_PointReal &pmin2)
-{
-    //    t_PointReal var2 = 1.0 + gprms.GrainVariability*0.033*(-15 + ((int)grain+3)%30);
-    //    t_PointReal var3 = 1.0 + gprms.GrainVariability*0.1*(-10 + ((int)grain+4)%11);
-
-//    bool is_weakened = utility_data & status_weakened;
-
-//    t_PointReal gv = gprms.GrainVariability;
-
-    t_PointReal var2 = 1.0;
-    t_PointReal var3 = 1.0;
-//    if(((int)grain)%3==0) var2 = 1.0 - gv;
-//    if(((int)grain+1)%5==0) var3 = 1.0 - gv;
-//    if(is_weakened)
-//    {
-//        var3 = var2 = 1.0 - gv;
-//    }
-
-
-    pmax = gprms.IceCompressiveStrength;// * var1;
-    pmin = -gprms.IceTensileStrength;// * var2;
-
-    qmax = gprms.IceShearStrength * var3;
-    pmin2 = -gprms.IceTensileStrength2 * var2;
-
-    beta = gprms.IceTensileStrength/gprms.IceCompressiveStrength;
-    mSq = (4.*qmax*qmax*(1.+2.*beta))/((pmax-pmin)*(pmax-pmin));
-}
 
 
 

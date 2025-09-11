@@ -79,6 +79,7 @@ public:
     Q_ENUM(VisOpt)
     VisOpt VisualizingVariable = VisOpt::none;
     double ranges[30] = {};
+    double transparency_coeffs[30] = {};
 
     void SynchronizeTopology();
     void ChangeVisualizationOption(int option);  // invoked from GUI/main thread

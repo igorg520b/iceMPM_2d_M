@@ -82,6 +82,8 @@ private:
     QString settingsFileName;       // includes current dir
     QComboBox *comboBox_visualizations;
     QDoubleSpinBox *qdsbValRange;   // high and low limits for value scale
+    QDoubleSpinBox *qdsbTransparency;
+
     QSpinBox *qsbFrameFrom, *qsbFrameTo;
     QSlider *slider2;
     QScrollArea *scrollArea;

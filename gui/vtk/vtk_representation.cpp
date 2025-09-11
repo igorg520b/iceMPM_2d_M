@@ -168,6 +168,7 @@ void icy::VisualRepresentation::SynchronizeTopology()
     const size_t gridSize = (size_t)gx * gy;
     const double h = prms->cellsize;
     const double range = std::pow(10, ranges[VisualizingVariable]);
+    const double transparency = transparency_coeffs[VisualizingVariable];
 
     // --- Step 3: Update Raster (Background) Image ---
     renderedImage.assign(original_image_colors_rgb->begin(), original_image_colors_rgb->end());
@@ -183,85 +184,105 @@ void icy::VisualRepresentation::SynchronizeTopology()
                 t_GridReal val_pt_density = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_pts_density];
                 float alpha = std::min((double)val_pt_density * (2.0 / 5.0), 1.0);
 
-                if (VisualizingVariable == VisOpt::grid_mass) {
+                // original ice colors (rendered on a grid)
+                std::array<uint8_t, 3> _rgb;
+                for (int k = 0; k < 3; k++) {
+                    float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
+                    _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
+                }
+
+                // ice colors "nicely merged" with water
+                std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
+
+
+                // surface density (kg per m2)
+                if (VisualizingVariable == VisOpt::grid_mass)
+                {
                     t_GridReal val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_mass];
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+                    const float mix = alpha*((1.-transparency));
+                    std::array<uint8_t, 3> cm = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, cm, mix);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
+                }
+
+                // original ice colors
+                else if (VisualizingVariable == VisOpt::grid_colors)
+                {
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
                 }
-                else if (VisualizingVariable == VisOpt::grid_colors) {
-                    std::array<uint8_t, 3> _rgb;
-                    for (int k = 0; k < 3; k++) {
-                        float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
-                        _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
-                    }
-                    std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_Jpinv) {
-                    std::array<uint8_t, 3> _rgb;
-                    for (int k = 0; k < 3; k++) {
-                        float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
-                        _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
-                    }
-                    std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
+
+                // deviations of surface density
+                else if (VisualizingVariable == VisOpt::grid_Jpinv)
+                {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Jpinv] - 1.0f;
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
-                    const float mix = std::abs(val / range * alpha);
+                    const float mix = std::abs(val / range * alpha) + (1.-transparency)*alpha;
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
 
-                else if (VisualizingVariable == VisOpt::grid_ridges) {
-                    std::array<uint8_t, 3> _rgb;
-                    for (int k = 0; k < 3; k++) {
-                        float v = host_grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
-                        _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
-                    }
-                    std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
+                else if (VisualizingVariable == VisOpt::grid_ridges)
+                {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Jpinv] - 1.0f;
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Ridges, 0.5 * val / range + 0.5);
-
-                    const float mix = (val > 0) ? (alpha * val / range) : 0.0f;
+                    const float mix = (val > 0) ? ((alpha * val / range) + (1.-transparency)*alpha) : 0.0f;
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
 
-                else if (VisualizingVariable == VisOpt::grid_P) {
+                else if (VisualizingVariable == VisOpt::grid_P)
+                {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_P];
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
+                    const float mix = alpha*(std::abs(val / range) + (1.-transparency));
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-                else if (VisualizingVariable == VisOpt::grid_Q) {
+
+                else if (VisualizingVariable == VisOpt::grid_Q)
+                {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_Q];
+                    const float mix = alpha*(std::abs(val / range) + (1.-transparency));
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-                else if (VisualizingVariable == VisOpt::grid_vnorm) {
+
+                else if (VisualizingVariable == VisOpt::grid_vnorm)
+                {
                     float vx = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_px];
                     float vy = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_py];
                     float val = std::sqrt(vx * vx + vy * vy);
+                    const float mix = (1.-transparency)*alpha;
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-                else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange) {
+
+                else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange)
+                {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_EqvGreenLagrange];
+                    const float mix = alpha*(std::abs(val / range) + (1.-transparency));
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-                else if (VisualizingVariable == VisOpt::str_vonMises) {
+
+                else if (VisualizingVariable == VisOpt::str_vonMises)
+                {
                     float val = host_grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_vonMises];
+                    const float mix = alpha*(std::abs(val / range) + (1.-transparency));
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-                else if (VisualizingVariable == VisOpt::grid_pointdensity) {
+
+                else if (VisualizingVariable == VisOpt::grid_pointdensity)
+                {
                     float val = val_pt_density; // Use the value before alpha scaling
+                    const float mix = alpha*((1.-transparency));
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(ColorMap::rgb_water, c1, alpha);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
                 // Wind/current data visualization
@@ -344,7 +365,7 @@ void icy::VisualRepresentation::SynchronizeValues()
 
     // --- Step 3: Update point visibility and colors ---
     actor_points->VisibilityOn();
-    scalarBar->VisibilityOff();
+//    scalarBar->VisibilityOff();
     points_mapper->ScalarVisibilityOn();
     points_mapper->SetColorModeToDirectScalars();
 
@@ -396,10 +417,7 @@ void icy::VisualRepresentation::SynchronizeValues()
             std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
             pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
-        lut_Ridges->SetTableRange(0, range);
-        scalarBar->SetLookupTable(lut_Ridges);
-        scalarBar->SetLabelFormat("%.2f");
-        scalarBar->VisibilityOn();
+
     } else if (VisualizingVariable == VisOpt::P) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa->begin() + i;
@@ -454,13 +472,13 @@ void icy::VisualRepresentation::SynchronizeValues()
     }
 
     // --- Step 4: Notify VTK that data has changed ---
-    points_filter->Update();
+    pts_colors->Modified();
 
     points_polydata->GetPointData()->SetActiveScalars("pts_colors");
-    pts_colors->Modified();
     points_polydata->Modified();
     points->Modified();
 
+    points_filter->Update();
     actor_points->GetProperty()->SetPointSize(prms->ParticleViewSize);
 }
 
