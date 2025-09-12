@@ -7,6 +7,7 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=esa_on_defaul
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 option(BUILD_CLI_VERSION "Build CLI version" ON)
+option(BUILD_COMPRESSOR "Build the tool to copress frames files" ON)
 option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
@@ -204,6 +205,28 @@ target_include_directories(cm2m PRIVATE ${HDF5_INCLUDE_DIRS})
 
 target_compile_options(cm2m PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
 target_link_libraries(cm2m PRIVATE gomp)
+
+endif()
+
+
+
+if(BUILD_COMPRESSOR)
+    add_executable(compressor
+        cli/main_compressor.cpp
+    )
+
+target_include_directories(compressor PRIVATE External)
+
+target_include_directories(compressor PRIVATE ${HDF5_INCLUDE_DIRS})
+
+if(HDF5_INCLUDE_DIRS)
+    target_link_libraries(compressor PRIVATE ${HDF5_LIBRARIES})
+else()
+    target_link_libraries(compressor PRIVATE hdf5_cpp-shared)
+endif()
+
+target_compile_options(compressor PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+target_link_libraries(compressor PRIVATE gomp)
 
 endif()
 
