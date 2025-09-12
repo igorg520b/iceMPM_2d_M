@@ -108,7 +108,8 @@ private:
         icy::VisualRepresentation::VisOpt::grid_P,
         icy::VisualRepresentation::VisOpt::grid_Q,
         icy::VisualRepresentation::VisOpt::grid_vnorm,
-        icy::VisualRepresentation::VisOpt::str_vonMises
+        icy::VisualRepresentation::VisOpt::str_vonMises,
+        icy::VisualRepresentation::VisOpt::grid_ridges
     };
 };
 #endif

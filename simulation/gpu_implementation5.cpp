@@ -469,7 +469,7 @@ void GPU_Implementation5::transfer_from_device()
 
 void GPU_Implementation5::transfer_grid_to_host()
 {
-    LOGV("GPU_Implementation5::transfer_grid_to_host()");
+//    LOGV("GPU_Implementation5::transfer_grid_to_host()");
     const int gx_total = model->prms.GridXTotal;
     const int gy_total = model->prms.GridYTotal;
     const int halo = model->prms.GridHaloSize;
