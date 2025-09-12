@@ -46,8 +46,11 @@ bool icy::Model::Step()
 
     if(m_save_future.valid())
     {
-        LOGV("waiting to finish saving frame");
+        auto start_time = std::chrono::steady_clock::now();
         m_save_future.get(); // wait until frame is saved
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        LOGR("waited to finish saving frame: {} ms", duration_ms);
     }
 
     bool saveSnapshot = ((prms.SimulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
