@@ -533,6 +533,8 @@ void icy::SnapshotManager::PrepareRGB_Buffer()
 }
 
 
+
+/*
 void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)
 {
     LOGR("SnapshotManager::SaveFrame: step {}, time {}", SimulationStep, SimulationTime);
@@ -604,6 +606,70 @@ void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)
 
     LOGR("SaveFrame done; step {}, time {}", SimulationStep, SimulationTime);
 }
+*/
+
+
+void icy::SnapshotManager::SaveFrame(int SimulationStep, double SimulationTime)
+{
+    LOGR("SnapshotManager::SaveFrame: step {}, time {}", SimulationStep, SimulationTime);
+    const int frame = SimulationStep / model->prms.UpdateEveryNthStep;
+    const int &gx = model->prms.GridXTotal;
+    const int &gy = model->prms.GridYTotal;
+    const int gridSize = gx*gy;
+
+    PrepareRGB_Buffer();
+
+    // save as HDF5
+    fs::path outputDir = "output";
+    fs::path framesDir = "frames";
+    fs::path targetPath = outputDir / SimulationTitle / framesDir;
+    fs::create_directories(targetPath);
+
+    // save current state
+    //    std::string baseName = std::format("f{:05d}.h5", frame);
+    std::string baseName = fmt::format(fmt::runtime("f{:05d}.h5"), frame);
+
+    fs::path fullPath = targetPath / baseName;
+    H5::H5File file(fullPath.string(), H5F_ACC_TRUNC);
+
+
+    // save RGB
+    hsize_t dims_rgb[3] = {(hsize_t)gx, (hsize_t)gy, 3};
+    H5::DataSpace dataspace_rgb(3, dims_rgb);
+
+    H5::DataSet ds_rgb = file.createDataSet("rgb", H5::PredType::NATIVE_UINT8, dataspace_rgb);
+    ds_rgb.write(rgb.data(), H5::PredType::NATIVE_UINT8);
+
+    H5::DataSpace att_dspace(H5S_SCALAR);
+    ds_rgb.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &SimulationStep);
+    ds_rgb.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &SimulationTime);
+
+    // save vx, vy, Jpinv, P, Q, point_density, mass, str_EqvGreenLagrange, str_vonMises
+
+    hsize_t dims_grid[2] = {(hsize_t)gx, (hsize_t)gy};
+    H5::DataSpace dspg(2, dims_grid);
+
+    H5::DataType dtype;
+    if constexpr(std::is_same_v<t_GridReal, float>) dtype = H5::PredType::NATIVE_FLOAT;
+    else dtype = H5::PredType::NATIVE_DOUBLE;
+
+    H5::DataType file_dtype = H5::PredType::NATIVE_FLOAT; // how we save it
+
+    file.createDataSet("grid_idx_px", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_px], dtype);
+    file.createDataSet("grid_idx_py", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_py], dtype);
+    file.createDataSet("grid_idx_mass", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_mass], dtype);
+    file.createDataSet("grid_idx_vis_pts_density", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_pts_density], dtype);
+    file.createDataSet("grid_idx_vis_Jpinv", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_Jpinv], dtype);
+    file.createDataSet("grid_idx_vis_P", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_P], dtype);
+    file.createDataSet("grid_idx_vis_Q", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_Q], dtype);
+    file.createDataSet("grid_idx_vis_strain_vonMises", file_dtype, dspg).write(&model->gpu.host_grid_buffer[gridSize*SimParams::grid_idx_vis_strain_vonMises], dtype);
+
+    // additionally, save region forces in a separate file
+    SaveForces(frame);
+
+    LOGR("SaveFrame done; step {}, time {}", SimulationStep, SimulationTime);
+}
+
 
 
 void icy::SnapshotManager::SaveForces(const int frame)
