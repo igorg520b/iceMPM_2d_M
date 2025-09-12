@@ -8,10 +8,6 @@
 #include <H5Cpp.h>
 #include <omp.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
-
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
@@ -28,14 +24,12 @@ std::vector<fs::path> scanForFrameFiles(const fs::path& directory);
 void processFrameFile(const fs::path& filePath);
 
 
-// --- Main Entry Point ---
+// --- Main Entry Point (No Changes Needed) ---
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        std::cerr << "argc == " << argc << std::endl;
         std::cerr << "Usage: " << argv[0] << " <directory_with_frames>" << std::endl;
         return 1;
     }
-
     const fs::path directory(argv[1]);
     if (!fs::is_directory(directory)) {
         std::cerr << "Error: Provided path is not a directory: " << directory << std::endl;
@@ -51,17 +45,13 @@ int main(int argc, char* argv[]) {
         std::cout << "No frame files matching the pattern 'f*.h5' were found." << std::endl;
         return 0;
     }
-    std::cout << "Found " << files_to_process.size() << " frame files. Starting parallel compression..." << std::endl;
+    std::cout << "Found " << files_to_process.size() << " frame files. Starting sequential compression..." << std::endl;
 
-    // --- Create the output directory ONCE, before the parallel loop ---
-    const fs::path parentDir = directory.parent_path();
-    std::cout << "dir is: " << directory.string() << std::endl;
-    std::cout << "Parent dir is: " << parentDir.string() << std::endl;
-    const fs::path newDir = parentDir / "frames_compressed";
+    const fs::path newDir = directory.parent_path() / "frames_compressed";
     fs::create_directories(newDir);
     std::cout << "Output will be saved in: " << newDir.string() << std::endl;
 
-//#pragma omp parallel for num_threads(6) schedule(dynamic)
+    // The loop is sequential as requested in the previous turn.
     for (size_t i = 0; i < files_to_process.size(); ++i) {
         processFrameFile(files_to_process[i]);
     }
@@ -77,6 +67,7 @@ int main(int argc, char* argv[]) {
 }
 
 
+// --- scanForFrameFiles (No Changes Needed) ---
 std::vector<fs::path> scanForFrameFiles(const fs::path& directory) {
     std::vector<fs::path> frameFiles;
     const std::regex filePattern(R"(^f\d+\.h5$)");
@@ -91,10 +82,18 @@ std::vector<fs::path> scanForFrameFiles(const fs::path& directory) {
 }
 
 
+// --- processFrameFile (Modified with the skip logic) ---
 void processFrameFile(const fs::path& filePath) {
-    const fs::path parentDir = filePath.parent_path();
-    const fs::path newDir = parentDir.parent_path() / "frames_compressed";
+    const fs::path newDir = filePath.parent_path().parent_path() / "frames_compressed";
     const fs::path newFilePath = newDir / filePath.filename();
+
+    // --- KEY ADDITION: Check if the destination file already exists ---
+    if (fs::exists(newFilePath)) {
+        // Use a std::cout block for thread-safe printing if you re-enable OpenMP
+        // For sequential code, it's fine as is.
+        std::cout << "  Skipping (already exists): " << filePath.filename().string() << "\n";
+        return; // Exit the function immediately.
+    }
 
     H5::H5File originalFile(filePath.string(), H5F_ACC_RDONLY);
     H5::H5File newFile(newFilePath.string(), H5F_ACC_TRUNC);
@@ -103,24 +102,17 @@ void processFrameFile(const fs::path& filePath) {
     {
         H5::DataSet originalRgbDset = originalFile.openDataSet("rgb");
         H5::DataSpace filespace = originalRgbDset.getSpace();
-        hsize_t dims[3];
-        filespace.getSimpleExtentDims(dims, NULL);
-        const int gx = dims[0], gy = dims[1], channels = 3;
 
-        std::vector<uint8_t> rgb_buffer(gx * gy * channels);
+        std::vector<uint8_t> rgb_buffer(filespace.getSelectNpoints());
         originalRgbDset.read(rgb_buffer.data(), H5::PredType::NATIVE_UINT8);
 
-        int png_len;
-        unsigned char* png_buffer = stbi_write_png_to_mem(rgb_buffer.data(), 0, gx, gy, channels, &png_len);
+        H5::DSetCreatPropList rgbProps;
+        hsize_t chunk_dims[3] = {128, 128, 3};
+        rgbProps.setChunk(3, chunk_dims);
+        rgbProps.setDeflate(8);
 
-        if (!png_buffer || png_len <= 0) {
-            throw std::runtime_error("stb_image_write failed for " + filePath.string());
-        }
-
-        hsize_t png_dim = png_len;
-        H5::DataSpace png_space(1, &png_dim);
-        H5::DataSet newRgbDset = newFile.createDataSet("rgb_png", H5::PredType::NATIVE_UINT8, png_space);
-        newRgbDset.write(png_buffer, H5::PredType::NATIVE_UINT8);
+        H5::DataSet newRgbDset = newFile.createDataSet("rgb", H5::PredType::NATIVE_UINT8, filespace, rgbProps);
+        newRgbDset.write(rgb_buffer.data(), H5::PredType::NATIVE_UINT8);
 
         H5::DataSpace att_space(H5S_SCALAR);
         int simStep;
@@ -129,8 +121,6 @@ void processFrameFile(const fs::path& filePath) {
         originalRgbDset.openAttribute("SimulationTime").read(H5::PredType::NATIVE_DOUBLE, &simTime);
         newRgbDset.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_space).write(H5::PredType::NATIVE_INT, &simStep);
         newRgbDset.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_space).write(H5::PredType::NATIVE_DOUBLE, &simTime);
-
-        stbi_image_free(png_buffer);
     }
 
     // --- Process All Other Grid Datasets ---
@@ -141,21 +131,16 @@ void processFrameFile(const fs::path& filePath) {
         props.setDeflate(4);
 
         std::vector<float> buffer;
-
         for (const auto& name : GRID_DATASET_NAMES) {
             if (H5Lexists(originalFile.getId(), name.c_str(), H5P_DEFAULT)) {
                 H5::DataSet originalDset = originalFile.openDataSet(name);
                 buffer.resize(originalDset.getSpace().getSelectNpoints());
                 originalDset.read(buffer.data(), H5::PredType::NATIVE_FLOAT);
-
                 H5::DataSet newDset = newFile.createDataSet(name, H5::PredType::NATIVE_FLOAT, originalDset.getSpace(), props);
                 newDset.write(buffer.data(), H5::PredType::NATIVE_FLOAT);
             }
         }
     }
 
-#pragma omp critical
-    {
-        std::cout << "  Successfully compressed: " << filePath.filename().string() << "\n";
-    }
+    std::cout << "  Successfully compressed: " << filePath.filename().string() << "\n";
 }
