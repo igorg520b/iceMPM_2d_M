@@ -73,6 +73,7 @@ private Q_SLOTS:
     void sliderValueChanged(int val);
     void render_frame_triggered();
     void render_all_triggered();
+    void toggleScrollTracking(bool checked);
 
 private:
     GeneralGridData ggd;

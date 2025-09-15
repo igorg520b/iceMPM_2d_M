@@ -78,7 +78,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
 
     slider2 = new QSlider(Qt::Horizontal);
     ui->toolBar->addWidget(slider2);
-    slider2->setTracking(true);
+    slider2->setTracking(false);
     slider2->setMinimum(1);
     slider2->setMaximum(10000);
     connect(slider2, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
@@ -137,6 +137,10 @@ PPMainWindow::PPMainWindow(QWidget *parent)
             comboBox_visualizations->setCurrentIndex(var.toInt());
             qdsbValRange->setValue(representation.ranges[var.toInt()]);
         }
+
+        bool scrollTracking = settings.value("scroll_tracking", false).toBool();
+        ui->actionScroll_Tracking->setChecked(scrollTracking);
+        slider2->setTracking(scrollTracking);
     }
     else
     {
@@ -146,17 +150,11 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     connect(ui->action_camera_reset, &QAction::triggered, this, &PPMainWindow::cameraReset_triggered);
     connect(ui->actionRender_Frame, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
     connect(ui->actionRender_All, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
+    connect(ui->actionScroll_Tracking, &QAction::triggered, this, &PPMainWindow::toggleScrollTracking);
     connect(qdsbValRange,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
     connect(qdsbTransparency,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
 
-    // off-screen rendering
-    // Copy the renderers from the current render window
-
-    ui->actionShow_Wind->setChecked(false);
-    // Set the target resolution for the off-screen render window
-
     qDebug() << "PPMainWindow constructor done";
-
 }
 
 
@@ -188,6 +186,7 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
     settings.setValue("transparency_coeffs", transparency_coeffs);
 
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
+    settings.setValue("scroll_tracking", ui->actionScroll_Tracking->isChecked());
 
     event->accept();
 }
@@ -249,14 +248,14 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
         return;
     }
 
-    slider2->setMaximum(ggd.countFrames);
+    slider2->setMaximum(ggd.countFrames-1);
 
     qsbFrameTo->setMaximum(ggd.countFrames-1);
     qsbFrameTo->setValue(ggd.countFrames-1);
 
     qsbFrameFrom->setMaximum(ggd.countFrames-1);
     qsbFrameFrom->setValue(0);
-    slider2->setValue(ggd.countFrames-1);
+    slider2->setValue(ggd.countFrames-2);
 }
 
 void PPMainWindow::sliderValueChanged(int val)
@@ -482,4 +481,11 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     int result = std::system(("chmod +x " + scriptFilename).c_str());
 
     ui->statusbar->showMessage(QString("Generated genvideo.sh in %1").arg(rasterPath), 5000);
+}
+
+
+void PPMainWindow::toggleScrollTracking(bool checked)
+{
+    qDebug() << "tracking toggled: " << checked;
+    slider2->setTracking(checked);
 }

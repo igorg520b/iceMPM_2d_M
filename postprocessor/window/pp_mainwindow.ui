@@ -28,7 +28,6 @@
     <property name="title">
      <string>File</string>
     </property>
-    <addaction name="actionOpen_Frame"/>
    </widget>
    <widget class="QMenu" name="menuTools_2">
     <property name="title">
@@ -38,7 +37,6 @@
     <addaction name="actionRender_Frame"/>
     <addaction name="actionRender_All"/>
     <addaction name="actionGenerate_Script"/>
-    <addaction name="actionShow_Wind"/>
     <addaction name="actionLoad_Selected_Frame"/>
    </widget>
    <addaction name="menuFile"/>
@@ -69,8 +67,7 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionOpen_Frame"/>
-   <addaction name="actionShow_Wind"/>
+   <addaction name="actionScroll_Tracking"/>
   </widget>
   <action name="action_camera_reset">
    <property name="text">
@@ -78,18 +75,6 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+R</string>
-   </property>
-  </action>
-  <action name="actionOpen_Frame">
-   <property name="icon">
-    <iconset resource="../../icons.qrc">
-     <normaloff>:/gui/icons/open-file-folder-svgrepo-com.svg</normaloff>:/gui/icons/open-file-folder-svgrepo-com.svg</iconset>
-   </property>
-   <property name="text">
-    <string>Open Frame...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+O</string>
    </property>
   </action>
   <action name="actionRender_Frame">
@@ -113,23 +98,27 @@
     <string>Generate Script</string>
    </property>
   </action>
-  <action name="actionShow_Wind">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="icon">
-    <iconset theme="weather-fog"/>
-   </property>
-   <property name="text">
-    <string>Show Wind</string>
-   </property>
-  </action>
   <action name="actionLoad_Selected_Frame">
    <property name="text">
     <string>Load Selected Frame</string>
    </property>
    <property name="toolTip">
     <string>Load Selected Frame</string>
+   </property>
+  </action>
+  <action name="actionScroll_Tracking">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../../icons.qrc">
+     <normaloff>:/gui/icons/system-log-out.svg</normaloff>:/gui/icons/system-log-out.svg</iconset>
+   </property>
+   <property name="text">
+    <string>Scroll Tracking</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::NoRole</enum>
    </property>
   </action>
  </widget>
