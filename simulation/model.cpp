@@ -217,8 +217,8 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
         m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveFrameTask, this,
                                    prms.SimulationStep, prms.SimulationTime);
         gpu.hssoa.transferToSecondBuffer();
-//        m_save_full_snapshot_future = std::async(std::launch::async, &icy::Model::AsyncSaveFullSnapshotTask, this,
-//                                                 prms.SimulationStep, prms.SimulationTime);
+        m_save_full_snapshot_future = std::async(std::launch::async, &icy::Model::AsyncSaveFullSnapshotTask, this,
+                                                 prms.SimulationStep, prms.SimulationTime);
     }
     LOGR("LoadParameterFile done {}", fileName);
 }
