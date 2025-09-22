@@ -4,6 +4,7 @@
 #include <iostream> // Added for std::cout and std::cerr
 #include <algorithm>
 #include <filesystem>
+#include <unordered_set>
 
 #define NANOSVG_IMPLEMENTATION
 #include "nanosvg.h" // Assuming nanosvg.h is in the same directory or include path
@@ -14,6 +15,7 @@
 
 void SatelliteImageProcessor::LoadSVG(std::string fileName, int rasterWidth, int rasterHeight,
                                       std::string MainPathID, std::string RectanglePathID, std::string FluentPathID,
+                                      const std::vector<std::string>& rasterizedPathIDs,
                                       std::string ProjectDirectory)
 {
     std::cout << "INFO: SatelliteImageProcessor::LoadSVG" << std::endl;
@@ -21,38 +23,76 @@ void SatelliteImageProcessor::LoadSVG(std::string fileName, int rasterWidth, int
     this->width = rasterWidth;
     this->height = rasterHeight;
 
-    // Extract Bezier paths, skipping RectanglePathID, storing extents
+    // --- 1. Extract ALL Bezier paths from the SVG file ---
+    // This initial step loads everything so we can validate against the full list.
     extractBezierCurvesFromSVG(fileName, RectanglePathID, MainPathID, FluentPathID);
 
+    // --- 2. Validate that all requested paths exist in the SVG ---
+    std::unordered_set<std::string> foundPathIDs;
+    for (const auto& path : bezierPaths) {
+        if (!path.name.empty()) {
+            foundPathIDs.insert(path.name);
+        }
+    }
 
-    // Keeps only closed paths
+    // Check for MainPathID
+    if (foundPathIDs.find(MainPathID) == foundPathIDs.end()) {
+        throw std::runtime_error("Validation failed: The required MainPathID '" + MainPathID + "' was not found in the SVG file.");
+    }
+
+    // Check for all other requested paths
+    for (const auto& requiredID : rasterizedPathIDs) {
+        if (foundPathIDs.find(requiredID) == foundPathIDs.end()) {
+            throw std::runtime_error("Validation failed: The requested path '" + requiredID + "' was not found in the SVG file.");
+        }
+    }
+    std::cout << "INFO: All requested paths were successfully validated." << std::endl;
+
+
+    // --- 3. Filter the paths to keep only the ones we need to rasterize ---
+    std::unordered_set<std::string> pathsToKeep(rasterizedPathIDs.begin(), rasterizedPathIDs.end());
+    pathsToKeep.insert(MainPathID); // Ensure MainPathID is always included
+
+    std::vector<BezierPath> filteredPaths;
+    for (const auto& path : bezierPaths) {
+        if (pathsToKeep.count(path.name)) {
+            filteredPaths.push_back(path);
+        }
+    }
+    // Replace the original full list with our new filtered list
+    bezierPaths = std::move(filteredPaths);
+    std::cout << "INFO: Filtered SVG paths. Kept " << bezierPaths.size() << " paths for processing." << std::endl;
+
+
+    // --- 4. Process the filtered list of paths ---
+
+    // Keeps only closed paths from our filtered list
     bezierPaths.erase(std::remove_if(bezierPaths.begin(), bezierPaths.end(),
                                      [](const BezierPath& path) { return !path.closed; }),
                       bezierPaths.end());
 
-    // move main path to top
-    // Find the BezierPath with name "MainPathID"
+    // Move main path to the top of the filtered list
     auto it = std::find_if(bezierPaths.begin(), bezierPaths.end(),
                            [&](const BezierPath& path) {
                                return path.name == MainPathID;
                            });
 
-    // If found, move it to the beginning
+    // Our earlier validation guarantees that 'it' will be valid, but we keep the check for safety.
     if (it != bezierPaths.end()) {
-        std::swap(bezierPaths[0], *it);
+        if (it != bezierPaths.begin()) { // Avoid swapping with itself
+            std::swap(*bezierPaths.begin(), *it);
+        }
         bezierPaths[0].isMain = true;
-        std::cout << "INFO: Moved 'MainPathID' to the top of bezierPaths" << std::endl;
+        std::cout << "INFO: Moved '" << MainPathID << "' to the top of the processing list." << std::endl;
     } else {
-        std::cerr << "WARN: No BezierPath with name 'MainPathID' found" << std::endl;
-        throw std::runtime_error("No BezierPath with name 'MainPathID' found");
+        // This case should not be reachable due to the validation step above.
+        throw std::runtime_error("Logic error: MainPathID '" + MainPathID + "' was lost after filtering. It might be an open path.");
     }
 
 
-
-    // --- START: NEW TRANSFORMATION LOGIC ---
+    // --- 5. Apply coordinate transformation to the final list of paths ---
     std::cout << "INFO: Applying transformation to align SVG coordinates with raster image." << std::endl;
 
-    // 1. Calculate the transformation based on the RectanglePathID's extents
     Eigen::Vector2f svg_min = extents[0];
     Eigen::Vector2f svg_max = extents[1];
     Eigen::Vector2f svg_dims = svg_max - svg_min;
@@ -61,12 +101,9 @@ void SatelliteImageProcessor::LoadSVG(std::string fileName, int rasterWidth, int
         throw std::runtime_error("Invalid extents for RectanglePathID. Dimensions must be positive.");
     }
 
-    // Calculate scale factor. We use the width for a uniform scale.
     float scale = static_cast<float>(width) / svg_dims.x();
-    std::cout << "SCALE: " << scale << std::endl;
     Eigen::Vector2f translation = svg_min;
 
-    // Check for aspect ratio mismatch, which might cause distortion.
     float svg_aspect_ratio = svg_dims.x() / svg_dims.y();
     float raster_aspect_ratio = static_cast<float>(width) / static_cast<float>(height);
     if (std::abs(svg_aspect_ratio - raster_aspect_ratio) > 1e-3) {
@@ -74,33 +111,28 @@ void SatelliteImageProcessor::LoadSVG(std::string fileName, int rasterWidth, int
                   << ") differs from raster image aspect ratio (" << raster_aspect_ratio
                   << "). This may cause vertical stretching." << std::endl;
     }
-
     std::cout << "INFO: Calculated transform: scale = " << scale << ", translation = (" << translation.x() << ", " << translation.y() << ")" << std::endl;
 
-    // 2. Apply the transformation to all points in every bezier path
+    // Apply the transformation to all points in every *filtered* bezier path
     for (auto& path : bezierPaths)
     {
         for (auto& segment : path.segments)
         {
-            // Transform point P0 (start point)
             Eigen::Vector2f p0(segment.x0, segment.y0);
             p0 = (p0 - translation) * scale;
             segment.x0 = p0.x();
             segment.y0 = p0.y();
 
-            // Transform point P1 (control point 1)
             Eigen::Vector2f p1(segment.x1, segment.y1);
             p1 = (p1 - translation) * scale;
             segment.x1 = p1.x();
             segment.y1 = p1.y();
 
-            // Transform point P2 (control point 2)
             Eigen::Vector2f p2(segment.x2, segment.y2);
             p2 = (p2 - translation) * scale;
             segment.x2 = p2.x();
             segment.y2 = p2.y();
 
-            // Transform point P3 (end point)
             Eigen::Vector2f p3(segment.x3, segment.y3);
             p3 = (p3 - translation) * scale;
             segment.x3 = p3.x();
@@ -108,30 +140,21 @@ void SatelliteImageProcessor::LoadSVG(std::string fileName, int rasterWidth, int
         }
     }
 
-    // 3. Apply the transformation to the fluent extents
+    // Apply the transformation to the fluent extents
     extents_fluent[0] = (extents_fluent[0] - translation) * scale;
     extents_fluent[1] = (extents_fluent[1] - translation) * scale;
 
     const float old_y_min = extents_fluent[0].y();
     const float old_y_max = extents_fluent[1].y();
-
-    // Apply the inversion: new_min_y = (height-1) - old_max_y, etc.
-    extents_fluent[0].y() = static_cast<float>(height - 1) - old_y_max;
-    extents_fluent[1].y() = static_cast<float>(height - 1) - old_y_min;
-
+    extents_fluent[0].y() = static_cast<float>(height) - old_y_max;
+    extents_fluent[1].y() = static_cast<float>(height) - old_y_min;
     std::cout << "INFO: Transformed fluent extents: (" << extents_fluent[0].x() << ", " << extents_fluent[0].y()
               << ") - (" << extents_fluent[1].x() << ", " << extents_fluent[1].y() << ")" << std::endl;
 
-    // 4. Update the main extents to the new raster coordinate system
+    // Update the main extents to the new raster coordinate system
     extents[0] = Eigen::Vector2f(0.0f, 0.0f);
     extents[1] = Eigen::Vector2f(static_cast<float>(width), static_cast<float>(height));
 
-    // --- END: NEW TRANSFORMATION LOGIC ---
-
-
-
-    // print out segment data for tracing
-    //    for(auto &path : bezierPaths) path.print();
     std::cout << "INFO: done SatelliteImageProcessor::LoadSVG" << std::endl;
 }
 
@@ -139,8 +162,8 @@ void SatelliteImageProcessor::LoadSVG(std::string fileName, int rasterWidth, int
 void SatelliteImageProcessor::RasterizeSVG()
 {
     // rasterize
-    normals.resize(width * height, Eigen::Vector2f::Zero());
-    path_indices.resize(width * height, -1);
+    normals.assign(width * height, Eigen::Vector2f::Zero());
+    path_indices.assign(width * height, -1);
     for (size_t pathIdx = 0; pathIdx < bezierPaths.size(); ++pathIdx) {
         auto& path = bezierPaths[pathIdx];
         path.render(normals, path_indices, width, height, static_cast<int>(pathIdx));

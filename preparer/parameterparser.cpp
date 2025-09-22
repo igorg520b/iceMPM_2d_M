@@ -24,6 +24,20 @@ void ParameterParser::LoadParamsFile(std::string fileName)
     doc.Parse(strConfigFile.data());
     if(!doc.IsObject()) throw std::runtime_error("configuration file is not JSON");
 
+
+    if(doc.HasMember("renderedPaths"))
+    {
+        const rapidjson::Value& pathsArray = doc["renderedPaths"];
+        for (rapidjson::SizeType i = 0; i < pathsArray.Size(); ++i) {
+            renderedPaths.push_back(pathsArray[i].GetString());
+        }
+    }
+
+    if(doc.HasMember("pierColor"))
+        for (int i = 0; i < 3; ++i)
+            pierColor[i] = doc["pierColor"][i].GetInt();
+    else pierColor[0] = -1;
+
     if(doc.HasMember("ProjectName")) ProjectName = doc["ProjectName"].GetString();
     else ProjectName  = "p1";
 

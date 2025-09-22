@@ -1,5 +1,6 @@
 #include "mainimageimporter.h"
-
+#include <stack>
+#include <algorithm>
 
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -187,115 +188,9 @@ void MainImageImporter::getColorFromValue(float val, unsigned char& r, unsigned 
     r = static_cast<unsigned char>(r_f);
     g = static_cast<unsigned char>(g_f);
     b = static_cast<unsigned char>(b_f);
-
-    // --- Alternative using std::round (include <cmath>) ---
-    // r = static_cast<unsigned char>(std::round(r_f));
-    // g = static_cast<unsigned char>(std::round(g_f));
-    // b = static_cast<unsigned char>(std::round(b_f));
 }
 
 
-/*
-MainImageImporter::ProjectionResult MainImageImporter::projectPointOntoCurve(
-    const Eigen::Vector3f& point,
-    const std::vector<Eigen::Vector3f>& curvePoints)
-{
-    ProjectionResult bestResult;
-    float accumulatedLength = 0.0f;
-    std::vector<float> segmentLengths;
-    float totalLength = 0.0f;
-
-    if (curvePoints.size() < 2) return bestResult; // Need at least 2 points
-
-    // Pre-calculate segment lengths and total length
-    for (size_t i = 0; i < curvePoints.size() - 1; ++i) {
-        const Eigen::Vector3f& p0 = curvePoints[i];
-        const Eigen::Vector3f& p1 = curvePoints[i + 1];
-        float len = (p1 - p0).norm();
-        segmentLengths.push_back(len);
-        totalLength += len;
-    }
-
-    // Handle degenerate curve (all points coincident or only one point)
-    if (totalLength <= 1e-9f) {
-        if (!curvePoints.empty()) {
-            bestResult.distance = (point - curvePoints[0]).norm();
-            bestResult.position = 0.0f; // Or arguably undefined?
-        }
-        return bestResult;
-    }
-
-
-    // Iterate through segments to find the closest point
-    for (size_t i = 0; i < curvePoints.size() - 1; ++i) {
-        const Eigen::Vector3f& p0 = curvePoints[i];
-        const Eigen::Vector3f& p1 = curvePoints[i + 1];
-        const Eigen::Vector3f segmentVec = p1 - p0;
-        const float segmentLengthSq = segmentVec.squaredNorm();
-        const float currentSegmentLength = segmentLengths[i];
-
-        Eigen::Vector3f closestPointOnSegment;
-        float t = 0.0f; // Parameter along the segment [0, 1]
-
-        if (segmentLengthSq > 1e-9f) {
-            const Eigen::Vector3f pointVec = point - p0;
-            t = pointVec.dot(segmentVec) / segmentLengthSq;
-            t = std::clamp(t, 0.0f, 1.0f); // Clamp t to [0, 1]
-            closestPointOnSegment = p0 + t * segmentVec;
-        } else {
-            closestPointOnSegment = p0; // Segment is effectively a point
-            t = 0.0f;
-        }
-
-        float dist = (point - closestPointOnSegment).norm();
-
-        if (dist < bestResult.distance) {
-            bestResult.distance = dist;
-            // Calculate normalized position along the *entire* curve
-            bestResult.position = (accumulatedLength + t * currentSegmentLength) / totalLength;
-                // Ensure position doesn't slightly exceed 1 due to float errors
-            bestResult.position = std::clamp(bestResult.position, 0.0f, 1.0f);
-        }
-        accumulatedLength += currentSegmentLength;
-    }
-
-    return bestResult;
-}
-
-
-// Categorizes based on color, returns status and thickness/value
-// Accesses member color data vectors.
-// Status: 0=water, 1=crushed, 2=intact
-// Value: Normalized thickness (0-1) for intact, 0 otherwise
-std::pair<uint8_t, float> MainImageImporter::categorizeColor(const Eigen::Vector3f& rgb) const // Mark const
-{
-    // Ensure color data is loaded
-    if (colordata_OpenWater.empty() || colordata_Solid.empty()) {
-        // Maybe throw an exception or return a default?
-        std::cerr << "Warning: Color data not loaded, cannot categorize pixel." << std::endl;
-        return {1, 0.0f}; // Default to crushed? Or maybe water?
-    }
-
-    // 1. Check for Open Water
-    ProjectionResult waterProj = projectPointOntoCurve(rgb, colordata_OpenWater);
-    if (waterProj.distance < openWaterThreshold) {
-        return {0, 0.0f}; // Status 0: Open Water, Thickness 0
-    }
-
-    // 2. Check for Solid/Intact Ice
-    ProjectionResult solidProj = projectPointOntoCurve(rgb, colordata_Solid);
-
-    // If close enough to the solid curve, classify as Intact
-    if (solidProj.distance < intactIceThreshold) {
-        // Status 2: Intact Ice, Value is the normalized position
-        return {2, solidProj.position};
-    }
-
-    // 3. Otherwise, classify as Crushed Ice
-    return {1, 0.0f}; // Status 1: Crushed Ice, Thickness 0
-}
-
-*/
 
 
 // =============================== rendering
@@ -649,5 +544,171 @@ std::pair<uint8_t, float> MainImageImporter::categorizeColor(const Eigen::Vector
     else {
         // The color's nearest neighbor is in the Crushed Ice set.
         return {1, 0.0f}; // Status 1: Crushed Ice, Thickness 0.0
+    }
+}
+
+
+
+// mark pier regions
+
+/**
+ * @brief Identifies contiguous regions of a specific color in the source image and merges them
+ * into the SatelliteImageProcessor's path_indices grid.
+ *
+ * @param pierColor The RGB color of the pier regions to be identified.
+ */
+void MainImageImporter::ProcessBridgePiers(const Eigen::Vector3i& pierColor)
+{
+    std::cout << "INFO: Starting bridge pier processing..." << std::endl;
+
+    // --- 1. Sanity Checks ---
+    if (pngData.empty() || sip.path_indices.empty()) {
+        spdlog::error("Cannot process bridge piers: Image data or SIP path_indices not loaded.");
+        throw std::runtime_error("Prerequisite data not loaded for pier processing.");
+    }
+    if (sip.path_indices.size() != static_cast<size_t>(width * height)) {
+        spdlog::error("Mismatch between image size and path_indices size.");
+        throw std::runtime_error("Dimension mismatch in pier processing.");
+    }
+
+    // --- 2. Find the next available index to use for the new regions ---
+    // This prevents overwriting the indices from the SVG file.
+    int max_existing_index = 0;
+    if (!sip.path_indices.empty()) {
+        max_existing_index = *std::max_element(sip.path_indices.begin(), sip.path_indices.end());
+    }
+    const int next_available_index = max_existing_index + 1;
+    std::cout << "INFO: Next available path index: " << next_available_index << std::endl;
+
+
+    // --- 3. Find and label all contiguous pier regions ---
+    std::vector<int> pier_labels(width * height, 0); // Temp storage for labeled regions (1, 2, 3...)
+    int regionCount = 0;
+    findConnectedRegions(pierColor, pier_labels, regionCount);
+
+    if (regionCount == 0) {
+        std::cout << "WARN: No regions with the specified pier color were found." << std::endl;
+        return;
+    }
+    std::cout << "INFO: Found " << regionCount << " distinct pier regions." << std::endl;
+
+    // --- 4. Merge the newly found regions into sip.path_indices ---
+    int pixels_updated = 0;
+    for (size_t i = 0; i < pier_labels.size(); ++i) {
+        // A label > 0 means this pixel belongs to a pier region.
+        if (pier_labels[i] > 0) {
+            // The label in pier_labels is a temporary ID (1, 2, 3...).
+            // We map it to a globally unique ID using our starting offset.
+            // Example: region 1 becomes ID `next_available_index`
+            //          region 2 becomes ID `next_available_index + 1`
+            sip.path_indices[i] = next_available_index + (pier_labels[i] - 1);
+            pixels_updated++;
+        }
+    }
+    std::cout << "INFO: Merged pier regions into path_indices. Updated " << pixels_updated << " pixels." << std::endl;
+}
+
+
+/**
+ * @brief Scans the entire image to find all distinct, contiguous regions of a target color.
+ *
+ * @param targetColor The RGB color to search for.
+ * @param labels      Output vector where each region will be marked with a unique integer label (1, 2, 3...).
+ * @param regionCount Output parameter that will hold the total number of distinct regions found.
+ */
+void MainImageImporter::findConnectedRegions(const Eigen::Vector3i& targetColor,
+                                             std::vector<int>& labels,
+                                             int& regionCount) const
+{
+    std::vector<bool> visited(width * height, false);
+    regionCount = 0;
+
+    // Iterate through every pixel of the image
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const size_t index = static_cast<size_t>(y) * width + x;
+
+            // If we've already processed this pixel, skip it
+            if (visited[index]) {
+                continue;
+            }
+
+            // Get the color of the current pixel (assuming 3 channels: R, G, B)
+            const unsigned char r = pngData[index * 3 + 0];
+            const unsigned char g = pngData[index * 3 + 1];
+            const unsigned char b = pngData[index * 3 + 2];
+
+            // Check if the color matches our target
+            if (r == targetColor.x() && g == targetColor.y() && b == targetColor.z()) {
+                // This is the start of a new, unvisited region
+                regionCount++;
+                // Use flood fill to find all connected pixels in this region and label them
+                floodFill(x, y, regionCount, targetColor, labels, visited);
+            }
+        }
+    }
+}
+
+
+/**
+ * @brief Performs a flood-fill algorithm to find all connected pixels of a target color,
+ * starting from a given seed point. This is an iterative implementation to avoid stack overflow.
+ *
+ * @param startX      The x-coordinate of the starting pixel.
+ * @param startY      The y-coordinate of the starting pixel.
+ * @param label       The integer label to assign to all pixels in the found region.
+ * @param targetColor The color of the pixels that constitute the region.
+ * @param labels      The output vector where labeled pixels are stored.
+ * @param visited     A boolean vector to keep track of already-processed pixels.
+ */
+void MainImageImporter::floodFill(int startX, int startY, int label,
+                                  const Eigen::Vector3i& targetColor,
+                                  std::vector<int>& labels,
+                                  std::vector<bool>& visited) const
+{
+    std::stack<std::pair<int, int>> pixels_to_visit;
+    pixels_to_visit.push({startX, startY});
+
+    // Mark the starting pixel as visited immediately to avoid re-processing
+    visited[static_cast<size_t>(startY) * width + startX] = true;
+
+    while (!pixels_to_visit.empty()) {
+        std::pair<int, int> current = pixels_to_visit.top();
+        pixels_to_visit.pop();
+
+        int x = current.first;
+        int y = current.second;
+
+        size_t index = static_cast<size_t>(y) * width + x;
+        labels[index] = label; // Assign the region label
+
+        // --- Check 4-way neighbors (up, down, left, right) ---
+        int dx[] = {0, 0, 1, -1};
+        int dy[] = {1, -1, 0, 0};
+
+        for (int i = 0; i < 4; ++i) {
+            int nx = x + dx[i];
+            int ny = y + dy[i];
+
+            // Check if neighbor is within image bounds
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                size_t neighbor_index = static_cast<size_t>(ny) * width + nx;
+
+                // If neighbor has been visited, skip
+                if (visited[neighbor_index]) {
+                    continue;
+                }
+
+                // Check if neighbor has the target color
+                const unsigned char r = pngData[neighbor_index * 3 + 0];
+                const unsigned char g = pngData[neighbor_index * 3 + 1];
+                const unsigned char b = pngData[neighbor_index * 3 + 2];
+
+                if (r == targetColor.x() && g == targetColor.y() && b == targetColor.z()) {
+                    visited[neighbor_index] = true; // Mark as visited
+                    pixels_to_visit.push({nx, ny}); // Add to the stack for processing
+                }
+            }
+        }
     }
 }

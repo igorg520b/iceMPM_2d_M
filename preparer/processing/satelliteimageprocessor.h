@@ -18,11 +18,11 @@ public:
     SatelliteImageProcessor() = default;
 
     void LoadSVG(std::string fileName, int rasterWidth, int rasterHeight,
-                 std::string MainPathID, std::string RectanglePathID, std::string FluentPathID,
+                                          std::string MainPathID, std::string RectanglePathID, std::string FluentPathID,
+                                          const std::vector<std::string>& rasterizedPathIDs,
                  std::string ProjectDirectory);
 
     void RasterizeSVG();
-    void saveMainPathAsDXF(const std::string& filename) const;
 
     int width = 0;
     int height = 0;

@@ -86,26 +86,16 @@ void MainWindow::LoadParameterFile(QString fileName, bool createDXFOnly)
 {
     params.LoadParamsFile(fileName.toStdString());
 
-    if(createDXFOnly)
-    {
-        qDebug() << "creating DXF file";
-        // make DXF file from the main simulation area
-        mii.sip.LoadSVG(params.fileNameSVG, params.width, params.height, params.MainPathID, params.RectanglePathID,
-                        params.FluentPathID, params.ProjectDirectory);
-
-        //mii.sip.bezierPaths.front().exportToAnsysDiscovery("mainpath_ansys_script.py",3);
-        return;
-    }
-
-
     if(!params.fileNamePNG.empty())
     {
         qDebug() << "loading PNG";
         mii.LoadImage(params.fileNamePNG, params.width, params.height);
 
         mii.sip.LoadSVG(params.fileNameSVG, params.width, params.height, params.MainPathID, params.RectanglePathID,
-                        params.FluentPathID, params.ProjectDirectory);
+                        params.FluentPathID, params.renderedPaths,
+                        params.ProjectDirectory);
         mii.sip.RasterizeSVG();
+        if(params.pierColor[0]!=-1) mii.ProcessBridgePiers(params.pierColor);
         ui->actionRender_Boundary_Conditions->setChecked(true);
 
         mii.IdentifyIceThickness(params);
@@ -114,7 +104,6 @@ void MainWindow::LoadParameterFile(QString fileName, bool createDXFOnly)
         if(!params.fileNameFluentCAS.empty())
         {
             mii.fdp.LoadFluentResult(params.fileNameFluentDAT, params.fileNameFluentCAS, params.width, params.height);
-//            mii.fdp.ApplyTransform(qdsbScale->value(), qdsbOffsetX->value(), qdsbOffsetY->value());
             mii.fdp.ApplyTransform(mii.sip.extents_fluent);
             mii.fdp.Rasterize();
             mii.fdp.ApplyDiffusion(mii.sip.path_indices, 4, 0.02);

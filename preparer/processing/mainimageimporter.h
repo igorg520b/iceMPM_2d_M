@@ -31,6 +31,7 @@ public:
 
     MainImageImporter();
     void LoadImage(std::string fileNamePNG, int expectedWidth, int expectedHeigth);
+    void ProcessBridgePiers(const Eigen::Vector3i& pierColor);
 
     void IdentifyIceThickness(const ParameterParser &params);
 
@@ -49,6 +50,17 @@ private:
     int width, height;
     std::vector<unsigned char> pngData;         // background png (dont' change it)
     std::vector<unsigned char> renderedImage;  // what we see on the screen
+
+
+    // for pier marking
+    void findConnectedRegions(const Eigen::Vector3i& targetColor,
+                              std::vector<int>& labels,
+                              int& regionCount) const;
+
+    void floodFill(int startX, int startY, int label,
+                   const Eigen::Vector3i& targetColor,
+                   std::vector<int>& labels,
+                   std::vector<bool>& visited) const;
 
 
     // VTK

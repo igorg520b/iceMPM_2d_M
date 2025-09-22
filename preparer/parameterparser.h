@@ -34,6 +34,8 @@ public:
     bool MakeAllIceSolid = false;
 
     std::vector<Eigen::Vector3f> colordata_OpenWater, colordata_Solid, colordata_Crushed;
+    Eigen::Vector3i pierColor;
+    std::vector<std::string> renderedPaths;
 };
 
 #endif // PARAMETERPARSER_H
