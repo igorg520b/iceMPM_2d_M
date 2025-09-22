@@ -55,6 +55,8 @@ void SimParams::Reset()
     tpb_G2P = 128;
 
     InitializationImageSizeX = InitializationImageSizeY = 0;
+    ThicknessFrom = 0.25;
+    ThicknessTo = 0.5;
 
     ComputeLame();
     ComputeHelperVariables();

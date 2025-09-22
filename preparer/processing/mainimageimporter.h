@@ -75,8 +75,8 @@ private:
 
     // --- Helper Struct for Projection Results ---
     // Needed because classification requires distance, not just relative position
-    static constexpr float crushed_thickness = 0.25f;
-    static constexpr float solid_thickness = 0.5f; // Max thickness for intact ice
+    static constexpr float crushed_thickness = 0.f;
+    static constexpr float solid_thickness = 1.f; // Max thickness for intact ice
 
     struct ProjectionResult {
         float position = 0.0f; // Normalized position along the entire curve (0-1)

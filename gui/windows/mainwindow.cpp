@@ -44,6 +44,9 @@ MainWindow::MainWindow(QWidget *parent)
     comboBox_visualizations = new QComboBox();
     ui->toolBar->addWidget(comboBox_visualizations);
 
+    QLabel *lbl1 = new QLabel("range:");
+    ui->toolBar->addWidget(lbl1);
+
     // double spin box
     qdsbValRange = new QDoubleSpinBox();
     qdsbValRange->setRange(-10, 10);
@@ -52,12 +55,18 @@ MainWindow::MainWindow(QWidget *parent)
     qdsbValRange->setSingleStep(0.25);
     ui->toolBar->addWidget(qdsbValRange);
 
+    QLabel *lbl2 = new QLabel("tr:");
+    ui->toolBar->addWidget(lbl2);
+
     qdsbTransparency = new QDoubleSpinBox();
     qdsbTransparency->setRange(0, 1);
     qdsbTransparency->setValue(0);
     qdsbTransparency->setDecimals(1);
     qdsbTransparency->setSingleStep(0.1);
     ui->toolBar->addWidget(qdsbTransparency);
+
+    QLabel *lbl3 = new QLabel("sldn:");
+    ui->toolBar->addWidget(lbl3);
 
     qsbIntentionalSlowdown = new QSpinBox();
     qsbIntentionalSlowdown->setRange(0,1000);

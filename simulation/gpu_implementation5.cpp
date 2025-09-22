@@ -371,6 +371,12 @@ void GPU_Implementation5::allocate_host_arrays_grid()
     const int modeled_grid_total = model->prms.GridXTotal * model->prms.GridYTotal;
     const int initial_image_total = model->prms.InitializationImageSizeX * model->prms.InitializationImageSizeY;
 
+    size_t allocation_estimate = 0;
+    allocation_estimate += modeled_grid_total*sizeof(t_GridReal);
+    allocation_estimate += 3*initial_image_total*sizeof(t_GridReal);
+    allocation_estimate += modeled_grid_total*SimParams::nGridArrays*sizeof(t_GridReal);
+    LOGR("\nGPU_Implementation5::allocate_host_arrays_grid(); alloc estimate {} GB",(double)allocation_estimate/(1.e9));
+
     // allocate grid arrays
     grid_status_buffer.resize(modeled_grid_total);
     original_image_colors_rgb.resize(3*initial_image_total);
@@ -382,6 +388,12 @@ void GPU_Implementation5::allocate_host_arrays_grid()
 void GPU_Implementation5::allocate_host_arrays_points()
 {
     const size_t requested_capacity = (size_t)(double(model->prms.nPtsInitial)*(1.+model->prms.extra_space_pts));
+
+    size_t allocation_estimate = 0;
+    allocation_estimate += 2* sizeof(t_PointReal)*requested_capacity*SimParams::nPtsArrays;
+    allocation_estimate += model->prms.nPtsInitial;
+    LOGR("\nGPU_Implementation5::allocate_host_arrays_points(); alloc estimate {} GB",(double)allocation_estimate/(1.e9));
+
     hssoa.Allocate(requested_capacity);
     point_partitions.resize(model->prms.nPtsInitial);
 }

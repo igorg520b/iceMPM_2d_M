@@ -217,8 +217,6 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
         uint32_t r = model->gpu.original_image_colors_rgb[idx_in_image+0];
         uint32_t g = model->gpu.original_image_colors_rgb[idx_in_image+1];
         uint32_t b = model->gpu.original_image_colors_rgb[idx_in_image+2];
-        // uint32_t rgba = (r << 16) | (g << 8) | b;
-        // model->gpu.point_colors_rgb[k] = rgba;
 
         t_PointReal color_r = ((t_PointReal)r)/255.;
         t_PointReal color_g = ((t_PointReal)g)/255.;
@@ -227,9 +225,9 @@ void icy::SnapshotManager::PopulatePoints(std::string fileNameModelledAreaHDF5, 
         p.setValue(SimParams::idx_pt_color_RGB+1, color_g);
         p.setValue(SimParams::idx_pt_color_RGB+2, color_b);
 
-        // set ice type
+        // set ice type and thickness
         int idx = (i+ox) + (j+oy)*width;
-        float thickness = iceThickness[idx];
+        float thickness = iceThickness[idx]*(model->prms.ThicknessTo-model->prms.ThicknessFrom) + model->prms.ThicknessFrom;
         p.setValue(SimParams::idx_thickness, thickness);
 
         uint8_t status = iceStatus[idx]; // 1 - crushed; 2 - solid

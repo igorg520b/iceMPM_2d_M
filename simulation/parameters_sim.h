@@ -123,6 +123,8 @@ public:
     double cellsize;
     double ParticleVolume, ParticleViewSize;
 
+    double ThicknessFrom, ThicknessTo; // thickness range
+
 
     // computed parameters/properties
     double dt_vol_Dpinv, vmax;
