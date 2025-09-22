@@ -21,7 +21,8 @@ int main(int argc, char** argv)
         // Define options and link them to variables
         ("parameter", "Parameter file (JSON, required)", cxxopts::value<std::string>(parameter_filename))
         ("r,resume", "Resume from snapshot file <filename>", cxxopts::value<std::string>(resume_filename))
-        ("g,generate-points", "Generate initial points and exit");
+        ("g,generate-points", "Generate initial points and exit")
+        ("s,snapshot-only", "Generate initial snapshot and exit");
 
     // Mark 'parameter' as the positional argument
     options.parse_positional({"parameter"});
@@ -35,13 +36,23 @@ int main(int argc, char** argv)
 
     icy::Model model;
 
-    if (result.count("generate-points")) {
+    if (result.count("generate-points"))
+    {
         LOGV("Only generating points");
         model.LoadParameterFile(parameter_filename, resume_filename, true);
         return 0; // Exit successfully as requested
     }
 
+
     model.LoadParameterFile(parameter_filename, resume_filename);
+
+    if(result.count("snapshot-only"))
+    {
+        LOGV("Generating initial snapshot and exiting");
+        return 0;
+    }
+
+
     model.prms.Printout();
     model.Prepare();
 
