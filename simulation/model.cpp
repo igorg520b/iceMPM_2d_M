@@ -53,15 +53,6 @@ bool icy::Model::Step()
         LOGR("waited to finish saving frame: {} ms", (int)duration_ms.count());
     }
 
-    bool saveSnapshot = ((prms.SimulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
-                        (prms.SimulationTime >= prms.SimulationEndTime);
-    // wait until snapshot is saved, only if we need to save it this turn
-    if(saveSnapshot && m_save_full_snapshot_future.valid())
-    {
-        LOGR("waiting to finish saving snapshot; step (after update) {}; time (after update) {}", prms.SimulationStep, prms.SimulationTime);
-        m_save_full_snapshot_future.get();
-    }
-
     gpu.render_visualized_data();
 
     lock_data_for_GUI.lock(); // prevent GUI from accessing data
@@ -117,14 +108,11 @@ bool icy::Model::Step()
     if(transfer_completion_callback) transfer_completion_callback();    // signal GUI to udpate
 
     // request async snapshot
-    m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveFrameTask, this, prms.SimulationStep, prms.SimulationTime);
+    bool saveSnapshot = ((prms.SimulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
+                        (prms.SimulationTime >= prms.SimulationEndTime);
+    if(saveSnapshot) gpu.hssoa.transferToSecondBuffer();
+    m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveTask, this, prms.SimulationStep, prms.SimulationTime);
 
-    if(saveSnapshot)
-    {
-        gpu.hssoa.transferToSecondBuffer();
-        m_save_full_snapshot_future = std::async(std::launch::async, &icy::Model::AsyncSaveFullSnapshotTask, this,
-                                                 prms.SimulationStep, prms.SimulationTime);
-    }
     return (prms.SimulationTime < prms.SimulationEndTime && !gpu.error_code);
 }
 
@@ -145,7 +133,6 @@ icy::Model::Model() : wac_interpolator(prms)
 icy::Model::~Model()
 {
     if (m_save_future.valid()) m_save_future.get();
-    if (m_save_full_snapshot_future.valid()) m_save_full_snapshot_future.get();
 }
 
 
@@ -156,7 +143,6 @@ void icy::Model::Prepare()
     wac_interpolator.SetTime(prms.SimulationTime);
     gpu.transfer_wind_and_current_data_to_device();
 }
-
 
 
 void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName, bool onlyGeneratePoints)
@@ -214,33 +200,27 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
     // saved snapshot at step 0 (if needed, the snapshot can be uploaded and resumed on a remote machine)
     if(resumeSnapshotFileName.empty())
     {
-        m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveFrameTask, this,
-                                   prms.SimulationStep, prms.SimulationTime);
         gpu.hssoa.transferToSecondBuffer();
-        m_save_full_snapshot_future = std::async(std::launch::async, &icy::Model::AsyncSaveFullSnapshotTask, this,
-                                                 prms.SimulationStep, prms.SimulationTime);
+        m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveTask, this,
+                                   prms.SimulationStep, prms.SimulationTime);
     }
     LOGR("LoadParameterFile done {}", fileName);
 }
 
 
-void icy::Model::AsyncSaveFrameTask(int simulationStep, double simulationTime)
+void icy::Model::AsyncSaveTask(int simulationStep, double simulationTime)
 {
-    // Save the frame
+    // Save frame and (if needed) full snapshot
     if (prms.SaveSnapshots && simulationStep != -1)
     {
         snapshot.SaveFrame(simulationStep, simulationTime);
-    }
-}
 
-void icy::Model::AsyncSaveFullSnapshotTask(int simulationStep, double simulationTime)
-{
-    if (prms.SaveSnapshots && simulationStep != -1)
-    {
-        bool saveSnapshot = ((simulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) || (simulationTime >= prms.SimulationEndTime);
+        bool saveSnapshot = ((simulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
+                            (simulationTime >= prms.SimulationEndTime);
         if(saveSnapshot)
         {
             snapshot.SaveSnapshot(simulationStep, simulationTime);
         }
     }
 }
+

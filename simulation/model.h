@@ -61,9 +61,8 @@ public:
     std::function<void()> transfer_completion_callback;     // invoked after frames are prepared for render
 
 private:
-    std::future<void> m_save_future, m_save_full_snapshot_future;
-    void AsyncSaveFrameTask(int simulationStep, double simulationTime);
-    void AsyncSaveFullSnapshotTask(int simulationStep, double simulationTime);
+    std::future<void> m_save_future;
+    void AsyncSaveTask(int simulationStep, double simulationTime);
 };
 
 #endif
