@@ -19,38 +19,25 @@ const std::vector<std::string> GRID_DATASET_NAMES = {
 void process_frame_file(const std::string& inputFile, const std::string& outputFile);
 
 int main(int argc, char* argv[]) {
-    if (argc != 4) {
+    if (argc != 2) {
         std::cerr << "Usage: " << argv[0]
-                  << " <project_directory> <frame_from> <frame_to>" << std::endl;
+                  << " <project_directory>" << std::endl;
         return 1;
     }
 
     std::string projectDir = argv[1];
-    int frame_from = std::stoi(argv[2]);
-    int frame_to   = std::stoi(argv[3]);
-
-    if (frame_from > frame_to) {
-        std::cerr << "Error: frame_from must be <= frame_to" << std::endl;
-        return 1;
-    }
 
     // Read task index from PJM
-    const char* env_idx = std::getenv("PJM_ARRAY_INDEX");
+    //
+    const char* env_idx = std::getenv("PJM_BULKNUM");
     if (!env_idx) {
-        std::cerr << "Error: PJM_ARRAY_INDEX not set (must run in job array)" << std::endl;
+        std::cerr << "Error: PJM_BULKNUM not set (must run in job array)" << std::endl;
         return 1;
     }
     int task_id = std::stoi(env_idx);
 
     // Determine frame number for this task
-    int frame_number = frame_from + (task_id - 1);
-    if (frame_number > frame_to) {
-        std::cerr << "Task " << task_id
-                  << " maps to frame " << frame_number
-                  << " which is outside range ["
-                  << frame_from << ", " << frame_to << "]" << std::endl;
-        return 0;
-    }
+    int frame_number = task_id;
 
     std::string framesDir = projectDir + "/frames";
     std::string outDir    = projectDir + "/frames_compressed";
