@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <hdf5.h>
 #include <ctime>
+#include <iomanip> // Required for std::setw and std::setfill
 
 // Grid datasets to compress
 const std::vector<std::string> GRID_DATASET_NAMES = {
@@ -46,7 +47,8 @@ int main(int argc, char* argv[]) {
 
     for (int frame = frame_from; frame <= frame_to; ++frame) {
         std::ostringstream fname;
-        fname << "f" << frame << ".h5";
+        // MODIFICATION: Format the frame number to be 5 digits with leading zeros
+        fname << "f" << std::setw(5) << std::setfill('0') << frame << ".h5";
 
         std::string inputFile  = framesDir + "/" + fname.str();
         std::string outputFile = outDir + "/" + fname.str();
