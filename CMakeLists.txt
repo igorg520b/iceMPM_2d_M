@@ -7,7 +7,6 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=esa_on_defaul
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 option(BUILD_CLI_VERSION "Build CLI version" ON)
-option(BUILD_COMPRESSOR "Build the tool to copress frames files" ON)
 option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
@@ -210,30 +209,6 @@ endif()
 
 
 
-if(BUILD_COMPRESSOR)
-    add_executable(compressor
-        cli/main_compressor.cpp
-    )
-
-target_include_directories(compressor PRIVATE External)
-
-target_include_directories(compressor PRIVATE ${HDF5_INCLUDE_DIRS})
-
-if(HDF5_INCLUDE_DIRS)
-    target_link_libraries(compressor PRIVATE ${HDF5_LIBRARIES})
-else()
-    target_link_libraries(compressor PRIVATE hdf5_cpp-shared)
-endif()
-
-target_compile_options(compressor PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
-target_link_libraries(compressor PRIVATE gomp)
-
-endif()
-
-
-
-
-
 
 if(BUILD_POSTPROCESSOR)
     find_package(VTK 9.1 REQUIRED COMPONENTS
@@ -266,7 +241,6 @@ if(BUILD_POSTPROCESSOR)
         gui/vtk/vtk_representation.cpp
         gui/vtk/vtk_representation.h
 
-        # simulation
         simulation/parameters_sim.h
         simulation/parameters_sim.cpp
 
@@ -278,30 +252,15 @@ if(BUILD_POSTPROCESSOR)
         gui/colormap.h
         gui/colormap.cpp
 
-#        simulation/model.cpp
-#        simulation/model.h
-
-#        simulation/givens.cuh
-#        simulation/helper_math.cuh
-#        simulation/gpu_implementation5.h
-#        simulation/gpu_implementation5.cpp
-
         simulation/hssoa/host_side_soa.h
         simulation/hssoa/host_side_soa.cpp
         simulation/hssoa/proxypoint2d.h
         simulation/hssoa/proxypoint2d.cpp
 
-#        simulation/gpu_partition.h
-#        simulation/gpu_partition.cpp
-#        simulation/kernels.cu
-
-#        simulation/data_manager/snapshotmanager.h
-#        simulation/data_manager/snapshotmanager.cpp
         simulation/data_manager/windandcurrentinterpolator.cpp
         simulation/data_manager/windandcurrentinterpolator.h
 
         simulation/data_manager/intinterval.h
-
     )
     set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
 

@@ -8,9 +8,6 @@
 #include <H5Cpp.h>
 #include <omp.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
-
 namespace fs = std::filesystem;
 
 const std::vector<std::string> GRID_DATASET_NAMES = {
