@@ -7,7 +7,8 @@
 #include <sys/stat.h>
 #include <hdf5.h>
 #include <ctime>
-#include <iomanip> // for std::setw and std::setfill
+#include <iomanip>
+#include <mpi.h> // <-- Include the MPI header
 
 // Grid datasets to compress
 const std::vector<std::string> GRID_DATASET_NAMES = {
@@ -19,45 +20,73 @@ const std::vector<std::string> GRID_DATASET_NAMES = {
 void process_frame_file(const std::string& inputFile, const std::string& outputFile);
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <project_directory>" << std::endl;
+    // --- MPI Initialization ---
+    MPI_Init(&argc, &argv);
+
+    int world_size, world_rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+    if (argc != 4) {
+        // Only let the master process (rank 0) print the usage error.
+        if (world_rank == 0) {
+            std::cerr << "Usage: " << argv[0]
+                      << " <project_directory> <frame_from> <frame_to>" << std::endl;
+        }
+        MPI_Finalize();
         return 1;
     }
 
     std::string projectDir = argv[1];
+    int frame_from = std::stoi(argv[2]);
+    int frame_to   = std::stoi(argv[3]);
 
-    // Read task index from PJM
-    //
-    const char* env_idx = std::getenv("PJM_BULKNUM");
-    if (!env_idx) {
-        std::cerr << "Error: PJM_BULKNUM not set (must run in job array)" << std::endl;
+    if (frame_from > frame_to) {
+        if (world_rank == 0) {
+            std::cerr << "Error: frame_from must be <= frame_to" << std::endl;
+        }
+        MPI_Finalize();
         return 1;
     }
-    int task_id = std::stoi(env_idx);
-
-    // Determine frame number for this task
-    int frame_number = task_id;
 
     std::string framesDir = projectDir + "/frames";
     std::string outDir    = projectDir + "/frames_compressed";
 
-    // Ensure output directory exists
-    std::string mkdir_cmd = "mkdir -p " + outDir;
-    system(mkdir_cmd.c_str());
+    // --- Directory Creation ---
+    // Let only the master process create the directory to avoid race conditions.
+    if (world_rank == 0) {
+        std::string mkdir_cmd = "mkdir -p " + outDir;
+        system(mkdir_cmd.c_str());
+        std::cout << "Processing frames from " << frame_from << " to "
+                  << frame_to << " using " << world_size << " processes." << std::endl;
+    }
+    
+    // --- MPI Work Distribution ---
+    // Each process iterates through the total range of frames
+    // and processes a file only if the frame number is assigned to its rank.
+    for (int frame = frame_from; frame <= frame_to; ++frame) {
+        if ((frame - frame_from) % world_size == world_rank) {
+            std::ostringstream fname;
+            fname << "f" << std::setw(5) << std::setfill('0') << frame << ".h5";
 
-    // Generate filename with zero-padded 5-digit frame number
-    std::ostringstream fname;
-    fname << "f" << std::setw(5) << std::setfill('0') << frame_number << ".h5";
+            std::string inputFile  = framesDir + "/" + fname.str();
+            std::string outputFile = outDir + "/" + fname.str();
+            
+            // Add rank to the output for better logging
+            std::cout << "[Process " << world_rank << "] Processing: " << inputFile << std::endl;
+            process_frame_file(inputFile, outputFile);
+        }
+    }
+    
+    // Add a barrier to wait for all processes to finish before finalizing.
+    MPI_Barrier(MPI_COMM_WORLD);
 
-    std::string inputFile  = framesDir + "/" + fname.str();
-    std::string outputFile = outDir + "/" + fname.str();
+    if (world_rank == 0) {
+        std::cout << "All compression tasks completed." << std::endl;
+    }
 
-    std::cout << "Task " << task_id
-              << " compressing frame " << frame_number
-              << " (" << fname.str() << ")" << std::endl;
-
-    process_frame_file(inputFile, outputFile);
+    // --- MPI Finalization ---
+    MPI_Finalize();
 
     return 0;
 }
@@ -65,7 +94,10 @@ int main(int argc, char* argv[]) {
 void process_frame_file(const std::string& inputFile, const std::string& outputFile) {
     hid_t fsrc = H5Fopen(inputFile.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (fsrc < 0) {
-        std::cerr << "  Could not open " << inputFile << std::endl;
+        // It's useful to know which process failed to open a file
+        int rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        std::cerr << "  [Process " << rank << "] Could not open " << inputFile << std::endl;
         return;
     }
 
@@ -146,6 +178,8 @@ void process_frame_file(const std::string& inputFile, const std::string& outputF
 
     H5Fclose(fdst);
     H5Fclose(fsrc);
-
-    std::cout << "  Successfully compressed: " << inputFile << std::endl;
+    
+    // Silence this message to avoid cluttering the log with thousands of lines.
+    // The message in main() is sufficient to track progress.
+    // std::cout << "  Successfully compressed: " << inputFile << std::endl;
 }
