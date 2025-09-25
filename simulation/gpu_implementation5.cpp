@@ -375,12 +375,14 @@ void GPU_Implementation5::allocate_host_arrays_grid()
     allocation_estimate += modeled_grid_total*sizeof(t_GridReal);
     allocation_estimate += 3*initial_image_total*sizeof(t_GridReal);
     allocation_estimate += modeled_grid_total*SimParams::nGridArrays*sizeof(t_GridReal);
+    allocation_estimate += model->prms.GridYTotal * model->prms.GridHaloSize * SimParams::nGridArrays * sizeof(t_GridReal);
     LOGR("\nGPU_Implementation5::allocate_host_arrays_grid(); alloc estimate {} GB",(double)allocation_estimate/(1.e9));
 
     // allocate grid arrays
     grid_status_buffer.resize(modeled_grid_total);
     original_image_colors_rgb.resize(3*initial_image_total);
     host_grid_buffer.resize(modeled_grid_total*SimParams::nGridArrays);
+    tmp_halo_buffer.resize(model->prms.GridYTotal * model->prms.GridHaloSize * SimParams::nGridArrays);
     LOGV("GPU_Implementation5::allocate_host_arrays_grid() completed");
 }
 
@@ -481,100 +483,92 @@ void GPU_Implementation5::transfer_from_device()
 
 void GPU_Implementation5::transfer_grid_to_host()
 {
-//    LOGV("GPU_Implementation5::transfer_grid_to_host()");
     const int gx_total = model->prms.GridXTotal;
     const int gy_total = model->prms.GridYTotal;
     const int halo = model->prms.GridHaloSize;
-    const int nGridArrays = SimParams::nGridArrays-2;   // except for the water current arrays, which are constant
-    const size_t grid_plane_size = gx_total * gy_total;
+    const int nGridArrays = SimParams::nGridArrays - 2;
+    const size_t grid_plane_size = (size_t)gx_total * gy_total;
 
-    // Clear the host-side buffer to ensure we start with a clean slate
+    // Clear the host-side buffer.
     host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
 
-    // A single, reusable temporary buffer for downloading halo regions from any partition.
-    std::vector<t_GridReal> tmp_halo_buffer(gy_total * halo * nGridArrays);
+    // --- PHASE 1: Transfer all INTERIOR regions from all partitions ---
+    // At the end of this loop, the buffer is fully populated, but the
+    // halo overlap regions are not yet summed.
+    for (int i = 0; i < partitions.size(); i++)
+    {
+        GPU_Partition &p = partitions[i];
+        CUDA_CHECK(cudaSetDevice(p.Device));
+
+        const t_GridReal* src_dev = p.pparams.buffer_grid + (size_t)gy_total * halo;
+        t_GridReal* dst_host = host_grid_buffer.data() + (size_t)gy_total * p.pparams.gridX_offset;
+
+        CUDA_CHECK(cudaMemcpy2D(
+            dst_host,
+            (size_t)gy_total * gx_total * sizeof(t_GridReal),
+            src_dev,
+            p.pparams.pitch_grid * sizeof(t_GridReal),
+            (size_t)p.pparams.partition_gridX * gy_total * sizeof(t_GridReal),
+            nGridArrays,
+            cudaMemcpyDeviceToHost
+            ));
+    }
+
+    // --- PHASE 2: Transfer and ADDITIVELY blend all HALO regions ---
 
     for (int i = 0; i < partitions.size(); i++)
     {
         GPU_Partition &p = partitions[i];
         CUDA_CHECK(cudaSetDevice(p.Device));
 
-        // --- 1. Transfer the INTERIOR of the grid partition ---
-        // This is the main, non-overlapping part of the data.
-        // We can copy it directly into its final location in the host buffer.
-        {
-            // The source on the device starts after the left halo.
-            const t_GridReal* src_dev = p.pparams.buffer_grid + gy_total * halo;
-
-            // The destination on the host is at this partition's global offset.
-            t_GridReal* dst_host = host_grid_buffer.data() + gy_total * p.pparams.gridX_offset;
-
-            // Since we treat each grid plane as a "row" in the copy, we can use
-            // cudaMemcpy2D to handle the different pitches between device and host.
-            CUDA_CHECK(cudaMemcpy2D(
-                dst_host,                                       // Destination pointer
-                gy_total * gx_total * sizeof(t_GridReal),       // Host pitch (jump to the next grid array)
-                src_dev,                                        // Source pointer
-                p.pparams.pitch_grid * sizeof(t_GridReal),      // Device pitch (jump to the next grid array)
-                p.pparams.partition_gridX * gy_total * sizeof(t_GridReal), // Width of copy (bytes in the interior)
-                nGridArrays,                                    // Height of copy (number of grid arrays)
-                cudaMemcpyDeviceToHost
-                ));
-        }
-
-
-
-        // --- 2. Transfer and ADD the LEFT halo ---
-        if (i > 0) // The first partition doesn't have a left halo to contribute
+        // --- Transfer and ADD the LEFT halo ---
+        // (This halo belongs to partition `i` but is added to the interior of `i-1`)
+        if (i > 0)
         {
             const t_GridReal* src_dev = p.pparams.buffer_grid; // Left halo is at the start
             CUDA_CHECK(cudaMemcpy2D(
                 tmp_halo_buffer.data(),
-                gy_total * halo * sizeof(t_GridReal),
+                (size_t)gy_total * halo * sizeof(t_GridReal),
                 src_dev,
                 p.pparams.pitch_grid * sizeof(t_GridReal),
-                gy_total * halo * sizeof(t_GridReal),
+                (size_t)gy_total * halo * sizeof(t_GridReal),
                 nGridArrays,
                 cudaMemcpyDeviceToHost
                 ));
 
-            // Additively blend this halo into the main host buffer
-            // The destination overlaps with the right edge of the previous partition (i-1)
             size_t host_x_start = p.pparams.gridX_offset - halo;
             for (int k = 0; k < nGridArrays; k++) {
                 for (int x = 0; x < halo; x++) {
                     for (int y = 0; y < gy_total; y++) {
-                        size_t src_idx = k * (gy_total * halo) + x * gy_total + y;
-                        size_t dst_idx = k * grid_plane_size + (host_x_start + x) * gy_total + y;
+                        size_t src_idx = (size_t)k * (gy_total * halo) + (size_t)x * gy_total + y;
+                        size_t dst_idx = (size_t)k * grid_plane_size + (size_t)(host_x_start + x) * gy_total + y;
                         host_grid_buffer[dst_idx] += tmp_halo_buffer[src_idx];
                     }
                 }
             }
         }
 
-        // --- 3. Transfer and ADD the RIGHT halo ---
-        if (i < partitions.size() - 1) // The last partition doesn't have a right halo to contribute
+        // --- Transfer and ADD the RIGHT halo ---
+        // (This halo belongs to partition `i` but is added to the interior of `i+1`)
+        if (i < partitions.size() - 1)
         {
-            // Source is after the interior region
-            const t_GridReal* src_dev = p.pparams.buffer_grid + gy_total * (halo + p.pparams.partition_gridX);
+            const t_GridReal* src_dev = p.pparams.buffer_grid + (size_t)gy_total * (halo + p.pparams.partition_gridX);
             CUDA_CHECK(cudaMemcpy2D(
                 tmp_halo_buffer.data(),
-                gy_total * halo * sizeof(t_GridReal),
+                (size_t)gy_total * halo * sizeof(t_GridReal),
                 src_dev,
                 p.pparams.pitch_grid * sizeof(t_GridReal),
-                gy_total * halo * sizeof(t_GridReal),
+                (size_t)gy_total * halo * sizeof(t_GridReal),
                 nGridArrays,
                 cudaMemcpyDeviceToHost
                 ));
 
-            // Additively blend this halo into the main host buffer
-            // The destination overlaps with the left edge of the next partition (i+1)
             size_t host_x_start = p.pparams.gridX_offset + p.pparams.partition_gridX;
             for (int k = 0; k < nGridArrays; k++) {
                 for (int x = 0; x < halo; x++) {
                     for (int y = 0; y < gy_total; y++) {
-                        size_t src_idx = k * (gy_total * halo) + x * gy_total + y;
-                        size_t dst_idx = k * grid_plane_size + (host_x_start + x) * gy_total + y;
+                        size_t src_idx = (size_t)k * (gy_total * halo) + (size_t)x * gy_total + y;
+                        size_t dst_idx = (size_t)k * grid_plane_size + (size_t)(host_x_start + x) * gy_total + y;
                         host_grid_buffer[dst_idx] += tmp_halo_buffer[src_idx];
                     }
                 }
@@ -582,7 +576,6 @@ void GPU_Implementation5::transfer_grid_to_host()
         }
     }
 }
-
 
 
 void GPU_Implementation5::synchronize()
