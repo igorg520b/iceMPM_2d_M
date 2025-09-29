@@ -275,13 +275,36 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     const size_t &pitch_grid = pparams.pitch_grid;
     t_GridReal* const &bgrid = pparams.buffer_grid;
 
+    t_GridReal fx = bgrid[SimParams::grid_idx_fx*pitch_grid + idx];
+    t_GridReal fy = bgrid[SimParams::grid_idx_fy*pitch_grid + idx];
+
+    uint8_t area_idx = pparams.buffer_grid_regions[idx];
+    if(area_idx < SimParams::MAX_REGIONS && (fx != 0 || fy != 0))
+    {
+        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+0], fx);
+        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+1], fy);
+    }
+}
+
+
+
+__global__ void partition_kernel_normalize_render(const PartitionParams pparams)
+{
+    // forces that were recorded (accumulated) in grid_idx_fx/fy are now summarized by region
+    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
+    if(idx >= nNodes) return;
+
+    //const int &gridY = gprms.GridYTotal;
+    const size_t &pitch_grid = pparams.pitch_grid;
+    t_GridReal* const &bgrid = pparams.buffer_grid;
+
     // normalize grid data
-//    const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
-//    if(mass == 0) return;
+    const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
+    if(mass == 0) return;
 
-  //  t_GridReal pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
+    //  t_GridReal pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
 
-/*
     bgrid[SimParams::grid_idx_px*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_py*pitch_grid + idx] /= mass;
 
@@ -296,20 +319,7 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     bgrid[SimParams::grid_idx_vis_strain_vonMises*pitch_grid + idx] /= mass;
 
     bgrid[SimParams::grid_idx_mass*pitch_grid + idx] /= (gprms.cellsize*gprms.cellsize); // make it mass per area
-  */
-
-
-    t_GridReal fx = bgrid[SimParams::grid_idx_fx*pitch_grid + idx];
-    t_GridReal fy = bgrid[SimParams::grid_idx_fy*pitch_grid + idx];
-
-    uint8_t area_idx = pparams.buffer_grid_regions[idx];
-    if(area_idx < SimParams::MAX_REGIONS && (fx != 0 || fy != 0))
-    {
-        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+0], fx);
-        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+1], fy);
-    }
 }
-
 
 
 __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ)
@@ -481,7 +491,23 @@ __global__ void partition_kernel_receive_subgrid(const PartitionParams pparams,
     }
 }
 
+__global__ void partition_kernel_receive_render_subgrid(const PartitionParams pparams,
+                                                 const size_t transfer_buffer_idx,
+                                                 const size_t receive_offset,
+                                                 const size_t receive_width,
+                                                        const int nArrays)
+{
+    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const size_t receive_elem_count = gprms.GridYTotal * receive_width;
+    if(idx >= receive_elem_count) return;
 
+    for(int i=0; i<nArrays; i++)
+    {
+        const size_t elem_idx = idx + i*pparams.pitch_grid + receive_offset*gprms.GridYTotal;
+        const size_t buffer_idx = idx + i*pparams.transfer_buffer_width*gprms.GridYTotal;
+        pparams.buffer_grid[elem_idx] += pparams.halo_transfer_buffer[transfer_buffer_idx][buffer_idx];
+    }
+}
 
 
 

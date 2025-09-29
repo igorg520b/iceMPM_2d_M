@@ -106,12 +106,14 @@ struct GPU_Partition
 
     // specific to multi-gpu
     void receive_halos();
+    void receive_render_halos();
     void evaluate_halo_diffusion();
     void send_points();
     void receive_points(const unsigned fromLeft, const unsigned fromRight);
 
     // render visualized data
     void render_visualized_data();
+    void normalize_visualized_data();
 
     // analysis
     void reset_timings();
@@ -157,6 +159,14 @@ __global__ void partition_kernel_receive_subgrid(const PartitionParams pparams,
                                                  const size_t transfer_buffer_idx,
                                                  const size_t receive_offset,
                                                  const size_t receive_width);
+
+__global__ void partition_kernel_receive_render_subgrid(const PartitionParams pparams,
+                                                 const size_t transfer_buffer_idx,
+                                                 const size_t receive_offset,
+                                                 const size_t receive_width,
+                                                        const int nArrays);
+
+__global__ void partition_kernel_normalize_render(const PartitionParams pparams);
 
 __global__ void partition_kernel_check_if_transfer_needed(const PartitionParams pparams);
 __global__ void partition_kernel_point_transfer(const PartitionParams pparams);

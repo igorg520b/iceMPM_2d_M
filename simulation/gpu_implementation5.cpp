@@ -244,6 +244,9 @@ void GPU_Implementation5::render_visualized_data()
     {
         p.render_visualized_data();
     }
+
+
+    // todo: add halo exchange and normalization functions here
 }
 
 
@@ -481,6 +484,129 @@ void GPU_Implementation5::transfer_from_device()
 }
 
 
+/*
+void GPU_Implementation5::transfer_grid_to_host()
+{
+    reset_grid();
+    this->p2g();
+
+
+    const int gy_total = model->prms.GridYTotal;
+    const int halo = model->prms.GridHaloSize;
+    const int nGridArrays = SimParams::nGridArrays - 2; // All arrays except constant water current
+
+    constexpr unsigned params_to_transfer = 3;  // mass, px, py
+    const int &gridY = model->prms.GridYTotal;
+
+    // --- Phase 1: GPU-side Halo Exchange for Accumulated Grid Data ---
+    // This phase ensures the halo regions are consistent before normalization.
+
+    for(int i=0;i<partitions.size();i++)
+    {
+        GPU_Partition &p = partitions[i];
+        CUDA_CHECK(cudaSetDevice(p.Device));
+
+        const size_t halo_count = 2*gridY*halo*sizeof(t_GridReal);
+        // after P2G step is completed, transfer halos to adjacent partitions
+        if(i!=0)
+        {
+            // send halo to the left
+            GPU_Partition &pprev = partitions[i-1];
+            for(int j=0;j<params_to_transfer;j++)
+            {
+                t_GridReal *src = p.pparams.getGridLine(j);
+                t_GridReal *dst = pprev.pparams.halo_transfer_buffer[1] + j*pprev.pparams.transfer_buffer_width*gridY;
+                CUDA_CHECK(cudaMemcpyPeerAsync(dst, pprev.Device, src, p.Device, halo_count, p.streamCompute));
+            }
+        }
+
+        if(i!=(partitions.size()-1))
+        {
+            // send halo to the right
+            GPU_Partition &pnxt = partitions[i+1];
+            for(int j=0;j<params_to_transfer;j++)
+            {
+                t_GridReal *src = p.pparams.getGridLine(j) + gridY*p.pparams.partition_gridX;
+                t_GridReal *dst = pnxt.pparams.halo_transfer_buffer[0] + j*pnxt.pparams.transfer_buffer_width*gridY;
+                CUDA_CHECK(cudaMemcpyPeerAsync(dst, pnxt.Device, src, p.Device, halo_count, p.streamCompute));
+            }
+        }
+        CUDA_CHECK(cudaEventRecord(p.event_20_grid_halo_sent, p.streamCompute));
+    }
+
+    // B. Synchronize all streams to ensure all peer-to-peer transfers are complete.
+    for (GPU_Partition &p : partitions) {
+        CUDA_CHECK(cudaSetDevice(p.Device));
+        CUDA_CHECK(cudaStreamSynchronize(p.streamCompute));
+    }
+
+    // C. Launch kernels on each partition to add the received halo data.
+    for (GPU_Partition &p : partitions) {
+        // Assumes receive_render_halos() launches a kernel that correctly
+        // adds data from both halo_transfer_buffer[0] and [1] to the grid.
+        //            p.receive_render_halos();
+        p.receive_halos();
+    }
+
+    // B. Synchronize all streams to ensure all peer-to-peer transfers are complete.
+    for (GPU_Partition &p : partitions) {
+        CUDA_CHECK(cudaSetDevice(p.Device));
+        CUDA_CHECK(cudaStreamSynchronize(p.streamCompute));
+    }
+
+    // --- Phase 2: GPU-side Normalization ---
+    // Now that all grid nodes (including halos) have the correct, fully summed
+    // values, we can run the normalization kernel on each partition in parallel.
+    for (GPU_Partition &p : partitions) {
+        // This function launches your new element-wise normalization kernel.
+//        p.normalize_visualized_data();
+    }
+
+    // --- Phase 3: Transfer Final, Normalized Data to Host ---
+    // We only need to transfer the INTERIOR regions, as the halos have served their purpose.
+    const int gx_total = model->prms.GridXTotal;
+    const size_t grid_plane_size = (size_t)gx_total * gy_total;
+//    host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
+
+//    for (int i = 0; i < partitions.size(); i++)
+        for (int i = 0; i < 2; i++)
+    {
+        GPU_Partition &p = partitions[i];
+        CUDA_CHECK(cudaSetDevice(p.Device));
+
+        // --- Calculate Pointers for the MASS slice ---
+
+        // Source: Start of the mass plane (plane 0) AND offset to the interior.
+        const t_GridReal* src_dev = p.pparams.buffer_grid
+                                    + (size_t)p.pparams.pitch_grid * SimParams::grid_idx_mass
+                                    + (size_t)gy_total * halo;
+
+        // Destination: Offset into the single host buffer.
+        t_GridReal* dst_host = host_grid_buffer.data()
+                               + (size_t)gy_total * p.pparams.gridX_offset;
+
+        // --- Perform the Copy ---
+        // The interior of a single slice is a contiguous block of memory.
+        // Therefore, a simple 1D cudaMemcpy is the most efficient method.
+        const size_t bytes_to_copy = (size_t)p.pparams.partition_gridX * gy_total * sizeof(t_GridReal);
+
+        CUDA_CHECK(cudaMemcpy(
+            dst_host,
+            src_dev,
+            bytes_to_copy,
+            cudaMemcpyDeviceToHost
+            ));
+    }
+
+    // A final sync to ensure all transfers to the host are complete.
+    for (GPU_Partition &p : partitions) {
+        CUDA_CHECK(cudaSetDevice(p.Device));
+        CUDA_CHECK(cudaStreamSynchronize(p.streamCompute));
+    }
+}
+*/
+
+
 void GPU_Implementation5::transfer_grid_to_host()
 {
     const int gx_total = model->prms.GridXTotal;
@@ -575,19 +701,15 @@ void GPU_Implementation5::transfer_grid_to_host()
             }
         }
     }
-    NormalizeGridDataOnHost();
-}
 
 
-void GPU_Implementation5::NormalizeGridDataOnHost()
-{
+    // normalize data no host-side
     LOGV("Normalizing grid data on host...");
 
     // --- 1. Get grid dimensions and parameters for clarity ---
     const int gx = model->prms.GridXTotal;
     const int gy = model->prms.GridYTotal;
     const double cellsize_sq = model->prms.cellsize * model->prms.cellsize;
-    const size_t grid_plane_size = (size_t)gx * gy;
 
     // --- 2. Define which grid planes (slices) need to be normalized by mass ---
     // This array makes the code cleaner and easier to maintain.
@@ -606,8 +728,8 @@ void GPU_Implementation5::NormalizeGridDataOnHost()
 
     const size_t mass_plane_offset = grid_plane_size * SimParams::grid_idx_mass;
 
-    // --- 3. Iterate over every grid node ---
-    // The memory layout of host_grid_buffer is column-major.
+// --- 3. Iterate over every grid node ---
+// The memory layout of host_grid_buffer is column-major.
 #pragma omp parallel for
     for (int i = 0; i < gx; ++i) {
         for (int j = 0; j < gy; ++j) {
@@ -630,8 +752,9 @@ void GPU_Implementation5::NormalizeGridDataOnHost()
             host_grid_buffer[mass_plane_offset + idx] /= cellsize_sq;
         }
     }
-//    LOGV("Grid data normalization complete.");
 }
+
+
 
 
 void GPU_Implementation5::synchronize()
