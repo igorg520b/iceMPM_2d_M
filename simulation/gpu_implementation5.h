@@ -70,6 +70,7 @@ public:
 private:
     std::vector<t_GridReal> tmp_halo_buffer;
 //    static void CUDART_CB callback_from_stream(cudaStream_t stream, cudaError_t status, void *userData);
+    void NormalizeGridDataOnHost();
 };
 
 #endif

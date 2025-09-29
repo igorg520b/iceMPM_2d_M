@@ -276,12 +276,12 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     t_GridReal* const &bgrid = pparams.buffer_grid;
 
     // normalize grid data
-    const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
-    if(mass == 0) return;
+//    const t_GridReal mass = bgrid[SimParams::grid_idx_mass*pitch_grid + idx];
+//    if(mass == 0) return;
 
   //  t_GridReal pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
 
-
+/*
     bgrid[SimParams::grid_idx_px*pitch_grid + idx] /= mass;
     bgrid[SimParams::grid_idx_py*pitch_grid + idx] /= mass;
 
@@ -296,6 +296,8 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
     bgrid[SimParams::grid_idx_vis_strain_vonMises*pitch_grid + idx] /= mass;
 
     bgrid[SimParams::grid_idx_mass*pitch_grid + idx] /= (gprms.cellsize*gprms.cellsize); // make it mass per area
+  */
+
 
     t_GridReal fx = bgrid[SimParams::grid_idx_fx*pitch_grid + idx];
     t_GridReal fy = bgrid[SimParams::grid_idx_fy*pitch_grid + idx];

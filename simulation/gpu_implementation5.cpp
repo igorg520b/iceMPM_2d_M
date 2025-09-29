@@ -575,6 +575,62 @@ void GPU_Implementation5::transfer_grid_to_host()
             }
         }
     }
+    NormalizeGridDataOnHost();
+}
+
+
+void GPU_Implementation5::NormalizeGridDataOnHost()
+{
+    LOGV("Normalizing grid data on host...");
+
+    // --- 1. Get grid dimensions and parameters for clarity ---
+    const int gx = model->prms.GridXTotal;
+    const int gy = model->prms.GridYTotal;
+    const double cellsize_sq = model->prms.cellsize * model->prms.cellsize;
+    const size_t grid_plane_size = (size_t)gx * gy;
+
+    // --- 2. Define which grid planes (slices) need to be normalized by mass ---
+    // This array makes the code cleaner and easier to maintain.
+    const size_t planes_to_normalize[] = {
+        SimParams::grid_idx_px,
+        SimParams::grid_idx_py,
+        SimParams::grid_idx_vis_r,
+        SimParams::grid_idx_vis_g,
+        SimParams::grid_idx_vis_b,
+        SimParams::grid_idx_vis_Jpinv,
+        SimParams::grid_idx_vis_P,
+        SimParams::grid_idx_vis_Q,
+        SimParams::grid_idx_vis_strain_EqvGreenLagrange,
+        SimParams::grid_idx_vis_strain_vonMises
+    };
+
+    const size_t mass_plane_offset = grid_plane_size * SimParams::grid_idx_mass;
+
+    // --- 3. Iterate over every grid node ---
+    // The memory layout of host_grid_buffer is column-major.
+#pragma omp parallel for
+    for (int i = 0; i < gx; ++i) {
+        for (int j = 0; j < gy; ++j) {
+            const size_t idx = (size_t)j + (size_t)i * gy; // Column-major index
+
+            // Get the mass at this node.
+            const t_GridReal mass = host_grid_buffer[mass_plane_offset + idx];
+
+            if (mass == 0) {
+                continue;
+            }
+
+            // --- 4. Normalize all specified planes by the mass ---
+            for (const auto& plane_idx : planes_to_normalize) {
+                host_grid_buffer[grid_plane_size * plane_idx + idx] /= mass;
+            }
+
+            // --- 5. Finally, update the mass plane itself ---
+            // This is done last so the original mass value could be used above.
+            host_grid_buffer[mass_plane_offset + idx] /= cellsize_sq;
+        }
+    }
+//    LOGV("Grid data normalization complete.");
 }
 
 
