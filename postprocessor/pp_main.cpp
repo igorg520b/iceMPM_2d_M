@@ -2,7 +2,9 @@
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QCommandLineParser>
+#include <QFileInfo>
 #include <iostream>
+#include <filesystem>
 #include <omp.h>
 
 
@@ -22,11 +24,11 @@ int main(int argc, char *argv[])
 
     QCommandLineParser parser;
     parser.setApplicationDescription("Post-processing the HDF5 simulation output");
-    parser.addPositionalArgument("parameters", QCoreApplication::translate("main", "JSON parameter file"));
+    parser.addPositionalArgument("parameters", QCoreApplication::translate("main", "JSON parameter file (optional)"));
 
     QCommandLineOption framesDirectoryOption(
         QStringList() << "f" << "frames",
-        QCoreApplication::translate("main", "Directory where frames are located"),
+        QCoreApplication::translate("main", "Directory where frames are located (optional, auto-detects from project)"),
         QCoreApplication::translate("main", "directory"));
 
     parser.addOption(framesDirectoryOption);
@@ -40,11 +42,17 @@ int main(int argc, char *argv[])
         QString parametersFile = args[0];
         w.LoadParametersFile(parametersFile);
 
+        // If explicit frames directory is provided, use it
         if (parser.isSet(framesDirectoryOption))
         {
             QString directory = parser.value(framesDirectoryOption);
-            std::cout << "main, framesDirectory " << directory.toStdString();
+            std::cout << "main, framesDirectory " << directory.toStdString() << std::endl;
             w.LoadFramesDirectory(directory);
+        }
+        else
+        {
+            // Try to load frames from default location: [project_dir]/output/frames
+            w.TryLoadDefaultFrames();
         }
     }
 

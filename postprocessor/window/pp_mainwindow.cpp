@@ -8,115 +8,133 @@
 #include <QCoreApplication>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QMenuBar>
 
 #include <algorithm>
+#include <filesystem>
+#include <map>
 
 #include <spdlog/spdlog.h>
 #include <omp.h>
 
 #include "pp_mainwindow.h"
-#include "./ui_pp_mainwindow.h"
-#include "vtk_representation.h"
+#include "visual_representation.h"
+#include "frame_utils.h"
 
 
-PPMainWindow::~PPMainWindow() {delete ui;}
+PPMainWindow::~PPMainWindow() {}
 
 PPMainWindow::PPMainWindow(QWidget *parent)
-    : QMainWindow(parent), frameData(ggd)
-    , ui(new Ui::PPMainWindow)
+    : QMainWindow(parent), representation(hsd)
 {
-    ui->setupUi(this);
+    setWindowTitle("MPM Post-Processor");
 
+    // Create central widget with scroll area for VTK rendering
     scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     setCentralWidget(scrollArea);
-    // VTK
+
+    // Setup VTK rendering widget
     qt_vtk_widget = new QVTKOpenGLNativeWidget();
     qt_vtk_widget->setRenderWindow(renderWindow);
     scrollArea->setWidget(qt_vtk_widget);
 
-
-    renderer->SetBackground(1.0,1.0,1.0);
+    // Configure VTK renderer
+    renderer->SetBackground(1.0, 1.0, 1.0);
     renderWindow->AddRenderer(renderer);
     renderWindow->GetInteractor()->SetInteractorStyle(interactor);
 
-
+    // Add VTK actors to renderer
     renderer->AddActor(representation.textBgActor);
     renderer->AddActor(representation.scalarBarBgActor);
-
     renderer->AddActor(representation.raster_actor);
+    renderer->AddActor(representation.actor_region_boundary);
+    renderer->AddActor(representation.actor_debug_grid);
     renderer->AddActor(representation.scalarBar);
     renderer->AddActor(representation.actorText);
 
+    // Create toolbar
+    toolBar = addToolBar("Controls");
 
-    // toolbar - combobox
+    // Visualization type selector
     comboBox_visualizations = new QComboBox();
-    ui->toolBar->addWidget(comboBox_visualizations);
+    toolBar->addWidget(comboBox_visualizations);
 
-    // double spin box
+    // Value range control
     qdsbValRange = new QDoubleSpinBox();
     qdsbValRange->setRange(-10, 10);
     qdsbValRange->setValue(-2);
     qdsbValRange->setDecimals(2);
     qdsbValRange->setSingleStep(0.25);
-    ui->toolBar->addWidget(qdsbValRange);
+    toolBar->addWidget(qdsbValRange);
 
+    // Transparency control
     qdsbTransparency = new QDoubleSpinBox();
     qdsbTransparency->setRange(0, 1);
     qdsbTransparency->setValue(0);
     qdsbTransparency->setDecimals(1);
     qdsbTransparency->setSingleStep(0.1);
-    ui->toolBar->addWidget(qdsbTransparency);
+    toolBar->addWidget(qdsbTransparency);
 
-    ui->toolBar->addSeparator();
+    toolBar->addSeparator();
 
+    // Frame range selection
     qsbFrameFrom = new QSpinBox();
     qsbFrameTo = new QSpinBox();
-    ui->toolBar->addWidget(qsbFrameFrom);
-    ui->toolBar->addWidget(qsbFrameTo);
+    toolBar->addWidget(qsbFrameFrom);
+    toolBar->addWidget(qsbFrameTo);
 
-
+    // Frame slider
     slider2 = new QSlider(Qt::Horizontal);
-    ui->toolBar->addWidget(slider2);
+    toolBar->addWidget(slider2);
     slider2->setTracking(false);
     slider2->setMinimum(1);
     slider2->setMaximum(10000);
     connect(slider2, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
 
-    // populate combobox
-    QMetaEnum qme = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
-    for(int i=0;i<qme.keyCount();i++) comboBox_visualizations->addItem(qme.key(i));
-
+    // Populate visualization options
+    QMetaEnum qme = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
+    for(int i = 0; i < qme.keyCount(); i++) {
+        comboBox_visualizations->addItem(qme.key(i));
+    }
 
     connect(comboBox_visualizations, QOverload<int>::of(&QComboBox::currentIndexChanged),
             [&](int index){ comboboxIndexChanged_visualizations(index); });
 
-    // read/restore saved settings
-    settingsFileName = QDir::currentPath() + "/ppcm.ini";
-    QFileInfo fi(settingsFileName);
+    // Create status bar to show current frame
+    statusBar = new QStatusBar(this);
+    setStatusBar(statusBar);
+    statusBar->showMessage("Ready");
 
+    // Setup camera
     vtkCamera* camera = renderer->GetActiveCamera();
     renderer->ResetCamera();
     camera->ParallelProjectionOn();
 
+    // Load and restore user settings
+    settingsFileName = QDir::currentPath() + "/ppcm.ini";
+    QFileInfo fi(settingsFileName);
+
     if(fi.exists())
     {
-        QSettings settings(settingsFileName,QSettings::IniFormat);
+        QSettings settings(settingsFileName, QSettings::IniFormat);
         QVariant var;
 
+        // Restore camera position
         var = settings.value("camData");
         if(!var.isNull())
         {
             double *vec = (double*)var.toByteArray().constData();
-            camera->SetClippingRange(1e-1,1e4);
+            camera->SetClippingRange(1e-1, 1e4);
             camera->SetViewUp(0.0, 1.0, 0.0);
-            camera->SetPosition(vec[0],vec[1],vec[2]);
-            camera->SetFocalPoint(vec[3],vec[4],vec[5]);
+            camera->SetPosition(vec[0], vec[1], vec[2]);
+            camera->SetFocalPoint(vec[3], vec[4], vec[5]);
             camera->SetParallelScale(vec[6]);
             camera->ParallelProjectionOn();
             camera->Modified();
         }
 
+        // Restore visualization ranges
         var = settings.value("visualization_ranges");
         if(!var.isNull())
         {
@@ -124,6 +142,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
             memcpy(representation.ranges, ba.constData(), ba.size());
         }
 
+        // Restore transparency coefficients
         var = settings.value("transparency_coeffs");
         if(!var.isNull())
         {
@@ -131,6 +150,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
             memcpy(representation.transparency_coeffs, ba.constData(), ba.size());
         }
 
+        // Restore visualization option
         var = settings.value("vis_option");
         if(!var.isNull())
         {
@@ -138,8 +158,8 @@ PPMainWindow::PPMainWindow(QWidget *parent)
             qdsbValRange->setValue(representation.ranges[var.toInt()]);
         }
 
+        // Restore scroll tracking preference
         bool scrollTracking = settings.value("scroll_tracking", false).toBool();
-        ui->actionScroll_Tracking->setChecked(scrollTracking);
         slider2->setTracking(scrollTracking);
     }
     else
@@ -147,11 +167,43 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         cameraReset_triggered();
     }
 
-    connect(ui->action_camera_reset, &QAction::triggered, this, &PPMainWindow::cameraReset_triggered);
-    connect(ui->actionRender_Frame, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
-    connect(ui->actionRender_All, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
-    connect(ui->actionScroll_Tracking, &QAction::triggered, this, &PPMainWindow::toggleScrollTracking);
-    connect(qdsbValRange,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
+    // ========== MENUS ==========
+
+    // File menu
+    QMenu *fileMenu = menuBar()->addMenu("&File");
+
+    QAction *openProjectAction = fileMenu->addAction("&Open Project...");
+    openProjectAction->setShortcut(QKeySequence::Open);
+    connect(openProjectAction, &QAction::triggered, this, &PPMainWindow::openProject_triggered);
+
+    QAction *openFramesAction = fileMenu->addAction("&Open Frames...");
+    openFramesAction->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_O));
+    connect(openFramesAction, &QAction::triggered, this, &PPMainWindow::openFrames_triggered);
+
+    fileMenu->addSeparator();
+
+    QAction *exitAction = fileMenu->addAction("E&xit");
+    exitAction->setShortcut(QKeySequence::Quit);
+    connect(exitAction, &QAction::triggered, this, &QWidget::close);
+
+    // Tools menu
+    QMenu *toolsMenu = menuBar()->addMenu("&Tools");
+
+    QAction *resetCameraAction = toolsMenu->addAction("&Reset Camera");
+    resetCameraAction->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_R));
+    connect(resetCameraAction, &QAction::triggered, this, &PPMainWindow::cameraReset_triggered);
+
+    QAction *renderFrameAction = toolsMenu->addAction("&Render Frame");
+    renderFrameAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_F));
+    connect(renderFrameAction, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
+
+    QAction *renderAllAction = toolsMenu->addAction("&Render All");
+    renderAllAction->setShortcut(QKeySequence(Qt::Key_F5));
+    connect(renderAllAction, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
+
+    // Connect value range changes
+    connect(qdsbValRange, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &PPMainWindow::limits_changed);
     connect(qdsbTransparency,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
 
     qDebug() << "PPMainWindow constructor done";
@@ -186,7 +238,7 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
     settings.setValue("transparency_coeffs", transparency_coeffs);
 
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
-    settings.setValue("scroll_tracking", ui->actionScroll_Tracking->isChecked());
+    settings.setValue("scroll_tracking", slider2->hasTracking());
 
     event->accept();
 }
@@ -212,8 +264,8 @@ void PPMainWindow::cameraReset_triggered()
     camera->ParallelProjectionOn();
     camera->SetClippingRange(1e-1,1e3);
 
-    const double dx = ggd.prms.cellsize*ggd.prms.InitializationImageSizeX/2;
-    const double dy = ggd.prms.cellsize*ggd.prms.InitializationImageSizeY/2;
+    const double dx = hsd.prms.cellsize*hsd.prms.InitializationImageSizeX/2;
+    const double dy = hsd.prms.cellsize*hsd.prms.InitializationImageSizeY/2;
 
     qDebug() << "dx " << dx << "\ndy " << dy;
 
@@ -233,44 +285,117 @@ void PPMainWindow::cameraReset_triggered()
 
 void PPMainWindow::LoadParametersFile(QString fileName)
 {
-    ggd.ReadParameterFile(fileName.toStdString());
+    namespace fs = std::filesystem;
+
+    // Extract the directory containing the JSON file
+    fs::path jsonPath(fileName.toStdString());
+    fs::path jsonFileDir = jsonPath.parent_path();
+    if (jsonFileDir.empty()) {
+        jsonFileDir = ".";
+    }
+
+    LOGR("\n=== Loading project configuration ===");
+    LOGR("JSON file: {}", jsonPath.string());
+    LOGR("Project directory: {}", jsonFileDir.string());
+
+    // Remember this project directory for loading frames later
+    currentProjectDirectory = jsonFileDir.string();
+
+    // Read the JSON configuration file to find where the grid data is stored
+    LOGR("Parsing JSON configuration...");
+    std::map<std::string, std::string> parseResult = hsd.prms.ParseFile(jsonPath.string());
+    LOGR("Project title: {}", parseResult["SimulationTitle"]);
+
+    // Load the grid structure that was created by plate_preparer
+    // This contains grid dimensions, cell size, and other geometric information
+    LOGR("Loading grid structure...");
+    fs::path gridPath = jsonFileDir / parseResult["GridData"];
+    LOGR("Grid file: {}", gridPath.string());
+    if (!fs::exists(gridPath)) {
+        throw std::runtime_error(fmt::format("Grid file not found: {}", gridPath.string()));
+    }
+    hsd.LoadGridDataFromFile(gridPath.string());
+    LOGR("Grid loaded successfully");
+
+    // Note: We only visualize grid data, not particle data, so we skip loading snapshots
+
+    // Set up the output directory where simulation frames are saved
+    // This is where we'll find f00000.h5, f00001.h5, etc.
+    LOGR("Checking for simulation output directory...");
+    fs::path outputDir = jsonFileDir / "output";
+    fs::path framesDir = outputDir / "frames";
+    if (fs::exists(framesDir)) {
+        LOGR("Found frames directory: {}", framesDir.string());
+    }
+    hsd.output_directory = outputDir.string();
+
+    LOGR("Project configuration loaded successfully\n");
 }
 
 void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
 {
     qDebug() << "PPMainWindow::LoadFramesDirectory: " << framesDirectory;
-    ggd.ScanDirectory(framesDirectory.toStdString());
+    currentFrameDirectory = framesDirectory.toStdString();
 
-    if(ggd.countFrames <= 0)
+    int countFrames = frame_utils::ScanFrameDirectory(currentFrameDirectory);
+
+    if(countFrames <= 0)
     {
         slider2->setEnabled(false);
         QMessageBox::warning(this, "No Frames Found", "The specified directory does not contain any valid frame files.");
         return;
     }
 
-    slider2->setMaximum(ggd.countFrames-1);
+    // Configure slider
+    slider2->setEnabled(true);
+    slider2->setMaximum(countFrames - 1);
 
-    qsbFrameTo->setMaximum(ggd.countFrames-1);
-    qsbFrameTo->setValue(ggd.countFrames-1);
+    // Configure slider tracking based on grid size
+    if (hsd.prms.GridXTotal > GRID_SIZE_TRACKING_THRESHOLD) {
+        slider2->setTracking(false);
+        LOGR("Grid width {} > {} pixels, slider tracking disabled for performance",
+             hsd.prms.GridXTotal, GRID_SIZE_TRACKING_THRESHOLD);
+    } else {
+        slider2->setTracking(true);
+        LOGR("Grid width {} <= {} pixels, slider tracking enabled",
+             hsd.prms.GridXTotal, GRID_SIZE_TRACKING_THRESHOLD);
+    }
 
-    qsbFrameFrom->setMaximum(ggd.countFrames-1);
+    // Setup frame range controls
+    qsbFrameTo->setMaximum(countFrames - 1);
+    qsbFrameTo->setValue(countFrames - 1);
+
+    qsbFrameFrom->setMaximum(countFrames - 1);
     qsbFrameFrom->setValue(0);
-    slider2->setValue(ggd.countFrames-2);
+
+    // Load and display the last frame as a starting point
+    slider2->setValue(countFrames - 2);
+
+    statusBar->showMessage(QString("Loaded %1 frames").arg(countFrames));
 }
 
 void PPMainWindow::sliderValueChanged(int val)
 {
-    qDebug() << "slider set to " << val;
+    try {
+        // Load the frame data from disk
+        std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, val);
+        hsd.LoadFrameData(framePath);
 
-    bool success = frameData.LoadFrame(val);
-    if(!success)
-    {
-        LOGR("Failed to load and display frame {}.", val);
-        return;
+        // Update the visualization with new frame data
+        this->representation.SynchronizeTopology();
+
+        // Update the time display in HH:MM:SS format
+        representation.simulationTime = hsd.prms.SimulationTime;
+        representation.UpdateTimeText();
+
+        // Update status bar with current frame number
+        statusBar->showMessage(QString("Frame %1 | Time: %2").arg(val).arg(hsd.prms.SimulationTime, 0, 'f', 2));
+
+        // Render the updated frame
+        renderWindow->Render();
+    } catch (const std::exception& e) {
+        LOGR("Failed to load and display frame {}: {}", val, e.what());
     }
-    frameData.LinkRepresentation(this->representation);
-    this->representation.SynchronizeTopology();
-    renderWindow->Render();
 }
 
 
@@ -293,7 +418,10 @@ void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 void PPMainWindow::render_frame_triggered()
 {
     qDebug() << "render_frame_triggered()";
-    std::string visName = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>().valueToKey(representation.VisualizingVariable);
+    statusBar->showMessage("Rendering frame...");
+    QCoreApplication::processEvents();
+
+    std::string visName = QMetaEnum::fromType<VisualRepresentation::VisOpt>().valueToKey(representation.VisualizingVariable);
     const int selectedFrame = slider2->value();
     std::string filename = visName + "_" + std::to_string(selectedFrame) + ".jpg";
 
@@ -321,6 +449,8 @@ void PPMainWindow::render_frame_triggered()
     qt_vtk_widget->setSizePolicy(originalPolicy);
     scrollArea->setWidgetResizable(true);
     QCoreApplication::processEvents();
+
+    statusBar->showMessage(QString("Rendered frame %1 as %2").arg(selectedFrame).arg(QString::fromStdString(visName)), 3000);
 }
 
 
@@ -328,36 +458,41 @@ void PPMainWindow::render_all_triggered()
 {
     qDebug() << "render_all_triggered() started.";
 
-    // --- 1. Define the Batch Job & Validate Inputs ---
+    // Get the frame range from the UI controls
     const int frameFrom = qsbFrameFrom->value();
     const int frameTo = qsbFrameTo->value();
+
+    // Generate ffmpeg script for animation
     generate_ffmpeg_script(frameFrom, frameTo);
 
-
+    // Validate that the frame range is valid
     if (frameTo < frameFrom) {
         QMessageBox::warning(this, "Invalid Range", "Frame 'To' must be greater than or equal to Frame 'From'.");
         return;
     }
     const int totalFrames = (frameTo - frameFrom) + 1;
 
-    // --- 2. Set Up Progress Dialog ---
+    statusBar->showMessage(QString("Rendering %1 frames...").arg(totalFrames));
+
+    // Create a progress dialog to show rendering status
     const int totalOperations = totalFrames * m_visOptsToRender.size();
     QProgressDialog progress("Rendering all frames...", "Abort", 0, totalOperations, this);
     progress.setWindowModality(Qt::WindowModal);
     QCoreApplication::processEvents();
 
-    // --- 3. Prepare for Batch Rendering (Done ONCE) ---
+    // Set up the rendering window to a fixed size for consistent output
     const QSizePolicy originalPolicy = qt_vtk_widget->sizePolicy();
     scrollArea->setWidgetResizable(false);
     qt_vtk_widget->setFixedSize(1920, 1080);
     QCoreApplication::processEvents();
 
+    // Configure VTK rendering and image capture
     renderWindow->DoubleBufferOff();
     windowToImageFilter->SetInput(renderWindow);
     windowToImageFilter->SetInputBufferTypeToRGB();
     writer->SetInputConnection(windowToImageFilter->GetOutputPort());
 
-    // --- 4. Main Batch Processing Loop ---
+    // Main loop: process each frame and all visualization options
     int operationCount = 0;
     for (int frameNum = frameFrom; frameNum <= frameTo; ++frameNum) {
         if (progress.wasCanceled()) break;
@@ -365,19 +500,23 @@ void PPMainWindow::render_all_triggered()
         progress.setLabelText(QString("Loading frame %1...").arg(frameNum));
         QCoreApplication::processEvents();
 
-        if (!frameData.LoadFrame(frameNum)) {
-            LOGR("Failed to load frame {}, skipping.", frameNum);
+        // Load the frame data from HDF5 file
+        try {
+            std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, frameNum);
+            hsd.LoadFrameData(framePath);
+        } catch (const std::exception& e) {
+            LOGR("Failed to load frame {}: {}", frameNum, e.what());
             operationCount += m_visOptsToRender.size();
             progress.setValue(operationCount);
             continue;
         }
-        frameData.LinkRepresentation(this->representation);
 
+        // Render each visualization option for this frame
         for (const auto& visOpt : m_visOptsToRender) {
             if (progress.wasCanceled()) break;
             operationCount++;
 
-            const QMetaEnum metaEnum = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
+            const QMetaEnum metaEnum = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
             const QString visName = metaEnum.valueToKey(visOpt);
 
             progress.setValue(operationCount);
@@ -385,26 +524,26 @@ void PPMainWindow::render_all_triggered()
                                       .arg(frameNum - frameFrom + 1).arg(totalFrames).arg(visName));
             QCoreApplication::processEvents();
 
-            // --- CRITICAL FIX: Update state and render BEFORE capturing ---
+            // Update visualization and render the scene
             representation.ChangeVisualizationOption(visOpt);
             renderWindow->Render();
-            windowToImageFilter->Modified(); // This is extra important
+            windowToImageFilter->Modified();
 
-            // --- Construct Correct Output Path ---
-            QDir frameDir(QString::fromStdString(ggd.frameDirectory));
-            frameDir.cdUp(); // Go up to the parent (e.g., .../cb2k/)
+            // Create output directory structure and save rendered image
+            QDir frameDir(QString::fromStdString(currentFrameDirectory));
+            frameDir.cdUp(); // Navigate to parent directory (output/)
             const QString rasterBasePath = frameDir.filePath("raster");
             const QString subDir = QString("%1/%2").arg(rasterBasePath).arg(visName);
-            QDir().mkpath(subDir); // Use QDir to create the full path
+            QDir().mkpath(subDir); // Create full directory path
             const QString outputPath = QString("%1/%2.jpg").arg(subDir).arg(frameNum, 5, 10, QChar('0'));
 
-            // --- Capture and Write ---
+            // Capture and write the image to disk
             writer->SetFileName(outputPath.toStdString().c_str());
             writer->Write();
         }
     }
 
-    // --- 5. Restore GUI State (Done ONCE) ---
+    // Restore the GUI to its original state
     qt_vtk_widget->setMinimumSize(0, 0);
     qt_vtk_widget->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     qt_vtk_widget->setSizePolicy(originalPolicy);
@@ -412,10 +551,10 @@ void PPMainWindow::render_all_triggered()
     renderWindow->DoubleBufferOn();
     QCoreApplication::processEvents();
 
-    // Refresh the final interactive view to match the last rendered item
+    // Refresh the display to show the last rendered frame
     renderWindow->Render();
 
-    // --- 6. Finalize ---
+    // Show completion message
     progress.setValue(totalOperations);
     QMessageBox::information(this, "Rendering Complete", "Batch rendering has finished or was canceled.");
 }
@@ -436,8 +575,8 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     const int fps = 30;
 
     // Correctly determine the output "raster" directory path.
-    QDir frameDir(QString::fromStdString(ggd.frameDirectory));
-    frameDir.cdUp(); // Go from ".../output/cb2k/frames" to ".../output/cb2k/"
+    QDir frameDir(QString::fromStdString(currentFrameDirectory));
+    frameDir.cdUp(); // Go from ".../output/frames" to ".../output/"
     const QString rasterPath = frameDir.filePath("raster");
     QDir().mkpath(rasterPath); // Ensure the raster directory exists
     const std::string scriptFilename = QDir(rasterPath).filePath("genvideo.sh").toStdString();
@@ -457,7 +596,7 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     // Define the ffmpeg command template.
     // Using -1 for padding automatically centers the image.
     const std::string fmtStr = R"(ffmpeg -y -r {0:} -f image2 -start_number {1:} -i "{2:}" -vframes {3:} -vcodec libx264 -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:white" -crf 21 -pix_fmt yuv420p "{4:}")";
-    const QMetaEnum metaEnum = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
+    const QMetaEnum metaEnum = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
 
     // Loop through the class member list to generate a command for each visualization.
     for (const auto& visOpt : m_visOptsToRender) {
@@ -480,7 +619,7 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     // Make the script executable.
     int result = std::system(("chmod +x " + scriptFilename).c_str());
 
-    ui->statusbar->showMessage(QString("Generated genvideo.sh in %1").arg(rasterPath), 5000);
+    statusBar->showMessage(QString("Generated genvideo.sh in %1").arg(rasterPath), 5000);
 }
 
 
@@ -488,4 +627,61 @@ void PPMainWindow::toggleScrollTracking(bool checked)
 {
     qDebug() << "tracking toggled: " << checked;
     slider2->setTracking(checked);
+}
+
+
+void PPMainWindow::TryLoadDefaultFrames()
+{
+    if(currentProjectDirectory.empty())
+    {
+        LOGR("No project directory set, cannot auto-load frames");
+        return;
+    }
+
+    // Try to load frames from default location: [project_dir]/output/frames
+    std::string defaultFramesPath = currentProjectDirectory + "/output/frames";
+
+    if(!std::filesystem::exists(defaultFramesPath))
+    {
+        LOGR("Default frames directory does not exist: {}", defaultFramesPath);
+        return;
+    }
+
+    LOGR("Found default frames directory, auto-loading from: {}", defaultFramesPath);
+    LoadFramesDirectory(QString::fromStdString(defaultFramesPath));
+}
+
+
+void PPMainWindow::openProject_triggered()
+{
+    qDebug() << "openProject_triggered()";
+
+    QString fileName = QFileDialog::getOpenFileName(this, "Open Project Configuration", "",
+                                                    "JSON Files (*.json);;All Files (*)");
+    if(!fileName.isEmpty())
+    {
+        LoadParametersFile(fileName);
+        // After loading project, try to auto-load frames from default location
+        TryLoadDefaultFrames();
+    }
+}
+
+
+void PPMainWindow::openFrames_triggered()
+{
+    qDebug() << "openFrames_triggered()";
+
+    if(currentProjectDirectory.empty())
+    {
+        QMessageBox::warning(this, "No Project Loaded",
+                            "Please open a project first before selecting frames directory.");
+        return;
+    }
+
+    QString framesDir = QFileDialog::getExistingDirectory(this, "Select Frames Directory",
+                                                         QString::fromStdString(currentProjectDirectory));
+    if(!framesDir.isEmpty())
+    {
+        LoadFramesDirectory(framesDir);
+    }
 }

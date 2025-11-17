@@ -17,11 +17,12 @@
 #include <condition_variable>
 #include <atomic>
 #include <filesystem>
+#include <future>
 
 #include "parameters_sim.h"
 #include "gpu_implementation5.h"
 #include "windandcurrentinterpolator.h"
-#include "snapshotmanager.h"
+#include "host_side_data.h"
 
 #include <Eigen/Core>
 #include <Eigen/SVD>
@@ -33,28 +34,23 @@
 #include <spdlog/logger.h>
 
 
-namespace icy { class Model; }
-
-class icy::Model
+class Model
 {
 public:
     Model();
     ~Model();
 
     // initialize the simulation from a parameter file
-    void LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName, bool onlyGeneratePoints = false);
+    void LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName);
 
     void Prepare();        // invoked once, at simulation start
     bool Step();           // either invoked by Worker or via GUI
-    void SaveFrameRequest(int SimulationStep, double SimulationTime);
 
-    SimParams prms;
-    WindAndCurrentInterpolator wac_interpolator;
-    icy::SnapshotManager snapshot;
-
+    HostSideData sim_data;
     GPU_Implementation5 gpu;
-    bool SyncTopologyRequired;  // especially when some points get removed
+    SimParams &prms;
 
+    bool SyncTopologyRequired;  // especially when some points get removed
     std::mutex lock_data_for_GUI; // locked until the current cycle results' are copied to host and processed
 
     int intentionalSlowdown = 0; // add delay after each computation step to unload GPU
@@ -62,7 +58,8 @@ public:
 
 private:
     std::future<void> m_save_future;
-    void AsyncSaveTask(int simulationStep, double simulationTime);
+
+    void PrintTimingTable();
 };
 
 #endif

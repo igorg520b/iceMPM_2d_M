@@ -1,0 +1,17 @@
+{
+"ProjectName":"c_bridge_test_2k",
+
+"ImageColor":"cb_2020-02-18_8000_final_2k.png",
+"ImageCrushedMask":"crushed.png",
+"ImageIceMask":"ice.png",
+"ImageLandMask":"land.png",
+
+"ThicknessFrom":0.25,
+"ThicknessTo":0.30,
+
+"PointsPerCell":5,
+"DimensionHorizontal":18576,
+"FlowType":"constant",
+"FlowBearing":45,
+"FlowSpeed":1
+}

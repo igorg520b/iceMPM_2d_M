@@ -1,7 +1,7 @@
 #include "backgroundworker.h"
 #include <functional>
 
-BackgroundWorker::BackgroundWorker(icy::Model *controller_) : controller(controller_)
+BackgroundWorker::BackgroundWorker(Model *controller_) : controller(controller_)
 {
     this->start();
     controller->transfer_completion_callback = [&]() {

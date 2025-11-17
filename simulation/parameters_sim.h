@@ -4,8 +4,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
 
-#define LOGR(fmtstr, ...) spdlog::info(fmt::format(fmt::runtime(fmtstr), __VA_ARGS__))
-#define LOGV(fmtstr) spdlog::info(fmtstr)
+#define LOGR(fmtstr, ...) spdlog::info(fmt::format(fmt::runtime(fmtstr), ##__VA_ARGS__))
 
 #include <iostream>
 #include <string>
@@ -22,17 +21,6 @@
 #include <H5Cpp.h>
 // variables related to the formulation of the model
 
-typedef double real;
-//typedef float real;
-typedef real t_GridReal;      // data type for grid data
-typedef real t_PointReal;     // data type to store point data
-
-typedef Eigen::Matrix<t_GridReal, 2, 1> GridVector2r;
-typedef Eigen::Matrix<t_GridReal, 2, 2> GridMatrix2r;
-typedef Eigen::Matrix<t_PointReal, 2, 1> PointVector2r;
-typedef Eigen::Matrix<t_PointReal, 2, 2> PointMatrix2r;
-typedef Eigen::Array<t_PointReal, 2, 1> PointArray2r;
-
 struct SimParams
 {
 public:
@@ -43,44 +31,48 @@ public:
     constexpr static double pi = 3.14159265358979323846;
 
     constexpr static int dim = 2;
-    constexpr static int MAX_REGIONS = 100;
+    constexpr static int MAX_REGIONS = 255;
+    constexpr static int ModelledAreaIndicator = 255;
 
     // layout of the grid arrays
-    constexpr static size_t grid_idx_mass           = 0;
-    constexpr static size_t grid_idx_px             = 1;
-    constexpr static size_t grid_idx_py             = 2;
-    constexpr static size_t grid_idx_vis_r          = 3;
-    constexpr static size_t grid_idx_vis_g          = 4;
-    constexpr static size_t grid_idx_vis_b          = 5;
-    constexpr static size_t grid_idx_vis_Jpinv      = 6;
-    constexpr static size_t grid_idx_vis_P          = 7;
-    constexpr static size_t grid_idx_vis_Q          = 8;
-    constexpr static size_t grid_idx_vis_strain_EqvGreenLagrange  = 9;
-    constexpr static size_t grid_idx_vis_strain_vonMises          = 10;
-    constexpr static size_t grid_idx_vis_pts_density              = 11;
-
-    constexpr static size_t grid_idx_fx             = 12;
-    constexpr static size_t grid_idx_fy             = 13;
-    constexpr static size_t grid_idx_current_vx     = 14;
-    constexpr static size_t grid_idx_current_vy     = 15;
-    constexpr static size_t nGridArrays             = 16;
-//    constexpr static size_t grid_idx_bc_normal_nx   = 3;
-//    constexpr static size_t grid_idx_bc_normal_ny   = 4;
+    enum GridArrayIndex : size_t {
+        grid_idx_mass = 0,
+        grid_idx_px = 1,
+        grid_idx_py = 2,
+        grid_idx_vis_r = 3,
+        grid_idx_vis_g = 4,
+        grid_idx_vis_b = 5,
+        grid_idx_vis_Jpinv = 6,
+        grid_idx_vis_P = 7,
+        grid_idx_vis_Q = 8,
+        grid_idx_vis_strain_EqvGreenLagrange = 9,
+        grid_idx_vis_strain_vonMises = 10,
+        grid_idx_vis_pts_density = 11,
+        grid_idx_fx = 12,
+        grid_idx_fy = 13,
+        grid_idx_current_vx_frame0 = 14,
+        grid_idx_current_vx_frame1 = 15,
+        grid_idx_current_vy_frame0 = 16,
+        grid_idx_current_vy_frame1 = 17,
+        nGridArrays = 18
+    };
 
     // index of the corresponding array in SoA
-    constexpr static size_t idx_utility_data = 0;
-    constexpr static size_t integer_cell_idx = idx_utility_data + 1;
-    constexpr static size_t integer_point_idx = integer_cell_idx + 1;
-    constexpr static size_t idx_P = integer_point_idx + 1;
-    constexpr static size_t idx_Q = idx_P + 1;
-    constexpr static size_t idx_Jp_inv = idx_Q + 1;
-    constexpr static size_t posx = idx_Jp_inv + 1;
-    constexpr static size_t velx = posx + 2;
-    constexpr static size_t Fe00 = velx + 2;
-    constexpr static size_t Bp00 = Fe00 + 4;
-    constexpr static size_t idx_thickness = Bp00 + 4;
-    constexpr static size_t idx_pt_color_RGB = idx_thickness + 1;
-    constexpr static size_t nPtsArrays = idx_pt_color_RGB + 3;
+    enum PtArrIdx : size_t {
+        idx_utility_data = 0,
+        integer_cell_idx = 1,
+        integer_point_idx = 2,
+        idx_P = 3,
+        idx_Q = 4,
+        idx_Jp_inv = 5,
+        posx = 6,
+        velx = 8,
+        Fe00 = 10,
+        Bp00 = 14,
+        idx_thickness = 18,
+        idx_pt_color_RGB = 19,
+        nPtsArrays = 22
+    };
 
     // GPU and multi-GPU-related params
     int tpb_P2G, tpb_Upd, tpb_G2P;  // threads per block for each operation
@@ -91,9 +83,7 @@ public:
     float extra_space_pts;               // reserved additional space on devices for points
     float points_transfer_buffer_fraction;  // % of points that could "fly over" during a given cycle
 
-
     int nPtsInitial;
-    int64_t SimulationStartUnixTime;
     double InitialTimeStep, SimulationEndTime;
     double AnimationFramePeriod;
     int SimulationStep;
@@ -112,8 +102,6 @@ public:
     bool UseWindData, UseCurrentData;
     double sea_water_density;
     double waterDragEffectiveLinear, waterDragEffectiveQuadratic;
-    double WaterCurrentVelocityMultiplier;
-
 
     // material properties
     double IceDensity, PoissonsRatio, YoungsModulus;
@@ -122,9 +110,6 @@ public:
     double RidgeFormationCoeff;
     double cellsize;
     double ParticleVolume, ParticleViewSize;
-
-    double ThicknessFrom, ThicknessTo; // thickness range
-
 
     // computed parameters/properties
     double dt_vol_Dpinv, vmax;

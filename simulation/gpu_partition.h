@@ -14,6 +14,7 @@
 #include "parameters_sim.h"
 #include "host_side_soa.h"
 #include "windandcurrentinterpolator.h"
+#include "partition_params.h"
 
 // Helper macro for CUDA error checking
 #define CUDA_CHECK(call)                                                                          \
@@ -30,53 +31,18 @@ do {                                                                            
 
 class GPU_Implementation5;
 
-// parameters needed by kernels that are unique to each partition
-// (for testing, several partitions may reside on the same device)
-struct PartitionParams
-{
-    unsigned PartitionID;
-
-    // device-side arrays
-    t_PointReal *buffer_pts;  // *pts_array
-    t_GridReal *buffer_grid;  // *grid_array
-    uint8_t *buffer_grid_regions;     // grid_status_array
-
-    t_PointReal *point_transfer_buffer[4]; // GPU-side buffers to send/receive points between adj. partitions
-    size_t point_transfer_buffer_capacity;  // max points it can hold
-
-    size_t pitch_grid, count_pts, pitch_pts;
-    size_t partition_gridX, gridX_offset;
-    size_t gridX_alloc_capacity;    // max resize capacity (in X-direction) excluding halos
-
-    t_GridReal *halo_transfer_buffer[2];    // computed from *buffer_grid during allocation
-    size_t transfer_buffer_width;
-
-    t_GridReal* getGridLine(const unsigned line) const { return buffer_grid + line*pitch_grid; }
-
-    // one copy of this structure is stored per partition; modified by kernels; used/cleared on host
-    struct PartitionUtilityData
-    {
-        int diffusion_distance_into_halo;  // how far did pts travel into halo (exceeding halo size crashes simulation)
-        unsigned transfer_to_left;              // count pts ready to send left (set by partition_kernel_point_transfer)
-        unsigned transfer_to_right;             // count pts ready to send right (set by partition_kernel_point_transfer)
-    };
-
-    PartitionUtilityData *pud;          // gpu-side allocation
-    unsigned *disabled_points_count;    // how many disabled pts in this partition
-
-    t_GridReal *grid_forces_summary_per_region;
-};
-
+// CUDA declarations - see kernel_declarations.cuh for all CUDA kernel and device function declarations
+#include "kernel_declarations.cuh"
 
 
 struct GPU_Partition
 {
-    GPU_Partition();
+    GPU_Partition(const SimParams &params);
     ~GPU_Partition();
 
     // host-side data
     int Device;
-    static SimParams *prms;
+    const SimParams &prms;
     PartitionParams pparams;    // pointers and offsets for current partition
     PartitionParams::PartitionUtilityData *host_pud;     // stores (receives) various utility information from GPU
     uint32_t error_code;             // set by kernels if there is something wrong
@@ -84,7 +50,7 @@ struct GPU_Partition
 
     unsigned *host_disabled_points_count;
     unsigned get_disabled_pts() {return *host_disabled_points_count; }
-    t_GridReal *host_grid_forces_summary_per_region;
+    double *host_grid_forces_summary_per_region;
 
     // preparation
     void initialize(int device, int partition);
@@ -101,7 +67,7 @@ struct GPU_Partition
     void reset_grid();
     void clear_force_accumulator();
     void p2g();
-    void update_nodes(float simulation_time, const float interpolation_coeff);
+    void update_nodes(float simulation_time, const double current_alpha);
     void g2p(const bool recordPQ);
 
     // specific to multi-gpu
@@ -141,71 +107,6 @@ private:
     bool initialized = false;
     void check_error_code();
 };
-
-
-extern __device__ uint32_t gpu_error_indicator;
-extern __constant__ SimParams gprms;
-
-// kernels
-__global__ void partition_kernel_p2g(const PartitionParams pparams);
-__global__ void partition_kernel_update_nodes(const PartitionParams pparams, const t_PointReal simulation_time);
-__global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ);
-__global__ void partition_kernel_render_results(const PartitionParams pparams);
-__global__ void partition_kernel_summarize_forces(const PartitionParams pparams);
-
-
-// kernels related to multi-GPU implementation
-__global__ void partition_kernel_receive_subgrid(const PartitionParams pparams,
-                                                 const size_t transfer_buffer_idx,
-                                                 const size_t receive_offset,
-                                                 const size_t receive_width);
-
-__global__ void partition_kernel_receive_render_subgrid(const PartitionParams pparams,
-                                                 const size_t transfer_buffer_idx,
-                                                 const size_t receive_offset,
-                                                 const size_t receive_width,
-                                                        const int nArrays);
-
-__global__ void partition_kernel_normalize_render(const PartitionParams pparams);
-
-__global__ void partition_kernel_check_if_transfer_needed(const PartitionParams pparams);
-__global__ void partition_kernel_point_transfer(const PartitionParams pparams);
-__global__ void partition_kernel_receive_points(const PartitionParams pparams, const unsigned nPts, const unsigned bufferIdx);
-
-
-
-// helper functions
-
-__device__ void svd2x2(const PointMatrix2r &mA, PointMatrix2r &mU, PointVector2r &mS, PointMatrix2r &mV);
-
-__device__ void Wolper_Drucker_Prager(const t_PointReal &initial_strength,
-                                      const t_PointReal &p_tr, const t_PointReal &q_tr, const t_PointReal &Je_tr,
-                                      const PointMatrix2r &U, const PointMatrix2r &V, const PointVector2r &vSigmaSquared, const PointVector2r &v_s_hat_tr,
-                                      PointMatrix2r &Fe, t_PointReal &Jp_inv);
-
-__device__ void CheckIfPointIsInsideFailureSurface(uint32_t &utility_data, const uint16_t &grain,
-                                                   const t_PointReal &p, const t_PointReal &q,
-                                                   const t_PointReal &strength);
-
-__device__ void ComputeSVD(const PointMatrix2r &Fe, PointMatrix2r &U, PointVector2r &vSigma, PointMatrix2r &V,
-                           PointVector2r &vSigmaSquared, PointVector2r &v_s_hat_tr,
-                           const t_PointReal &kappa, const t_PointReal &mu, const t_PointReal &Je_tr);
-
-__device__ void ComputePQ(t_PointReal &Je_tr, t_PointReal &p_tr, t_PointReal &q_tr,
-                          const double &kappa, const double &mu, const PointMatrix2r &F);
-
-__device__ void GetParametersForGrain(uint32_t utility_data, t_PointReal &pmin, t_PointReal &pmax, t_PointReal &qmax,
-                                      t_PointReal &beta, t_PointReal &mSq, t_PointReal &pmin2);
-
-__device__ PointMatrix2r KirchhoffStress_Wolper(const PointMatrix2r &F);
-
-__device__ PointVector2r dev_d(PointVector2r Adiag);
-
-__device__ PointMatrix2r dev(PointMatrix2r A);
-
-__device__ void CalculateWeightCoeffs(const PointVector2r &pos, PointArray2r ww[3]);
-
-__device__ GridVector2r get_wind_vector(float lat, float lon, float tb);
 
 
 #endif // GPU_PARTITION_H

@@ -4,7 +4,7 @@
 
 #include "gpu_partition.h"
 #include "parameters_sim.h"
-#include "host_side_soa.h"
+#include "host_side_data.h"
 
 #include <Eigen/Core>
 #include <Eigen/LU>
@@ -16,31 +16,21 @@
 #include <array>
 
 
-
-namespace icy { class Model; }
-
+class Model;
 
 // contains information relevant to an individual data partition (which corresponds to a GPU device in multi-GPU setup)
-
-
 class GPU_Implementation5
 {
 public:
-    icy::Model *model;
+    GPU_Implementation5(HostSideData &_hsd) : hsd(_hsd) {};
+
+
+    HostSideData &hsd;
+
     std::vector<GPU_Partition> partitions;
-    HostSideSOA hssoa;  // mainly stores host-side points
     uint32_t error_code;
     int halo_diffusion; // how far do points diffuse into halo (max value across partitions)
 
-    std::vector<uint8_t> point_partitions;
-    std::vector<uint8_t> grid_status_buffer;    // land (0), modeled area (>0)
-    std::vector<uint8_t> original_image_colors_rgb;
-    std::vector<t_GridReal> host_grid_buffer;
-    std::array<double, 2*SimParams::MAX_REGIONS> grid_forces_summary_per_region;
-
-
-    void allocate_host_arrays_grid();
-    void allocate_host_arrays_points();
     void allocate_device_arrays();
 
     void initialize();
@@ -67,8 +57,9 @@ public:
     // specific to multi-gpu implementation
     void point_transfer();
 
+    void SplitIntoPartitionsAndTransferToDevice();  // transfer the data to one or more GPU devices/partitions
+
 private:
-    std::vector<t_GridReal> tmp_halo_buffer;
 //    static void CUDART_CB callback_from_stream(cudaStream_t stream, cudaError_t status, void *userData);
 };
 

@@ -6,6 +6,12 @@
 
 void SimParams::Reset()
 {
+    SimulationStep = 0;
+    SimulationTime = 0;
+    GridXTotal = GridYTotal = 0;
+    ModeledRegionOffsetX = ModeledRegionOffsetY = 0;
+    InitializationImageSizeX = InitializationImageSizeY = 0;
+
     nPartitions = 1;
     GridHaloSize = 10;
     HaloDiffusionThreshold = 5;
@@ -15,7 +21,6 @@ void SimParams::Reset()
 
     UseWindData = false;
     UseCurrentData = false;
-    SimulationStartUnixTime = 0;
     DimensionHorizontal = 0;
     SaveSnapshots = false;
     SnapshotPeriod = 25;
@@ -25,7 +30,6 @@ void SimParams::Reset()
 
     waterDragEffectiveLinear = 0.01;
     waterDragEffectiveQuadratic = 0.01;
-    WaterCurrentVelocityMultiplier = 1.0;
 
     InitialTimeStep = 3.e-5;
     YoungsModulus = 5.e8;
@@ -37,9 +41,6 @@ void SimParams::Reset()
 
     PoissonsRatio = 0.3;
     IceDensity = 916;
-
-    SimulationStep = 0;
-    SimulationTime = 0;
 
     IceCompressiveStrength = 100e6;
     IceTensileStrength = 10e6;
@@ -55,8 +56,6 @@ void SimParams::Reset()
     tpb_G2P = 128;
 
     InitializationImageSizeX = InitializationImageSizeY = 0;
-    ThicknessFrom = 0.25;
-    ThicknessTo = 0.5;
 
     ComputeLame();
     ComputeHelperVariables();
@@ -82,19 +81,17 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
 
     // parse strings and save into "result"
     std::map<std::string,std::string> result;
-    result["InputPNG"] = doc["InputPNG"].GetString();
-    result["InputMap"] = doc["InputMap"].GetString();
-    if(doc.HasMember("InputFlowVelocity")) result["InputFlowVelocity"] = doc["InputFlowVelocity"].GetString();
-    if(doc.HasMember("SimulationTitle")) result["SimulationTitle"] = doc["SimulationTitle"].GetString();
-    else result["SimulationTitle"] = "sim1";
+    result["GridData"] = doc["GridData"].GetString();
+    result["CurrentVelocityData"] = doc["CurrentVelocityData"].GetString();
+    if(doc.HasMember("Snapshot")) result["Snapshot"] = doc["Snapshot"].GetString();
 
-    if(doc.HasMember("DimensionHorizontal")) DimensionHorizontal = doc["DimensionHorizontal"].GetDouble();
+    if(doc.HasMember("SimulationTitle")) result["SimulationTitle"] = doc["SimulationTitle"].GetString();
+    else result["SimulationTitle"] = "default_simulation";
+
     if(doc.HasMember("SaveSnapshots")) SaveSnapshots = doc["SaveSnapshots"].GetBool();
     if(doc.HasMember("UseCurrentData")) UseCurrentData = doc["UseCurrentData"].GetBool();
 
     if(doc.HasMember("SnapshotPeriod")) SnapshotPeriod = doc["SnapshotPeriod"].GetInt();
-
-    if(doc.HasMember("SimulationStartUnixTime")) SimulationStartUnixTime = doc["SimulationStartUnixTime"].GetInt64();
     if(doc.HasMember("SimulationEndTime")) SimulationEndTime = doc["SimulationEndTime"].GetDouble();
 
     if(doc.HasMember("InitialTimeStep")) InitialTimeStep = doc["InitialTimeStep"].GetDouble();
@@ -127,8 +124,6 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("extra_space_pts")) extra_space_pts = doc["extra_space_pts"].GetFloat();
     if(doc.HasMember("points_transfer_buffer_fraction")) points_transfer_buffer_fraction = doc["points_transfer_buffer_fraction"].GetFloat();
 
-    if(doc.HasMember("WaterCurrentVelocityMultiplier")) WaterCurrentVelocityMultiplier = doc["WaterCurrentVelocityMultiplier"].GetDouble();
-
     spdlog::info("SimParams::ParseFile done");
     return result;
 }
@@ -150,6 +145,10 @@ void SimParams::ComputeHelperVariables()
     dt_vol_Dpinv = InitialTimeStep*ParticleVolume*Dp_inv;
     vmax = 0.25*cellsize/InitialTimeStep;
 
+    // compute suggested time step
+//    double suggested_dt = 0.8 * cellsize * sqrt(IceDensity*ThicknessFrom/YoungsModulus);
+//    LOGR("SimParams::ComputeHelperVariables(): suggested_dt: {}", suggested_dt);
+
     ComputeLame();
 }
 
@@ -159,7 +158,6 @@ void SimParams::Printout()
 {
     spdlog::info(fmt::format(fmt::runtime("Simulation Parameters:")));
     spdlog::info(fmt::format(fmt::runtime("nPartitions: {}"), nPartitions));
-    spdlog::info(fmt::format(fmt::runtime("SimulationStartUnixTime: {}"), SimulationStartUnixTime));
     spdlog::info(fmt::format(fmt::runtime("InitialTimeStep: {}, SimulationEndTime: {}"), InitialTimeStep, SimulationEndTime));
     spdlog::info(fmt::format(fmt::runtime("AnimationFramePeriod: {}"), AnimationFramePeriod));
     spdlog::info(fmt::format(fmt::runtime("SimulationStep: {}"), SimulationStep));

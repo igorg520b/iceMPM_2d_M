@@ -2,33 +2,25 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QGraphicsView>
-#include <QGraphicsScene>
-#include <QGraphicsPixmapItem>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <QComboBox>
 #include <QSlider>
-#include <QString>
+#include <QMenuBar>
+#include <QSettings>
 
-#include <vtkInteractorStyleRubberBand2D.h>
 #include <QVTKOpenGLNativeWidget.h>
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderer.h>
 #include <vtkCamera.h>
-#include <vtkProperty.h>
 #include <vtkNew.h>
 #include <vtkInteractorStyleImage.h>
 
-#include "mainimageimporter.h"
+#include "visual_representation.h"
+
 #include "parameterparser.h"
-
-
-QT_BEGIN_NAMESPACE
-namespace Ui {
-class MainWindow;
-}
-QT_END_NAMESPACE
+#include "host_side_data.h"
 
 class MainWindow : public QMainWindow
 {
@@ -38,28 +30,33 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    void LoadParameterFile(QString fileName, bool createDXFOnly);
+    void LoadParameterFile(QString fileName);
 
 private Q_SLOTS:
-    void render_flow_data(bool checked);
-    void render_boundary_conditions(bool checked);
-    void apply_transform();
-    void value_changed(double newValue);
-    void rasterize_flow();
-    void render_vn();
-    void render_vx();
-    void render_vy();
-    void render_thickness();
-    void render_original();
+    void openJsonFile_triggered();
+    void resetCamera_triggered();
+    void comboboxIndexChanged_visualizations(int index);
+    void limits_changed(double val);
+    void flowTimeSliderChanged(int value);
+    void closeEvent(QCloseEvent *event) override;
 
 private:
-    Ui::MainWindow *ui;
-    MainImageImporter mii;
+    void setupUI();
+    void createMenuBar();
+    void loadSettings();
+    void saveSettings();
+    void loadCameraState();
+    void saveCameraState();
+
     ParameterParser params;
+    HostSideData hsd;
+    VisualRepresentation representation;
 
-
-    QDoubleSpinBox *qdsbScale, *qdsbOffsetX, *qdsbOffsetY;
-    QSlider *slider1;
+    // Visualization controls
+    QComboBox *comboBox_visualizations;
+    QDoubleSpinBox *qdsbValRange;
+    QDoubleSpinBox *qdsbTransparency;
+    QSlider *flowTimeSlider;              // slider for flow field time control
 
     // VTK
     vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;
@@ -67,5 +64,6 @@ private:
     vtkNew<vtkRenderer> renderer;
     vtkNew<vtkInteractorStyleImage> interactorStyle;
 
+    QString settingsFileName;
 };
 #endif // MAINWINDOW_H

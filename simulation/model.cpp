@@ -4,11 +4,14 @@
 #include <thread>
 #include "parameters_sim.h"
 
-bool icy::Model::Step()
+
+
+bool Model::Step()
 {
     std::cout << '\n';
     LOGR("step {} ({}) started; sim_time {:>6.3}; host pts {}; cap {}",
-                 prms.SimulationStep, prms.AnimationFrameNumber(), prms.SimulationTime, gpu.hssoa.size, gpu.hssoa.capacity);
+                 sim_data.prms.SimulationStep, sim_data.prms.AnimationFrameNumber(),
+         sim_data.prms.SimulationTime, sim_data.hssoa.size, sim_data.hssoa.capacity);
 
     gpu.reset_timings();
     gpu.clear_force_accumulator();
@@ -17,57 +20,114 @@ bool icy::Model::Step()
 
     do
     {
-        const int step = prms.SimulationStep + count_unupdated_steps;
-        simulation_time = prms.InitialTimeStep * step;
+        const int step = sim_data.prms.SimulationStep + count_unupdated_steps;
+        simulation_time = sim_data.prms.InitialTimeStep * step;
 
         gpu.reset_grid();
         gpu.p2g();
 
-//        if(prms.UseWindData && wind_interpolator.setTime(simulation_time)) gpu.update_wind_velocity_grid();
+        if(sim_data.waci.SetTime(simulation_time)) gpu.transfer_wind_and_current_data_to_device();
 
         gpu.update_nodes(simulation_time, 0, 0);
-        const bool isCycleEnd = (step + 1) % prms.UpdateEveryNthStep == 0;
+        const bool isCycleEnd = (step + 1) % sim_data.prms.UpdateEveryNthStep == 0;
         gpu.g2p(isCycleEnd);
 
-        bool attempt_point_transfer = (step) % prms.PointTransferPeriod == 0;
+        bool attempt_point_transfer = (step) % sim_data.prms.PointTransferPeriod == 0;
         if(attempt_point_transfer) gpu.point_transfer();
         gpu.record_timings();
 
         count_unupdated_steps++;
-        if(intentionalSlowdown)
+        if(intentionalSlowdown) // for GUI to unfreeze
         {
             gpu.synchronize();
             std::this_thread::sleep_for(std::chrono::milliseconds(intentionalSlowdown));
         }
-    } while((prms.SimulationStep+count_unupdated_steps) % prms.UpdateEveryNthStep != 0);
+    } while((sim_data.prms.SimulationStep+count_unupdated_steps) % sim_data.prms.UpdateEveryNthStep != 0);
 
-    prms.SimulationTime = simulation_time;
-    prms.SimulationStep += count_unupdated_steps;
+    sim_data.prms.SimulationTime = simulation_time;
+    sim_data.prms.SimulationStep += count_unupdated_steps;
 
-    if(m_save_future.valid())
-    {
-        auto start_time = std::chrono::steady_clock::now();
-        m_save_future.get(); // wait until frame is saved
-        auto end_time = std::chrono::steady_clock::now();
-        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-        LOGR("waited to finish saving frame: {} ms", (int)duration_ms.count());
-    }
+    if(m_save_future.valid()) m_save_future.get();
 
     gpu.render_visualized_data();
 
     lock_data_for_GUI.lock(); // prevent GUI from accessing data
     gpu.transfer_from_device();
 
-    LOGR("finished {:>8.1f} of {:>8.1f} ({}); host pts {}; cap {}; err {:#x}", prms.SimulationTime, prms.SimulationEndTime,
-         prms.AnimationFrameNumber(), gpu.hssoa.size, gpu.hssoa.capacity, gpu.error_code);
-    // print out timings
-    LOGR("{0:^3s} {1:^9s} {2:^7s} {3:^7s} | {4:^8s} {5:^5s} {6:^8s} | {7:^5s} {8:^8s} {9:^7s} {10:^5s} {11:^8s} | {12:^8s}",
-           "P-D",  "pts", "free",  "dis",    "p2g",  "s2",  "S12",      "u",  "g2p",   "psnt", "prcv",   "S36",    "tot");
-
+    // Normalize timings and check for squeeze conditions
     bool squeeze_required = false;
     for(GPU_Partition &p : gpu.partitions)
     {
         p.normalize_timings(count_unupdated_steps);
+        const unsigned pts_free_slots = p.pparams.pitch_pts-p.pparams.count_pts;
+
+        const float disabled_proportion = (float)p.get_disabled_pts()/p.pparams.count_pts;
+        if(disabled_proportion > SimParams::disabled_pts_proportion_threshold) squeeze_required = true;
+        const float free_space_proportion = (float)pts_free_slots/p.pparams.pitch_pts;
+        if(gpu.partitions.size() > 1 && free_space_proportion < SimParams::free_space_threshold) squeeze_required = true;
+    }
+    PrintTimingTable();
+
+    if(squeeze_required)
+    {
+        sim_data.hssoa.RemoveDisabledAndSort(sim_data.prms.GridYTotal);
+        gpu.split_hssoa_into_partitions();
+        gpu.transfer_to_device();
+        sim_data.waci.SetTime(prms.SimulationTime);
+        gpu.transfer_wind_and_current_data_to_device();
+        SyncTopologyRequired = true;
+        LOGR("Model::Step() squeezing and sorting HSSOA done\n");
+    }
+
+    lock_data_for_GUI.unlock();     // allow GUI to access the data
+    if(transfer_completion_callback) transfer_completion_callback();    // signal GUI to udpate
+
+    // snapshot is synchronous, frame save is async
+    bool saveSnapshot = ((sim_data.prms.SimulationStep / sim_data.prms.UpdateEveryNthStep) % sim_data.prms.SnapshotPeriod == 0) ||
+                        (sim_data.prms.SimulationTime >= sim_data.prms.SimulationEndTime);
+    if(saveSnapshot) sim_data.SaveSnapshot(sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, false, sim_data.output_directory);  // synchronous
+
+    m_save_future = std::async(std::launch::async, &HostSideData::SaveFrame, &sim_data,
+                              sim_data.prms.SimulationStep, sim_data.prms.SimulationTime);
+
+    return (sim_data.prms.SimulationTime < sim_data.prms.SimulationEndTime && !gpu.error_code);
+}
+
+
+Model::Model() : gpu(sim_data), prms(sim_data.prms)
+{
+    SyncTopologyRequired = true;
+    LOGR("Model constructor done");
+}
+
+Model::~Model()
+{
+    if (m_save_future.valid()) m_save_future.get();
+    LOGR("Model destructor done");
+}
+
+
+void Model::Prepare()
+{
+    LOGR("Model::Prepare()");
+    gpu.update_constants();
+    sim_data.waci.SetTime(prms.SimulationTime);
+    gpu.transfer_wind_and_current_data_to_device();
+}
+
+
+void Model::PrintTimingTable()
+{
+    LOGR("finished {:>8.1f} of {:>8.1f} ({}); host pts {}; cap {}; err {:#x}",
+         sim_data.prms.SimulationTime, sim_data.prms.SimulationEndTime,
+         sim_data.prms.AnimationFrameNumber(), sim_data.hssoa.size, sim_data.hssoa.capacity, gpu.error_code);
+
+    // print out timings
+    LOGR("{0:^3s} {1:^9s} {2:^7s} {3:^7s} | {4:^8s} {5:^5s} {6:^8s} | {7:^5s} {8:^8s} {9:^7s} {10:^5s} {11:^8s} | {12:^8s}",
+         "P-D",  "pts", "free",  "dis",    "p2g",  "s2",  "S12",      "u",  "g2p",   "psnt", "prcv",   "S36",    "tot");
+
+    for(GPU_Partition &p : gpu.partitions)
+    {
         const unsigned pts_free_slots = p.pparams.pitch_pts-p.pparams.count_pts;
 
         LOGR("{0:>1}-{1:>1} {2:>9} {3:>7} {4:>7} | {5:>8.1f} {6:>5.1f} {7:>8.1f} | {8:>5.1f} {9:>8.1f} {10:>7.1f} {11:5.1f} {12:8.1f} | {13:>8.1f}",
@@ -85,79 +145,30 @@ bool icy::Model::Step()
              p.timing_70_ptsAccepted,   // 11
              (p.timing_30_updateGrid + p.timing_40_G2P + p.timing_60_ptsSent + p.timing_70_ptsAccepted),    // 12
              p.timing_stepTotal);       // 13
+    }
+    LOGR("\n");
+}
 
-        const float disabled_proportion = (float)p.get_disabled_pts()/p.pparams.count_pts;
-        if(disabled_proportion > SimParams::disabled_pts_proportion_threshold) squeeze_required = true;
-        const float free_space_proportion = (float)pts_free_slots/p.pparams.pitch_pts;
-        if(gpu.partitions.size() > 1 && free_space_proportion < SimParams::free_space_threshold) squeeze_required = true;
+
+void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName)
+{
+    LOGR("Model::LoadParameterFile {}", fileName);
+
+    // Get JSON directory for resolving relative paths
+    std::filesystem::path jsonFileDir = std::filesystem::path(fileName).parent_path();
+    if (jsonFileDir.empty()) {
+        jsonFileDir = ".";
     }
 
-    if(squeeze_required)
-    {
-        LOGV("Model::Step() squeezing and sorting HSSOA");
-        gpu.hssoa.RemoveDisabledAndSort(prms.GridYTotal);
-        gpu.split_hssoa_into_partitions();
-        gpu.transfer_to_device();
-        wac_interpolator.SetTime(prms.SimulationTime);
-        gpu.transfer_wind_and_current_data_to_device();
-        SyncTopologyRequired = true;
-        LOGV("Model::Step() rebalancing done");
-    }
+    // Parse configuration from JSON
+    std::map<std::string, std::string> parseResult = sim_data.prms.ParseFile(fileName);
+    sim_data.SimulationTitle = parseResult["SimulationTitle"];
 
-    lock_data_for_GUI.unlock();     // allow GUI to access the data
-    if(transfer_completion_callback) transfer_completion_callback();    // signal GUI to udpate
-
-    // request async snapshot
-    bool saveSnapshot = ((prms.SimulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
-                        (prms.SimulationTime >= prms.SimulationEndTime);
-    if(saveSnapshot) gpu.hssoa.transferToSecondBuffer();
-    m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveTask, this, prms.SimulationStep, prms.SimulationTime);
-
-    return (prms.SimulationTime < prms.SimulationEndTime && !gpu.error_code);
-}
-
-
-icy::Model::Model() : wac_interpolator(prms)
-{
-    snapshot.model = this;
-    prms.SimulationStep = 0;
-    prms.SimulationTime = 0;
-    SyncTopologyRequired = true;
-
-    prms.Reset();
-    gpu.model = this;
-    GPU_Partition::prms = &this->prms;
-    LOGV("Model constructor");
-}
-
-icy::Model::~Model()
-{
-    if (m_save_future.valid()) m_save_future.get();
-}
-
-
-void icy::Model::Prepare()
-{
-    LOGV("icy::Model::Prepare()");
-    gpu.update_constants();
-    wac_interpolator.SetTime(prms.SimulationTime);
-    gpu.transfer_wind_and_current_data_to_device();
-}
-
-
-void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName, bool onlyGeneratePoints)
-{
-    LOGR("icy::Model::LoadParameterFile {}", fileName);
-
-    std::map<std::string,std::string> additionalFiles = prms.ParseFile(fileName);
-
-    snapshot.SimulationTitle = additionalFiles["SimulationTitle"];
-
-    std::filesystem::path outputDir = "output";
-    std::filesystem::path logDir = "logs";
-    std::filesystem::path targetLogPath = outputDir / snapshot.SimulationTitle / logDir;
-    std::filesystem::create_directories(targetLogPath);
-    std::filesystem::path fullLogPath = targetLogPath / "multisink.txt";
+    // Setup output directory alongside the JSON file
+    std::filesystem::path outputDir = jsonFileDir / "output";
+    std::filesystem::path logDir = outputDir / "logs";
+    std::filesystem::create_directories(logDir);
+    std::filesystem::path fullLogPath = logDir / "multisink.txt";
 
     auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(fullLogPath.string(), true);
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -165,62 +176,70 @@ void icy::Model::LoadParameterFile(std::string fileName, std::string resumeSnaps
     spdlog::set_default_logger(lg);
     spdlog::set_pattern("%v");
 
-    snapshot.PrepareGrid(additionalFiles["InputPNG"], additionalFiles["InputMap"]);
+    // Load grid data (pre-created by plate_preparer)
+    std::filesystem::path gridPath = jsonFileDir / parseResult["GridData"];
+    sim_data.LoadGridDataFromFile(gridPath.string());
 
-    if(resumeSnapshotFileName.empty())
-    {
-        snapshot.PopulatePoints(additionalFiles["InputMap"], onlyGeneratePoints);
-        if(onlyGeneratePoints) return;
-    }
-    else
-    {
-        std::filesystem::path inputPath(resumeSnapshotFileName);
-        if (!inputPath.has_parent_path())
-        {
-            std::filesystem::path snapshotsDir = "snapshots";
-            std::filesystem::path targetPath = outputDir / snapshot.SimulationTitle / snapshotsDir / resumeSnapshotFileName;
-            resumeSnapshotFileName = targetPath.string();
+    // Store the data directory (where grid.h5, grid_flow.h5, and initial snapshot are located)
+    std::filesystem::path dataDir = gridPath.parent_path();
+    sim_data.data_directory = dataDir.string();
+
+    // Setup output directory (same location as JSON, in "output" subdirectory)
+    std::filesystem::path framesDir = outputDir / "frames";
+    std::filesystem::create_directories(framesDir);
+    sim_data.output_directory = outputDir.string();
+
+    // Load points from snapshot
+    // First, try to load from the snapshots subdirectory (where plate_preparer saves s00000.h5)
+    std::filesystem::path snapshotPath = dataDir / "snapshots" / "s00000.h5";  // Initial snapshot from plate_preparer
+
+    // If that doesn't exist, check if a custom snapshot is specified in config
+    if (!std::filesystem::exists(snapshotPath)) {
+        if (!resumeSnapshotFileName.empty()) {
+            snapshotPath = resumeSnapshotFileName;
+        } else if (parseResult.find("Snapshot") != parseResult.end()) {
+            snapshotPath = parseResult["Snapshot"];
+        } else {
+            throw std::runtime_error(fmt::format("No snapshot found at {} and no custom snapshot specified", snapshotPath.string()));
         }
 
-        // try to load snapshot file
-        snapshot.ReadPointsFromSnapshot(resumeSnapshotFileName);
-    }
-    snapshot.SplitIntoPartitionsAndTransferToDevice();
-
-    if(additionalFiles.count("InputFlowVelocity"))
-    {
-        prms.UseCurrentData = true;
-        wac_interpolator.OpenCustomHDF5(additionalFiles["InputFlowVelocity"]);
+        // Resolve relative paths for custom snapshots
+        if (!snapshotPath.is_absolute()) {
+            snapshotPath = jsonFileDir / snapshotPath;
+        }
     }
 
+    if (!std::filesystem::exists(snapshotPath)) {
+        throw std::runtime_error(fmt::format("Snapshot file not found: {}", snapshotPath.string()));
+    }
+    LOGR("Loading snapshot from: {}", snapshotPath.string());
+    sim_data.ReadPointsFromSnapshot(snapshotPath.string());
+
+    // Allocate point arrays and transfer to GPU partitions
+    sim_data.AllocatePointArrays();
+    gpu.SplitIntoPartitionsAndTransferToDevice();
+
+    // Load flow field data (mandatory)
+    std::filesystem::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
+    sim_data.waci.SetHDF5Path(flowPath.string());
+    sim_data.waci.SetTime(sim_data.prms.SimulationTime);
+    gpu.transfer_wind_and_current_data_to_device();
+
+    // Print memory allocation summary
+    LOGR("");
+    LOGR("Memory allocation summary:");
+    LOGR("  Grid data:    {:.3f} GB", sim_data.allocated_bytes[0] / 1e9);
+    LOGR("  Particle data: {:.3f} GB", sim_data.allocated_bytes[1] / 1e9);
+    LOGR("  Total:        {:.3f} GB", (sim_data.allocated_bytes[0] + sim_data.allocated_bytes[1]) / 1e9);
+    LOGR("");
+
+    // Final GPU preparation and rendering
     Prepare();
+    LOGR("LoadParameterFile - invoking gpu.render_visualized_data();");
     gpu.render_visualized_data();
     gpu.transfer_from_device();
 
-    // saved snapshot at step 0 (if needed, the snapshot can be uploaded and resumed on a remote machine)
-    if(resumeSnapshotFileName.empty())
-    {
-        gpu.hssoa.transferToSecondBuffer();
-        m_save_future = std::async(std::launch::async, &icy::Model::AsyncSaveTask, this,
-                                   prms.SimulationStep, prms.SimulationTime);
-    }
-    LOGR("LoadParameterFile done {}", fileName);
+    LOGR("LoadParameterFile completed successfully");
 }
 
-
-void icy::Model::AsyncSaveTask(int simulationStep, double simulationTime)
-{
-    // Save frame and (if needed) full snapshot
-    if (prms.SaveSnapshots && simulationStep != -1)
-    {
-        snapshot.SaveFrame(simulationStep, simulationTime);
-
-        bool saveSnapshot = ((simulationStep / prms.UpdateEveryNthStep) % prms.SnapshotPeriod == 0) ||
-                            (simulationTime >= prms.SimulationEndTime);
-        if(saveSnapshot)
-        {
-            snapshot.SaveSnapshot(simulationStep, simulationTime);
-        }
-    }
-}
 

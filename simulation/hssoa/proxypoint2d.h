@@ -7,11 +7,11 @@
 
 struct ProxyPoint
 {
-    constexpr static unsigned nArrays = SimParams::nPtsArrays;  // count of arrays in SOA
+    constexpr static unsigned nArrays = SimParams::PtArrIdx::nPtsArrays;  // count of arrays in SOA
     bool isReference = false;
     unsigned pos, pitch;    // element # and capacity of each array in SOA
-    t_PointReal *soa;            // reference to SOA (assume contiguous space of size nArrays*pitch)
-    t_PointReal data[nArrays];    // local copy of the data when isReference==true
+    double *soa;            // reference to SOA (assume contiguous space of size nArrays*pitch)
+    double data[nArrays];    // local copy of the data when isReference==true
 
     ProxyPoint() { isReference = false; }
 
@@ -19,25 +19,24 @@ struct ProxyPoint
     ProxyPoint& operator=(const ProxyPoint &other);
 
     // access data
-    t_PointReal getValue(size_t valueIdx);   // valueIdx < nArrays
-    void setValue(size_t valueIdx, t_PointReal value);
+    double getValue(size_t valueIdx);   // valueIdx < nArrays
+    void setValue(size_t valueIdx, double value);
     uint32_t getValueInt(size_t valueIdx);
     void setValueInt(size_t valueIdx, uint32_t value);
     Eigen::Matrix2f getTensor(size_t valueIdx);
 
-    PointVector2r getPos();
-    PointVector2r getPos(t_PointReal cellsize);
-    PointVector2r getVelocity();
+    Eigen::Vector2d getPos();
+    Eigen::Vector2d getPos(double cellsize);
+    Eigen::Vector2d getVelocity();
     bool getCrushedStatus();
     bool getDisabledStatus();
-    bool getWeakenedStatus();
     uint16_t getGrain();
 
     int getCellIndex(int GridY);  // index of the grid cell at the point's location
     unsigned getCellX();
 
     // other
-    void ConvertToIntegerCellFormat(t_PointReal h);
+    void ConvertToIntegerCellFormat(double h);
 };
 
 #endif

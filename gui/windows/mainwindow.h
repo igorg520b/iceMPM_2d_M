@@ -40,11 +40,11 @@
 #include <vtkInteractorStyleImage.h>
 
 #include "objectpropertybrowser.h"
-#include "vtk_representation.h"
+#include "visual_representation.h"
 #include "model.h"
 #include "parameters_wrapper.h"
 #include "backgroundworker.h"
-#include "snapshotmanager.h"
+#include "host_side_data.h"
 
 #include <fstream>
 #include <iomanip>
@@ -68,7 +68,7 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
     void closeEvent( QCloseEvent* event ) override;
-    icy::Model model;
+    Model model;
     void LoadParameterFile(QString qFileName, QString resumeSnapshot);    // return file name of the point cloud
 
 private Q_SLOTS:
@@ -98,7 +98,7 @@ private:
     void OpenSnapshot(QString fileName);
 
     BackgroundWorker *worker;
-    icy::VisualRepresentation representation;
+    VisualRepresentation representation;
     ParamsWrapper *params;
 
     QString settingsFileName;       // includes current dir

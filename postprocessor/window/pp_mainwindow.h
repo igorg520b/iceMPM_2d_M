@@ -28,6 +28,9 @@
 #include <QSpinBox>
 #include <QFileInfo>
 #include <QScrollArea>
+#include <QStatusBar>
+#include <QSlider>
+#include <QToolBar>
 
 #include <QVTKOpenGLNativeWidget.h>
 
@@ -44,19 +47,13 @@
 #include <vtkPNGWriter.h>
 #include <vtkJPEGWriter.h>
 
-#include "vtk_representation.h"
-#include "framedata.h"
+#include "visual_representation.h"
+#include "host_side_data.h"
 
-
-QT_BEGIN_NAMESPACE
-namespace Ui { class PPMainWindow; }
-QT_END_NAMESPACE
 
 class PPMainWindow : public QMainWindow
 {
     Q_OBJECT
-private:
-    Ui::PPMainWindow *ui;
 
 public:
     PPMainWindow(QWidget *parent = nullptr);
@@ -65,6 +62,7 @@ public:
     void closeEvent( QCloseEvent* event ) override;
     void LoadParametersFile(QString fileName);
     void LoadFramesDirectory(QString framesDirectory);
+    void TryLoadDefaultFrames();  // Auto-load frames from default location if they exist
 
 private Q_SLOTS:
     void cameraReset_triggered();
@@ -74,11 +72,14 @@ private Q_SLOTS:
     void render_frame_triggered();
     void render_all_triggered();
     void toggleScrollTracking(bool checked);
+    void openProject_triggered();
+    void openFrames_triggered();
 
 private:
-    GeneralGridData ggd;
-    FrameData frameData;
-    icy::VisualRepresentation representation;
+    HostSideData hsd;
+    VisualRepresentation representation;
+    std::string currentFrameDirectory;   // Directory containing frame files
+    std::string currentProjectDirectory; // Directory containing the JSON project file
 
     QString settingsFileName;       // includes current dir
     QComboBox *comboBox_visualizations;
@@ -88,6 +89,8 @@ private:
     QSpinBox *qsbFrameFrom, *qsbFrameTo;
     QSlider *slider2;
     QScrollArea *scrollArea;
+    QToolBar *toolBar;
+    QStatusBar *statusBar;
 
     // VTK
     vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;
@@ -101,16 +104,20 @@ private:
 
 
     void generate_ffmpeg_script(int frameFrom, int frameTo);
-    // list which categories we render
-    const std::vector<icy::VisualRepresentation::VisOpt> m_visOptsToRender = {
-        icy::VisualRepresentation::VisOpt::grid_colors,
-        icy::VisualRepresentation::VisOpt::grid_mass,
-        icy::VisualRepresentation::VisOpt::grid_Jpinv,
-        icy::VisualRepresentation::VisOpt::grid_P,
-        icy::VisualRepresentation::VisOpt::grid_Q,
-        icy::VisualRepresentation::VisOpt::grid_vnorm,
-        icy::VisualRepresentation::VisOpt::str_vonMises,
-        icy::VisualRepresentation::VisOpt::grid_ridges
+
+    // Grid size threshold for slider tracking behavior
+    static constexpr int GRID_SIZE_TRACKING_THRESHOLD = 4000;
+
+    // List which visualization categories we render for batch operations
+    const std::vector<VisualRepresentation::VisOpt> m_visOptsToRender = {
+        VisualRepresentation::VisOpt::grid_colors,
+        VisualRepresentation::VisOpt::grid_mass,
+        VisualRepresentation::VisOpt::grid_Jpinv,
+        VisualRepresentation::VisOpt::grid_P,
+        VisualRepresentation::VisOpt::grid_Q,
+        VisualRepresentation::VisOpt::grid_vnorm,
+        VisualRepresentation::VisOpt::str_vonMises,
+        VisualRepresentation::VisOpt::grid_ridges
     };
 };
 #endif

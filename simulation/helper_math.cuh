@@ -78,18 +78,18 @@ template <typename T> __device__ void inline my_swap(T& a, T& b)
 template<typename T>
 __forceinline__ __device__ void singular_value_decomposition(
         const T a[4],
-        GivensRotation<t_PointReal>& u,
+        GivensRotation<double>& u,
         T sigma[2],
-        GivensRotation<t_PointReal>& v)
+        GivensRotation<double>& v)
 {
-    t_PointReal s_sym[4];///< column-major
+    double s_sym[4];///< column-major
     polar_decomposition(a, u, s_sym);
-    t_PointReal cosine;
-    t_PointReal sine;
-    t_PointReal x  = s_sym[0];
-    t_PointReal y  = s_sym[2];
-    t_PointReal z  = s_sym[3];
-    t_PointReal y2 = y * y;
+    double cosine;
+    double sine;
+    double x  = s_sym[0];
+    double y  = s_sym[2];
+    double z  = s_sym[3];
+    double y2 = y * y;
     if(y2 == 0)
     {
         // S is already diagonal
@@ -100,10 +100,10 @@ __forceinline__ __device__ void singular_value_decomposition(
     }
     else
     {
-        t_PointReal tau = T(0.5) * (x - z);
-        t_PointReal w   = sqrt(tau * tau + y2);
+        double tau = T(0.5) * (x - z);
+        double w   = sqrt(tau * tau + y2);
         // w > y > 0
-        t_PointReal t;
+        double t;
         if(tau > 0)
         {
             // tau + w > w > y > 0 ==> division is safe
@@ -121,9 +121,9 @@ __forceinline__ __device__ void singular_value_decomposition(
       sigma = v'SV. Only compute the diagonals for efficiency.
       Also utilize symmetry of S and don't form v yet.
     */
-        t_PointReal c2  = cosine * cosine;
-        t_PointReal csy = 2 * cosine * sine * y;
-        t_PointReal s2  = sine * sine;
+        double c2  = cosine * cosine;
+        double csy = 2 * cosine * sine * y;
+        double s2  = sine * sine;
         sigma[0]   = c2 * x - csy + s2 * z;
         sigma[1]   = s2 * x + csy + c2 * z;
     }

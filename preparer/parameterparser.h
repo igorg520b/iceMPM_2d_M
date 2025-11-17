@@ -10,32 +10,37 @@
 
 #include <Eigen/Core>
 
-class ParameterParser
+struct ParameterParser
 {
-public:
-    ParameterParser() = default;
-    void LoadParamsFile(std::string fileName);
-
     std::string ProjectName, ProjectDirectory;
-    std::string fileNameSVG, fileNamePNG, fileNameWindData;
-    std::string MainPathID;
-    std::string RectanglePathID;
-    std::string FluentPathID;
-    std::string fileNameFluentDAT, fileNameFluentCAS;
-    int height, width;
+    std::string ImageColor, ImageCrushedMask, ImageIceMask, ImageLandMask;
+    std::string ConfigFileDirectory;  // directory containing the JSON config file
+    int PointsPerCell = 5;
+    int height = 0;
+    int width = 0;
+    double DimensionHorizontal = 0.0;
+    double ThicknessFrom = 1.0;  // default: no scaling
+    double ThicknessTo = 1.0;    // default: no scaling
 
-    double FLUENT_Scale = 0;
-    double FLUENT_OffsetX = 0;
-    double FLUENT_OffsetY = 0;
+    // Flow field parameters
+    std::string FlowType = "";              // "constant", "wave", "FLUENT-static" (empty = no flow)
+    double FlowBearing = 0.0;               // bearing in degrees (0=north, 90=east, etc.)
+    double FlowSpeed = 0.0;                 // speed for constant flow
+    double WaveAmplitude = 0.0;             // amplitude for wave flow
+    double WaveLength = 0.0;                // wavelength for wave flow
+    double PhaseSpeed = 0.0;                // phase speed for wave flow
+    int NFrames = 1;                        // number of frames for wave flow (optional, default=1)
+    bool CompressFlow = false;              // whether to compress flow field HDF5
 
-    double FlowX = 0;
-    double FlowY = 0;
-    bool ConstFlow = false;
-    bool MakeAllIceSolid = false;
+    // FLUENT-specific parameters (optional, only used when FlowType == "FLUENT-static")
+    std::string InputFluentDAT = "";        // HDF5 file: velocity data
+    std::string InputFluentCAS = "";        // HDF5 file: mesh definition
+    std::string SVG = "";                   // SVG file: geometry + path definitions
+    std::string RectanglePathID = "";       // SVG path ID: image bounds
+    std::string FluentPathID = "";          // SVG path ID: FLUENT grid bounds
+    double VelocityMultiplier = 1.0;        // Multiplier for FLUENT velocity field (default: 1.0)
 
-    std::vector<Eigen::Vector3f> colordata_OpenWater, colordata_Solid, colordata_Crushed;
-    Eigen::Vector3i pierColor;
-    std::vector<std::string> renderedPaths;
+    void LoadParamsFile(std::string fileName);
 };
 
 #endif // PARAMETERPARSER_H

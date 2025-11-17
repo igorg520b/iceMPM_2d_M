@@ -4,8 +4,6 @@
 #include <utility>
 #include <algorithm>
 
-#include <cuda_runtime.h>
-
 #include <Eigen/Core>
 #include <spdlog/spdlog.h>
 
@@ -25,7 +23,7 @@ public:
 
     ProxyPoint m_point;
 
-    SOAIterator(unsigned pos, t_PointReal *soa_data, unsigned pitch);
+    SOAIterator(unsigned pos, double *soa_data, unsigned pitch);
     SOAIterator(const SOAIterator& other);
     SOAIterator& operator=(const SOAIterator& other);
     SOAIterator() {};
@@ -54,8 +52,8 @@ public:
     HostSideSOA() = default;
     ~HostSideSOA();
 
-    t_PointReal *host_buffer = nullptr; // buffer in page-locked memory for transferring the data between device and host
-    unsigned capacity;  // max number of points that the host-side buffer can hold
+    double *host_buffer = nullptr; // buffer in page-locked memory for transferring the data between device and host
+    unsigned capacity = 0;  // max number of points that the host-side buffer can hold
     unsigned size = 0;      // the number of points, including "disabled" ones, in the host buffer (may fluctuate)
 
     SOAIterator begin(){return SOAIterator(0, host_buffer, capacity);}
@@ -64,21 +62,13 @@ public:
     void Allocate(int pts_capacity);
     void RemoveDisabledAndSort(int GridY);
 
-    t_PointReal* getPointerToLine(int idxLine) {return host_buffer + capacity*idxLine;}
+    double* getPointerToLine(int idxLine) {return host_buffer + capacity*idxLine;}
 
-    std::pair<PointVector2r, PointVector2r> getBlockDimensions();
-    void convertToIntegerCellFormat(t_PointReal h);
+    std::pair<Eigen::Vector2d, Eigen::Vector2d> getBlockDimensions();
+    void convertToIntegerCellFormat(double h);
 
     // debugging / testing
     void PrintOutNearestPoint(double pos_x, double pos_y, double gridSize, int GridY);
-
-    // double-buffering for async snpashot saving
-    t_PointReal *getBuffer();
-    void transferToSecondBuffer();
-
-private:
-    std::vector<t_PointReal> second_buffer;
-
 };
 
 #endif // HOSTSIDESOA_H

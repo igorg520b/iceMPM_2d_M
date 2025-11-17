@@ -13,12 +13,6 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("Prepating the input files for MPM simulation");
     parser.addPositionalArgument("parameters", QCoreApplication::translate("main", "JSON parameter file"));
 
-    QCommandLineOption dxfOption(
-        QStringList() << "d" << "dxf",
-        QCoreApplication::translate("main", "Only create dxf file.")
-        );
-    parser.addOption(dxfOption); // Add the option to the parser
-
     parser.process(a);
 
     const QStringList args = parser.positionalArguments();
@@ -28,21 +22,12 @@ int main(int argc, char *argv[])
     if(args.size() >= 1)
     {
         QString parametersFile = args[0];
-
-        bool dxfOnly = parser.isSet(dxfOption);
-        w.LoadParameterFile(parametersFile, dxfOnly);
-
-        if(!dxfOnly)
-        {
-            w.resize(1400, 900);
-            w.show();
-            return a.exec();
-        }
+        w.LoadParameterFile(parametersFile);
     }
-    else
-    {
-        throw std::runtime_error("parameter file required");
-    }
+
+    w.resize(1400, 900);
+    w.show();
+    return a.exec();
 
     return 0;
 }

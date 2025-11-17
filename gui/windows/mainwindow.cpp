@@ -16,6 +16,7 @@ MainWindow::~MainWindow() {delete ui;}
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , representation(model.sim_data)
 {
     ui->setupUi(this);
 
@@ -96,11 +97,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     renderer->AddActor(representation.actor_points);
     renderer->AddActor(representation.raster_actor);
+    renderer->AddActor(representation.actor_region_boundary);
+    renderer->AddActor(representation.actor_debug_grid);
     renderer->AddActor(representation.actorText);
     renderer->AddActor(representation.scalarBar);
 
     // populate combobox
-    QMetaEnum qme = QMetaEnum::fromType<icy::VisualRepresentation::VisOpt>();
+    QMetaEnum qme = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
     for(int i=0;i<qme.keyCount();i++) comboBox_visualizations->addItem(qme.key(i));
 
     connect(comboBox_visualizations, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -306,21 +309,13 @@ void MainWindow::updateGUI()
     labelStepCount->setText(QString::number(model.prms.SimulationStep));
     labelElapsedTime->setText(QString("%1 s").arg(model.prms.SimulationTime,0,'f',0));
 
-    // display date
-    int64_t display_date = (int64_t)model.prms.SimulationTime + model.prms.SimulationStartUnixTime;
-    std::time_t unix_time = display_date;
-    std::tm* tm_time = std::gmtime(&unix_time);
-    // Format the time
-    char buffer[100];
-    std::strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S UTC", tm_time);
-    representation.actorText->SetInput(buffer);
-
     //statusLabel->setText(QString("per cycle: %1 ms").arg(model.compute_time_per_cycle,0,'f',3));
 
     {
         std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
         model.SyncTopologyRequired = false;
         representation.simulationTime = model.prms.SimulationTime;
+        representation.UpdateTimeText();
         representation.SynchronizeTopology();
     }
 
@@ -363,14 +358,6 @@ void MainWindow::LoadParameterFile(QString qFileName, QString resumeSnapshot)
     this->setWindowTitle(qFileName);
     pbrowser->setActiveObject(params);
 
-    representation.prms = &model.prms;
-    representation.hssoa = &model.gpu.hssoa;
-    representation.wac_interpolator = &model.wac_interpolator;
-    representation.grid_status_buffer = model.gpu.grid_status_buffer.data();
-    representation.host_grid_buffer = model.gpu.host_grid_buffer.data();
-
-    representation.original_image_colors_rgb = &model.gpu.original_image_colors_rgb;
-    representation.point_partitions = &model.gpu.point_partitions;
     updateGUI();
 }
 

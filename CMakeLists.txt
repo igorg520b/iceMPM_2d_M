@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20.2)
 
-project(MPM_Ice_Multi LANGUAGES CXX C CUDA)
+project(Plate_MPM LANGUAGES CXX C CUDA)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=esa_on_defaulted_function_ignored -use_fast_maths --expt-relaxed-constexpr")
@@ -23,7 +23,6 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
-
 
 
 if(BUILD_GUI_VERSION)
@@ -58,7 +57,7 @@ FetchContent_MakeAvailable(PBrowser)
     find_package(Qt5 COMPONENTS Widgets REQUIRED)
     add_compile_definitions(QT_NO_KEYWORDS)
 
-    add_executable(gm2m
+    add_executable(gplate
         gui/main.cpp
 
         gui/windows/mainwindow.cpp
@@ -66,8 +65,8 @@ FetchContent_MakeAvailable(PBrowser)
         gui/windows/mainwindow.ui
         icons.qrc
 
-        gui/vtk/vtk_representation.cpp
-        gui/vtk/vtk_representation.h
+        gui/vtk/visual_representation.cpp
+        gui/vtk/visual_representation.h
 
         gui/backgroundworker.cpp
         gui/backgroundworker.h
@@ -90,11 +89,13 @@ FetchContent_MakeAvailable(PBrowser)
         simulation/hssoa/proxypoint2d.cpp
 
         simulation/gpu_partition.h
+        simulation/partition_params.h
         simulation/gpu_partition.cpp
+        simulation/kernel_declarations.cuh
         simulation/kernels.cu
 
-        simulation/data_manager/snapshotmanager.h
-        simulation/data_manager/snapshotmanager.cpp
+        simulation/data_manager/host_side_data.h
+        simulation/data_manager/host_side_data.cpp
         simulation/data_manager/windandcurrentinterpolator.cpp
         simulation/data_manager/windandcurrentinterpolator.h
         simulation/data_manager/poisson_disk_sampling.h
@@ -103,39 +104,39 @@ FetchContent_MakeAvailable(PBrowser)
         gui/colormap.cpp
         simulation/data_manager/intinterval.h
     )
-    set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
-    
+    set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu simulation/kernel_declarations.cuh PROPERTIES LANGUAGE CUDA)
+
     message(${PBrowser_SOURCE_DIR})
-    target_include_directories(gm2m PRIVATE ${PBrowser_SOURCE_DIR} ${PBrowser_SOURCE_DIR}/propertybrowser)
-    target_include_directories(gm2m PRIVATE ${PBrowser_SOURCE_DIR}/objectpropertybrowser)
-    target_link_libraries(gm2m PRIVATE PBrowser)
+    target_include_directories(gplate PRIVATE ${PBrowser_SOURCE_DIR} ${PBrowser_SOURCE_DIR}/propertybrowser)
+    target_include_directories(gplate PRIVATE ${PBrowser_SOURCE_DIR}/objectpropertybrowser)
+    target_link_libraries(gplate PRIVATE PBrowser)
 
-    set_target_properties(gm2m PROPERTIES CUDA_ARCHITECTURES "80;89")
-    set_target_properties(gm2m PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+    set_target_properties(gplate PROPERTIES CUDA_ARCHITECTURES "80;89")
+    set_target_properties(gplate PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-    target_include_directories(gm2m PRIVATE gui gui/windows gui/vtk simulation simulation/hssoa simulation/data_manager External External/rapidjson)
-    target_link_libraries(gm2m PRIVATE Qt5::Widgets Qt5::Core)
+    target_include_directories(gplate PRIVATE gui gui/windows gui/vtk simulation simulation/hssoa simulation/data_manager External External/rapidjson)
+    target_link_libraries(gplate PRIVATE Qt5::Widgets Qt5::Core)
 
     # Eigen
     find_package(Eigen3 REQUIRED NO_MODULE)
-    target_link_libraries(gm2m PRIVATE Eigen3::Eigen)
+    target_link_libraries(gplate PRIVATE Eigen3::Eigen)
 
     # VTK
-    target_link_libraries(gm2m PRIVATE ${VTK_LIBRARIES})
+    target_link_libraries(gplate PRIVATE ${VTK_LIBRARIES})
 
     # HDF5
-    target_link_libraries(gm2m PRIVATE ${HDF5_LIBRARIES})
-    target_include_directories(gm2m PRIVATE ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(gplate PRIVATE ${HDF5_LIBRARIES})
+    target_include_directories(gplate PRIVATE ${HDF5_INCLUDE_DIRS})
 
     # spdlog
-    target_link_libraries(gm2m PRIVATE spdlog::spdlog)
+    target_link_libraries(gplate PRIVATE spdlog::spdlog)
 
     # OpenMP
-    target_compile_options(gm2m PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
-    target_link_libraries(gm2m PRIVATE gomp)
+    target_compile_options(gplate PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+    target_link_libraries(gplate PRIVATE gomp)
 
     vtk_module_autoinit(
-    TARGETS gm2m
+    TARGETS gplate
     MODULES ${VTK_LIBRARIES}
     )
 
@@ -147,7 +148,7 @@ endif()
 if(BUILD_CLI_VERSION)
 
 # CLI version
-add_executable(cm2m
+add_executable(cplate
     cli/main.cpp
 
     # simulation
@@ -167,11 +168,13 @@ add_executable(cm2m
     simulation/hssoa/proxypoint2d.cpp
 
     simulation/gpu_partition.h
+    simulation/partition_params.h
     simulation/gpu_partition.cpp
+    simulation/kernel_declarations.cuh
     simulation/kernels.cu
 
-    simulation/data_manager/snapshotmanager.h
-    simulation/data_manager/snapshotmanager.cpp
+    simulation/data_manager/host_side_data.h
+    simulation/data_manager/host_side_data.cpp
     simulation/data_manager/windandcurrentinterpolator.cpp
     simulation/data_manager/windandcurrentinterpolator.h
 
@@ -183,27 +186,27 @@ add_executable(cm2m
     simulation/data_manager/intinterval.h
 
 )
-set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
+set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu simulation/kernel_declarations.cuh PROPERTIES LANGUAGE CUDA)
 
-set_target_properties(cm2m PROPERTIES CUDA_ARCHITECTURES "80;89")
-set_target_properties(cm2m PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+set_target_properties(cplate PROPERTIES CUDA_ARCHITECTURES "80;89")
+set_target_properties(cplate PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-target_link_libraries(cm2m PRIVATE Eigen3::Eigen spdlog::spdlog)
-target_link_libraries(cm2m PRIVATE fmt::fmt)
+target_link_libraries(cplate PRIVATE Eigen3::Eigen spdlog::spdlog)
+target_link_libraries(cplate PRIVATE fmt::fmt)
 
-target_include_directories(cm2m PRIVATE simulation simulation/hssoa simulation/data_manager External External/rapidjson)
+target_include_directories(cplate PRIVATE simulation simulation/hssoa simulation/data_manager External External/rapidjson)
 
 
 if(HDF5_INCLUDE_DIRS)
-    target_link_libraries(cm2m PRIVATE ${HDF5_LIBRARIES})
+    target_link_libraries(cplate PRIVATE ${HDF5_LIBRARIES})
 else()
-    target_link_libraries(cm2m PRIVATE hdf5_cpp-shared)
+    target_link_libraries(cplate PRIVATE hdf5_cpp-shared)
 endif()
 
-target_include_directories(cm2m PRIVATE ${HDF5_INCLUDE_DIRS})
+target_include_directories(cplate PRIVATE ${HDF5_INCLUDE_DIRS})
 
-target_compile_options(cm2m PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
-target_link_libraries(cm2m PRIVATE gomp)
+target_compile_options(cplate PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+target_link_libraries(cplate PRIVATE gomp)
 
 endif()
 
@@ -231,23 +234,17 @@ if(BUILD_POSTPROCESSOR)
     find_package(Qt5 COMPONENTS Widgets REQUIRED)
     add_compile_definitions(QT_NO_KEYWORDS)
 
-    add_executable(pp
+    add_executable(visualizer
     	postprocessor/pp_main.cpp
     	postprocessor/window/pp_mainwindow.cpp
     	postprocessor/window/pp_mainwindow.h
-    	postprocessor/window/pp_mainwindow.ui
         icons.qrc
-        
-        gui/vtk/vtk_representation.cpp
-        gui/vtk/vtk_representation.h
+
+        gui/vtk/visual_representation.cpp
+        gui/vtk/visual_representation.h
 
         simulation/parameters_sim.h
         simulation/parameters_sim.cpp
-
-        postprocessor/framedata.h
-        postprocessor/framedata.cpp
-        postprocessor/generalgriddata.h
-        postprocessor/generalgriddata.cpp
 
         gui/colormap.h
         gui/colormap.cpp
@@ -261,38 +258,43 @@ if(BUILD_POSTPROCESSOR)
         simulation/data_manager/windandcurrentinterpolator.h
 
         simulation/data_manager/intinterval.h
+
+        postprocessor/frame_utils.h
+        postprocessor/frame_utils.cpp
+
+        simulation/data_manager/host_side_data.h
+        simulation/data_manager/host_side_data.cpp
     )
     set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
 
-    target_include_directories(pp PRIVATE postprocessor postprocessor/window gui External gui/vtk)
-    target_include_directories(pp PRIVATE simulation simulation/hssoa simulation/data_manager)
-    target_link_libraries(pp PRIVATE Qt5::Widgets Qt5::Core)
+    target_include_directories(visualizer PRIVATE postprocessor postprocessor/window gui External gui/vtk)
+    target_include_directories(visualizer PRIVATE simulation simulation/hssoa simulation/data_manager)
+    target_link_libraries(visualizer PRIVATE Qt5::Widgets Qt5::Core)
 
     # Eigen
     find_package(Eigen3 REQUIRED NO_MODULE)
-    target_link_libraries(pp PRIVATE Eigen3::Eigen)
+    target_link_libraries(visualizer PRIVATE Eigen3::Eigen)
 
     # VTK
-    target_link_libraries(pp PRIVATE ${VTK_LIBRARIES})
+    target_link_libraries(visualizer PRIVATE ${VTK_LIBRARIES})
 
     # HDF5
-    target_link_libraries(pp PRIVATE ${HDF5_LIBRARIES})
-    target_include_directories(pp PRIVATE ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(visualizer PRIVATE ${HDF5_LIBRARIES})
+    target_include_directories(visualizer PRIVATE ${HDF5_INCLUDE_DIRS})
 
     # spdlog
-    target_link_libraries(pp PRIVATE spdlog::spdlog)
+    target_link_libraries(visualizer PRIVATE spdlog::spdlog)
 
     vtk_module_autoinit(
-    TARGETS pp
+    TARGETS visualizer
     MODULES ${VTK_LIBRARIES}
     )
 
-    set_target_properties(pp PROPERTIES CUDA_ARCHITECTURES "80;89")
-    set_target_properties(pp PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+    set_target_properties(visualizer PROPERTIES CUDA_ARCHITECTURES "80;89")
+    set_target_properties(visualizer PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
-
-    target_compile_options(pp PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
-    target_link_libraries(pp PRIVATE gomp)
+    target_compile_options(visualizer PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+    target_link_libraries(visualizer PRIVATE gomp)
 
 endif()
 
@@ -325,37 +327,53 @@ if(BUILD_PREPARER)
     ViewsQt
     )
 
-    add_executable(MPM_setup_prepare
+    add_executable(plate_preparer
         preparer/preparer_main.cpp
         preparer/mainwindow.cpp
         preparer/mainwindow.h
-        preparer/mainwindow.ui
 
-        preparer/processing/satelliteimageprocessor.h 
-        preparer/processing/satelliteimageprocessor.cpp
-        preparer/svg/bezierpath.h 
-        preparer/svg/bezierpath.cpp
-        preparer/parameterparser.h 
+        preparer/parameterparser.h
         preparer/parameterparser.cpp
-        preparer/processing/flowdataprocessor.h 
-        preparer/processing/flowdataprocessor.cpp
-        preparer/vtk/vtkFLUENTCFFCustomReader.h 
-        preparer/vtk/vtkFLUENTCFFCustomReader.cxx
-        preparer/processing/mainimageimporter.h 
-        preparer/processing/mainimageimporter.cpp
+
+        preparer/flowfieldgenerator.cpp
+        preparer/flowfieldgenerator.h
+
+        preparer/fluentflowimporter.cpp
+        preparer/fluentflowimporter.h
+
+        simulation/data_manager/fluent_importer/vtkFLUENTCFFCustomReader.cxx
+        simulation/data_manager/fluent_importer/vtkFLUENTCFFCustomReader.h
 
         simulation/data_manager/intinterval.h
 
+        gui/vtk/visual_representation.cpp
+        gui/vtk/visual_representation.h
+        gui/colormap.h
+        gui/colormap.cpp
+        simulation/parameters_sim.h
+        simulation/parameters_sim.cpp
+
+        simulation/hssoa/host_side_soa.h
+        simulation/hssoa/host_side_soa.cpp
+        simulation/hssoa/proxypoint2d.h
+        simulation/hssoa/proxypoint2d.cpp
+
+        simulation/data_manager/host_side_data.h
+        simulation/data_manager/host_side_data.cpp
+
+        simulation/data_manager/windandcurrentinterpolator.cpp
+        simulation/data_manager/windandcurrentinterpolator.h
+        simulation/data_manager/poisson_disk_sampling.h
     )
 
-    target_link_libraries(MPM_setup_prepare PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES} ${VTK_LIBRARIES})
-    target_link_libraries(MPM_setup_prepare PRIVATE Qt${QT_VERSION_MAJOR}::Widgets )
+    target_link_libraries(plate_preparer PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES} ${VTK_LIBRARIES})
+    target_link_libraries(plate_preparer PRIVATE Qt${QT_VERSION_MAJOR}::Widgets )
 
-    target_include_directories(MPM_setup_prepare PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
-    target_include_directories(MPM_setup_prepare PRIVATE External preparer/vtk preparer/svg preparer/processing preparer)
+    target_include_directories(plate_preparer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_include_directories(plate_preparer PRIVATE External preparer/vtk preparer/svg preparer/processing preparer gui/vtk gui simulation simulation/hssoa simulation/data_manager)
 
     vtk_module_autoinit(
-    TARGETS MPM_setup_prepare
+    TARGETS plate_preparer
     MODULES ${VTK_LIBRARIES}
     )
 

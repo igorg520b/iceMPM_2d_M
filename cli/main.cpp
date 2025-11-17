@@ -30,16 +30,16 @@ int main(int argc, char** argv)
 
     // Check if required parameter file was provided
     if (!result.count("parameter")) {
-        LOGV("Error: Parameter file argument is required."); // Minimal error output
+        LOGR("Error: Parameter file argument is required."); // Minimal error output
         throw std::runtime_error("Parameter file is required."); // Still need to signal failure
     }
 
-    icy::Model model;
+    Model model;
 
     if (result.count("generate-points"))
     {
-        LOGV("Only generating points");
-        model.LoadParameterFile(parameter_filename, resume_filename, true);
+        LOGR("Only generating points");
+        model.LoadParameterFile(parameter_filename, resume_filename);
         return 0; // Exit successfully as requested
     }
 
@@ -48,7 +48,7 @@ int main(int argc, char** argv)
 
     if(result.count("snapshot-only"))
     {
-        LOGV("Generating initial snapshot and exiting");
+        LOGR("Generating initial snapshot and exiting");
         return 0;
     }
 

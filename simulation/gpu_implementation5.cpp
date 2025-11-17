@@ -20,7 +20,7 @@ using namespace Eigen;
 
 void GPU_Implementation5::initialize()
 {
-    const unsigned &nPartitions = model->prms.nPartitions;
+    const unsigned &nPartitions = hsd.prms.nPartitions;
 
     // count available GPUs
     int deviceCount = 0;
@@ -29,7 +29,7 @@ void GPU_Implementation5::initialize()
     if(deviceCount == 0) throw std::runtime_error("No avaialble CUDA devices");
     LOGR("GPU_Implementation5::initialize; devic count {}",deviceCount);
 
-    LOGV("Device Information:");
+    LOGR("Device Information:");
     for (int i = 0; i < deviceCount; ++i) {
         cudaDeviceProp deviceProp;
         cudaGetDeviceProperties(&deviceProp, i);
@@ -45,10 +45,12 @@ void GPU_Implementation5::initialize()
     std::cout << std::endl;
 
     partitions.clear();
-    partitions.resize(nPartitions);
+    partitions.reserve(nPartitions);  // Pre-allocate to avoid vector reallocation destroying streams
 
-    for(int i=0;i<nPartitions;i++)
+    // Create GPU_Partition objects with reference to hsd.prms
+    for(int i=0; i<nPartitions; i++)
     {
+        partitions.emplace_back(hsd.prms);
         GPU_Partition &p = partitions[i];
         p.initialize(i%deviceCount, i);
     }
@@ -66,15 +68,15 @@ void GPU_Implementation5::initialize()
             CUDA_CHECK(cudaDeviceEnablePeerAccess(i, 0));
         }
     }
-    LOGV("GPU_Implementation5::initialize() completed");
+    LOGR("GPU_Implementation5::initialize() completed");
     LOGR("sizeof(PartitionParams) = {}\n", sizeof(PartitionParams));
 }
 
 void GPU_Implementation5::split_hssoa_into_partitions()
 {
-    LOGV("\nsplit_hssoa_into_partitions() start");
-    const int &GridXTotal = model->prms.GridXTotal;
-    const unsigned &nPartitions = model->prms.nPartitions;
+    LOGR("\nsplit_hssoa_into_partitions() start");
+    const int &GridXTotal = hsd.prms.GridXTotal;
+    const unsigned &nPartitions = hsd.prms.nPartitions;
 
     unsigned nPointsProcessed = 0;
     partitions[0].pparams.gridX_offset = 0;
@@ -83,12 +85,12 @@ void GPU_Implementation5::split_hssoa_into_partitions()
     {
         GPU_Partition &p = partitions[partition_idx];
         const unsigned nPartitionsRemaining = nPartitions - partition_idx;
-        p.pparams.count_pts = (hssoa.size - nPointsProcessed)/nPartitionsRemaining; // points in this partition
+        p.pparams.count_pts = (hsd.hssoa.size - nPointsProcessed)/nPartitionsRemaining; // points in this partition
 
         // find the index of the first point with x-index cellsIdx
         if(partition_idx < nPartitions-1)
         {
-            SOAIterator it2 = hssoa.begin() + (nPointsProcessed + p.pparams.count_pts);
+            SOAIterator it2 = hsd.hssoa.begin() + (nPointsProcessed + p.pparams.count_pts);
             const unsigned cellsIdx = it2->getCellX();
             p.pparams.partition_gridX = cellsIdx - p.pparams.gridX_offset;
             partitions[partition_idx+1].pparams.gridX_offset = cellsIdx;
@@ -102,14 +104,14 @@ void GPU_Implementation5::split_hssoa_into_partitions()
 #pragma omp parallel for
         for(int j=nPointsProcessed;j<(nPointsProcessed+p.pparams.count_pts);j++)
         {
-            SOAIterator it2 = hssoa.begin() + (j);
-            int pt_idx = it2->getValueInt(SimParams::integer_point_idx);
-            point_partitions[pt_idx] = (uint8_t)partition_idx;
+            SOAIterator it2 = hsd.hssoa.begin() + (j);
+            int pt_idx = it2->getValueInt(SimParams::PtArrIdx::integer_point_idx);
+            hsd.point_partitions[pt_idx] = (uint8_t)partition_idx;
         }
 
         nPointsProcessed += p.pparams.count_pts;
     }
-    LOGV("split_hssoa_into_partitions() done");
+    LOGR("split_hssoa_into_partitions() done");
     std::cout << std::endl;
 
     for(GPU_Partition &p : partitions)
@@ -117,6 +119,7 @@ void GPU_Implementation5::split_hssoa_into_partitions()
         LOGR("split: P {0:}; grid_offset {1:>7}; grid_size {2:>7}, npts {3:>8}",
              p.pparams.PartitionID, p.pparams.gridX_offset, p.pparams.partition_gridX, p.pparams.count_pts);
     }
+    LOGR("GPU_Implementation5::split_hssoa_into_partitions() done");
 }
 
 
@@ -145,8 +148,8 @@ void GPU_Implementation5::clear_force_accumulator()
 void GPU_Implementation5::p2g()
 {
     constexpr unsigned params_to_transfer = 3;  // mass, px, py
-    const int &gridY = model->prms.GridYTotal;
-    const unsigned &halo = model->prms.GridHaloSize;
+    const int &gridY = hsd.prms.GridYTotal;
+    const unsigned &halo = hsd.prms.GridHaloSize;
 
     for(GPU_Partition &p : partitions)
     {
@@ -168,7 +171,7 @@ void GPU_Implementation5::p2g()
         GPU_Partition &p = partitions[i];
         CUDA_CHECK(cudaSetDevice(p.Device));
 
-        const size_t halo_count = 2*gridY*halo*sizeof(t_GridReal);
+        const size_t halo_count = 2*gridY*halo*sizeof(double);
         // after P2G step is completed, transfer halos to adjacent partitions
         if(i!=0)
         {
@@ -176,8 +179,8 @@ void GPU_Implementation5::p2g()
             GPU_Partition &pprev = partitions[i-1];
             for(int j=0;j<params_to_transfer;j++)
             {
-                t_GridReal *src = p.pparams.getGridLine(j);
-                t_GridReal *dst = pprev.pparams.halo_transfer_buffer[1] + j*pprev.pparams.transfer_buffer_width*gridY;
+                double *src = p.pparams.getGridLine(j);
+                double *dst = pprev.pparams.halo_transfer_buffer[1] + j*pprev.pparams.transfer_buffer_width*gridY;
                 CUDA_CHECK(cudaMemcpyPeerAsync(dst, pprev.Device, src, p.Device, halo_count, p.streamCompute));
             }
         }
@@ -188,8 +191,8 @@ void GPU_Implementation5::p2g()
             GPU_Partition &pnxt = partitions[i+1];
             for(int j=0;j<params_to_transfer;j++)
             {
-                t_GridReal *src = p.pparams.getGridLine(j) + gridY*p.pparams.partition_gridX;
-                t_GridReal *dst = pnxt.pparams.halo_transfer_buffer[0] + j*pnxt.pparams.transfer_buffer_width*gridY;
+                double *src = p.pparams.getGridLine(j) + gridY*p.pparams.partition_gridX;
+                double *dst = pnxt.pparams.halo_transfer_buffer[0] + j*pnxt.pparams.transfer_buffer_width*gridY;
                 CUDA_CHECK(cudaMemcpyPeerAsync(dst, pnxt.Device, src, p.Device, halo_count, p.streamCompute));
             }
         }
@@ -219,12 +222,11 @@ void GPU_Implementation5::p2g()
 
 void GPU_Implementation5::update_nodes(float simulation_time, float windSpeed, float windAngle)
 {
-//    float interpolation_coeff = model->wind_interpolator.interpolationCoeffFromTime(simulation_time);
-    float interpolation_coeff_w = 0;
+    double current_alpha = hsd.waci.current_alpha;
 
     for(GPU_Partition &p : partitions)
     {
-        p.update_nodes(simulation_time, interpolation_coeff_w);
+        p.update_nodes(simulation_time, current_alpha);
         CUDA_CHECK(cudaEventRecord(p.event_40_grid_updated, p.streamCompute));
     }
 }
@@ -300,10 +302,10 @@ void GPU_Implementation5::point_transfer()
             {
                 // send buffer to the right
                 GPU_Partition &pnxt = partitions[i+1];
-                t_PointReal* const src_buffer = p.pparams.point_transfer_buffer[1];
-                t_PointReal* const dst_buffer = pnxt.pparams.point_transfer_buffer[2];
+                double* const src_buffer = p.pparams.point_transfer_buffer[1];
+                double* const dst_buffer = pnxt.pparams.point_transfer_buffer[2];
                 const unsigned &right_buffer_count = p.host_pud->transfer_to_right;
-                size_t count = right_buffer_count*sizeof(t_PointReal)*SimParams::nPtsArrays;
+                size_t count = right_buffer_count*sizeof(double)*SimParams::PtArrIdx::nPtsArrays;
                 if(count != 0)
                 {
                     LOGR("PID {} copying points to the right; npts {}; cap {}", i, right_buffer_count, p.pparams.point_transfer_buffer_capacity);
@@ -315,10 +317,10 @@ void GPU_Implementation5::point_transfer()
             {
                 // send buffer to the left
                 GPU_Partition &pprev = partitions[i-1];
-                t_PointReal* const src_buffer = p.pparams.point_transfer_buffer[0];
-                t_PointReal* const dst_buffer = pprev.pparams.point_transfer_buffer[3];
+                double* const src_buffer = p.pparams.point_transfer_buffer[0];
+                double* const dst_buffer = pprev.pparams.point_transfer_buffer[3];
                 const unsigned &left_buffer_count = p.host_pud->transfer_to_left;
-                size_t count = left_buffer_count*sizeof(t_PointReal)*SimParams::nPtsArrays;
+                size_t count = left_buffer_count*sizeof(double)*SimParams::PtArrIdx::nPtsArrays;
                 if(count != 0)
                 {
                     LOGR("PID {} copying points to the left; npts {}; cap {}", i, left_buffer_count, p.pparams.point_transfer_buffer_capacity);
@@ -367,58 +369,15 @@ void GPU_Implementation5::record_timings()
 // ==========================================================================
 
 
-
-void GPU_Implementation5::allocate_host_arrays_grid()
-{
-    // grid sizes
-    const int modeled_grid_total = model->prms.GridXTotal * model->prms.GridYTotal;
-    const int initial_image_total = model->prms.InitializationImageSizeX * model->prms.InitializationImageSizeY;
-
-    size_t allocation_estimate = 0;
-    allocation_estimate += modeled_grid_total*sizeof(t_GridReal);
-    allocation_estimate += 3*initial_image_total*sizeof(t_GridReal);
-    allocation_estimate += modeled_grid_total*SimParams::nGridArrays*sizeof(t_GridReal);
-    allocation_estimate += model->prms.GridYTotal * model->prms.GridHaloSize * SimParams::nGridArrays * sizeof(t_GridReal);
-    LOGR("\nGPU_Implementation5::allocate_host_arrays_grid(); alloc estimate {} GB",(double)allocation_estimate/(1.e9));
-
-    // allocate grid arrays
-    grid_status_buffer.resize(modeled_grid_total);
-    original_image_colors_rgb.resize(3*initial_image_total);
-    host_grid_buffer.resize(modeled_grid_total*SimParams::nGridArrays);
-    tmp_halo_buffer.resize(model->prms.GridYTotal * model->prms.GridHaloSize * SimParams::nGridArrays);
-    LOGV("GPU_Implementation5::allocate_host_arrays_grid() completed");
-}
-
-
-void GPU_Implementation5::allocate_host_arrays_points()
-{
-    const size_t requested_capacity = (size_t)(double(model->prms.nPtsInitial)*(1.+model->prms.extra_space_pts));
-
-    size_t allocation_estimate = 0;
-    allocation_estimate += 2* sizeof(t_PointReal)*requested_capacity*SimParams::nPtsArrays;
-    allocation_estimate += model->prms.nPtsInitial;
-    LOGR("\nGPU_Implementation5::allocate_host_arrays_points(); alloc estimate {} GB",(double)allocation_estimate/(1.e9));
-
-    hssoa.Allocate(requested_capacity);
-    point_partitions.resize(model->prms.nPtsInitial);
-}
-
-
 void GPU_Implementation5::allocate_device_arrays()
 {
-    LOGV("GPU_Implementation5::allocate_device_arrays()");
+    LOGR("GPU_Implementation5::allocate_device_arrays()");
 
-    const unsigned &nPts = model->gpu.hssoa.size;
-    const unsigned pts_reserve = (nPts/partitions.size()) * (1. + model->prms.extra_space_pts);
+    const unsigned &nPts = hsd.hssoa.size;
+    const unsigned pts_reserve = (nPts/partitions.size()) * (1. + hsd.prms.extra_space_pts);
 
-//    auto it = std::max_element(partitions.begin(), partitions.end(),
-//                               [](const GPU_Partition &p1, const GPU_Partition &p2)
-//                               {return p1.pparams.partition_gridX < p2.pparams.partition_gridX;});
-//    size_t max_GridX_size = it->pparams.partition_gridX;
-//    size_t GridX_size = std::min((size_t)(max_GridX_size*1.5), (size_t)model->prms.GridXTotal);
-
-    for(GPU_Partition &p : partitions) p.allocate(pts_reserve, model->prms.GridXTotal);
-    LOGV("allocate_device_arrays done");
+    for(GPU_Partition &p : partitions) p.allocate(pts_reserve, hsd.prms.GridXTotal);
+    LOGR("allocate_device_arrays done");
     std::cout << std::endl;
 }
 
@@ -426,12 +385,13 @@ void GPU_Implementation5::allocate_device_arrays()
 
 void GPU_Implementation5::transfer_to_device()
 {
-    LOGV("GPU_Implementation: transfer_to_device()");
+    LOGR("GPU_Implementation: transfer_to_device()");
 
     int points_uploaded = 0;
     for(GPU_Partition &p : partitions)
     {
-        p.transfer_points_from_soa_to_device(hssoa, points_uploaded);
+        LOGR("GPU_Implementation5::transfer_to_device(); PID {}; pts_uploaded {}", p.pparams.PartitionID, points_uploaded);
+        p.transfer_points_from_soa_to_device(hsd.hssoa, points_uploaded);
         p.transfer_grid_data_to_device(this);
         points_uploaded += p.pparams.count_pts;
     }
@@ -447,16 +407,16 @@ void GPU_Implementation5::transfer_from_device()
     {
         GPU_Partition &p = partitions[i];
         const size_t capacity_required = offset_pts + p.pparams.count_pts;
-        if(capacity_required > hssoa.capacity)
+        if(capacity_required > hsd.hssoa.capacity)
         {
             LOGR("transfer_from_device(): capacity {} exceeded ({}) when transferring P {}",
-                             hssoa.capacity, capacity_required, p.pparams.PartitionID);
+                             hsd.hssoa.capacity, capacity_required, p.pparams.PartitionID);
             throw std::runtime_error("transfer_from_device capacity exceeded");
         }
-        p.transfer_from_device(hssoa, offset_pts);
+        p.transfer_from_device(hsd.hssoa, offset_pts);
         offset_pts += p.pparams.count_pts;
     }
-    hssoa.size = (unsigned)offset_pts;
+    hsd.hssoa.size = (unsigned)offset_pts;
 
     transfer_grid_to_host();
 
@@ -474,259 +434,134 @@ void GPU_Implementation5::transfer_from_device()
         }
     }
 
-    grid_forces_summary_per_region.fill(0.f);
+    hsd.grid_forces_summary_per_region.fill(0.f);
     for(int i=0;i<partitions.size();i++)
     {
         GPU_Partition &p = partitions[i];
         for(int k=0;k<SimParams::MAX_REGIONS*2;k++)
-            grid_forces_summary_per_region[k] += p.host_grid_forces_summary_per_region[k];
+            hsd.grid_forces_summary_per_region[k] += p.host_grid_forces_summary_per_region[k];
     }
 }
 
-
-/*
 void GPU_Implementation5::transfer_grid_to_host()
 {
-    reset_grid();
-    this->p2g();
-
-
-    const int gy_total = model->prms.GridYTotal;
-    const int halo = model->prms.GridHaloSize;
-    const int nGridArrays = SimParams::nGridArrays - 2; // All arrays except constant water current
-
-    constexpr unsigned params_to_transfer = 3;  // mass, px, py
-    const int &gridY = model->prms.GridYTotal;
-
-    // --- Phase 1: GPU-side Halo Exchange for Accumulated Grid Data ---
-    // This phase ensures the halo regions are consistent before normalization.
-
-    for(int i=0;i<partitions.size();i++)
-    {
-        GPU_Partition &p = partitions[i];
-        CUDA_CHECK(cudaSetDevice(p.Device));
-
-        const size_t halo_count = 2*gridY*halo*sizeof(t_GridReal);
-        // after P2G step is completed, transfer halos to adjacent partitions
-        if(i!=0)
-        {
-            // send halo to the left
-            GPU_Partition &pprev = partitions[i-1];
-            for(int j=0;j<params_to_transfer;j++)
-            {
-                t_GridReal *src = p.pparams.getGridLine(j);
-                t_GridReal *dst = pprev.pparams.halo_transfer_buffer[1] + j*pprev.pparams.transfer_buffer_width*gridY;
-                CUDA_CHECK(cudaMemcpyPeerAsync(dst, pprev.Device, src, p.Device, halo_count, p.streamCompute));
-            }
-        }
-
-        if(i!=(partitions.size()-1))
-        {
-            // send halo to the right
-            GPU_Partition &pnxt = partitions[i+1];
-            for(int j=0;j<params_to_transfer;j++)
-            {
-                t_GridReal *src = p.pparams.getGridLine(j) + gridY*p.pparams.partition_gridX;
-                t_GridReal *dst = pnxt.pparams.halo_transfer_buffer[0] + j*pnxt.pparams.transfer_buffer_width*gridY;
-                CUDA_CHECK(cudaMemcpyPeerAsync(dst, pnxt.Device, src, p.Device, halo_count, p.streamCompute));
-            }
-        }
-        CUDA_CHECK(cudaEventRecord(p.event_20_grid_halo_sent, p.streamCompute));
-    }
-
-    // B. Synchronize all streams to ensure all peer-to-peer transfers are complete.
-    for (GPU_Partition &p : partitions) {
-        CUDA_CHECK(cudaSetDevice(p.Device));
-        CUDA_CHECK(cudaStreamSynchronize(p.streamCompute));
-    }
-
-    // C. Launch kernels on each partition to add the received halo data.
-    for (GPU_Partition &p : partitions) {
-        // Assumes receive_render_halos() launches a kernel that correctly
-        // adds data from both halo_transfer_buffer[0] and [1] to the grid.
-        //            p.receive_render_halos();
-        p.receive_halos();
-    }
-
-    // B. Synchronize all streams to ensure all peer-to-peer transfers are complete.
-    for (GPU_Partition &p : partitions) {
-        CUDA_CHECK(cudaSetDevice(p.Device));
-        CUDA_CHECK(cudaStreamSynchronize(p.streamCompute));
-    }
-
-    // --- Phase 2: GPU-side Normalization ---
-    // Now that all grid nodes (including halos) have the correct, fully summed
-    // values, we can run the normalization kernel on each partition in parallel.
-    for (GPU_Partition &p : partitions) {
-        // This function launches your new element-wise normalization kernel.
-//        p.normalize_visualized_data();
-    }
-
-    // --- Phase 3: Transfer Final, Normalized Data to Host ---
-    // We only need to transfer the INTERIOR regions, as the halos have served their purpose.
-    const int gx_total = model->prms.GridXTotal;
-    const size_t grid_plane_size = (size_t)gx_total * gy_total;
-//    host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
-
-//    for (int i = 0; i < partitions.size(); i++)
-        for (int i = 0; i < 2; i++)
-    {
-        GPU_Partition &p = partitions[i];
-        CUDA_CHECK(cudaSetDevice(p.Device));
-
-        // --- Calculate Pointers for the MASS slice ---
-
-        // Source: Start of the mass plane (plane 0) AND offset to the interior.
-        const t_GridReal* src_dev = p.pparams.buffer_grid
-                                    + (size_t)p.pparams.pitch_grid * SimParams::grid_idx_mass
-                                    + (size_t)gy_total * halo;
-
-        // Destination: Offset into the single host buffer.
-        t_GridReal* dst_host = host_grid_buffer.data()
-                               + (size_t)gy_total * p.pparams.gridX_offset;
-
-        // --- Perform the Copy ---
-        // The interior of a single slice is a contiguous block of memory.
-        // Therefore, a simple 1D cudaMemcpy is the most efficient method.
-        const size_t bytes_to_copy = (size_t)p.pparams.partition_gridX * gy_total * sizeof(t_GridReal);
-
-        CUDA_CHECK(cudaMemcpy(
-            dst_host,
-            src_dev,
-            bytes_to_copy,
-            cudaMemcpyDeviceToHost
-            ));
-    }
-
-    // A final sync to ensure all transfers to the host are complete.
-    for (GPU_Partition &p : partitions) {
-        CUDA_CHECK(cudaSetDevice(p.Device));
-        CUDA_CHECK(cudaStreamSynchronize(p.streamCompute));
-    }
-}
-*/
-
-
-void GPU_Implementation5::transfer_grid_to_host()
-{
-    const int gx_total = model->prms.GridXTotal;
-    const int gy_total = model->prms.GridYTotal;
-    const int halo = model->prms.GridHaloSize;
-    const int nGridArrays = SimParams::nGridArrays - 2;
+    const int gx_total = hsd.prms.GridXTotal;
+    const int gy_total = hsd.prms.GridYTotal;
+    const int halo = hsd.prms.GridHaloSize;
+    const int nGridArrays = SimParams::nGridArrays - 4;
     const size_t grid_plane_size = (size_t)gx_total * gy_total;
 
-    // Clear the host-side buffer.
-    host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
+    // Reset host-side grid buffer to zero before accumulating data from all partitions
+    hsd.host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
 
-    // --- PHASE 1: Transfer all INTERIOR regions from all partitions ---
-    // At the end of this loop, the buffer is fully populated, but the
-    // halo overlap regions are not yet summed.
+    // Phase 1: Copy interior grid data from each partition
+    // This transfers the main computation region (without halos) from each GPU to host
+    // The halos will be additively blended in Phase 2
     for (int i = 0; i < partitions.size(); i++)
     {
         GPU_Partition &p = partitions[i];
         CUDA_CHECK(cudaSetDevice(p.Device));
 
-        const t_GridReal* src_dev = p.pparams.buffer_grid + (size_t)gy_total * halo;
-        t_GridReal* dst_host = host_grid_buffer.data() + (size_t)gy_total * p.pparams.gridX_offset;
+        const double* src_dev = p.pparams.buffer_grid + (size_t)gy_total * halo;
+        double* dst_host = hsd.host_grid_buffer.data() + (size_t)gy_total * p.pparams.gridX_offset;
 
         CUDA_CHECK(cudaMemcpy2D(
             dst_host,
-            (size_t)gy_total * gx_total * sizeof(t_GridReal),
+            (size_t)gy_total * gx_total * sizeof(double),
             src_dev,
-            p.pparams.pitch_grid * sizeof(t_GridReal),
-            (size_t)p.pparams.partition_gridX * gy_total * sizeof(t_GridReal),
+            p.pparams.pitch_grid * sizeof(double),
+            (size_t)p.pparams.partition_gridX * gy_total * sizeof(double),
             nGridArrays,
             cudaMemcpyDeviceToHost
             ));
     }
 
-    // --- PHASE 2: Transfer and ADDITIVELY blend all HALO regions ---
-
+    // Phase 2: Additively blend halo regions from overlapping partitions
+    // Each partition's halos overlap with neighboring partitions' interior regions
+    // We transfer and ADD these halos to handle data continuity at partition boundaries
     for (int i = 0; i < partitions.size(); i++)
     {
         GPU_Partition &p = partitions[i];
         CUDA_CHECK(cudaSetDevice(p.Device));
 
-        // --- Transfer and ADD the LEFT halo ---
-        // (This halo belongs to partition `i` but is added to the interior of `i-1`)
+        // Left halo: belongs to current partition but overlaps with previous partition's interior
         if (i > 0)
         {
-            const t_GridReal* src_dev = p.pparams.buffer_grid; // Left halo is at the start
+            const double* src_dev = p.pparams.buffer_grid; // Left halo starts at buffer beginning
             CUDA_CHECK(cudaMemcpy2D(
-                tmp_halo_buffer.data(),
-                (size_t)gy_total * halo * sizeof(t_GridReal),
+                hsd.tmp_halo_buffer.data(),
+                (size_t)gy_total * halo * sizeof(double),
                 src_dev,
-                p.pparams.pitch_grid * sizeof(t_GridReal),
-                (size_t)gy_total * halo * sizeof(t_GridReal),
+                p.pparams.pitch_grid * sizeof(double),
+                (size_t)gy_total * halo * sizeof(double),
                 nGridArrays,
                 cudaMemcpyDeviceToHost
                 ));
 
             size_t host_x_start = p.pparams.gridX_offset - halo;
+            // Additively blend left halo into host buffer
             for (int k = 0; k < nGridArrays; k++) {
                 for (int x = 0; x < halo; x++) {
                     for (int y = 0; y < gy_total; y++) {
                         size_t src_idx = (size_t)k * (gy_total * halo) + (size_t)x * gy_total + y;
                         size_t dst_idx = (size_t)k * grid_plane_size + (size_t)(host_x_start + x) * gy_total + y;
-                        host_grid_buffer[dst_idx] += tmp_halo_buffer[src_idx];
+                        hsd.host_grid_buffer[dst_idx] += hsd.tmp_halo_buffer[src_idx];
                     }
                 }
             }
         }
 
-        // --- Transfer and ADD the RIGHT halo ---
-        // (This halo belongs to partition `i` but is added to the interior of `i+1`)
+        // Right halo: belongs to current partition but overlaps with next partition's interior
         if (i < partitions.size() - 1)
         {
-            const t_GridReal* src_dev = p.pparams.buffer_grid + (size_t)gy_total * (halo + p.pparams.partition_gridX);
+            const double* src_dev = p.pparams.buffer_grid + (size_t)gy_total * (halo + p.pparams.partition_gridX);
             CUDA_CHECK(cudaMemcpy2D(
-                tmp_halo_buffer.data(),
-                (size_t)gy_total * halo * sizeof(t_GridReal),
+                hsd.tmp_halo_buffer.data(),
+                (size_t)gy_total * halo * sizeof(double),
                 src_dev,
-                p.pparams.pitch_grid * sizeof(t_GridReal),
-                (size_t)gy_total * halo * sizeof(t_GridReal),
+                p.pparams.pitch_grid * sizeof(double),
+                (size_t)gy_total * halo * sizeof(double),
                 nGridArrays,
                 cudaMemcpyDeviceToHost
                 ));
 
             size_t host_x_start = p.pparams.gridX_offset + p.pparams.partition_gridX;
+            // Additively blend right halo into host buffer
             for (int k = 0; k < nGridArrays; k++) {
                 for (int x = 0; x < halo; x++) {
                     for (int y = 0; y < gy_total; y++) {
                         size_t src_idx = (size_t)k * (gy_total * halo) + (size_t)x * gy_total + y;
                         size_t dst_idx = (size_t)k * grid_plane_size + (size_t)(host_x_start + x) * gy_total + y;
-                        host_grid_buffer[dst_idx] += tmp_halo_buffer[src_idx];
+                        hsd.host_grid_buffer[dst_idx] += hsd.tmp_halo_buffer[src_idx];
                     }
                 }
             }
         }
     }
 
+    // Phase 3: Normalize grid values by mass to get physical quantities
+    // Quantities like momentum must be divided by mass to get velocity
+    LOGR("Normalizing grid data on host...");
 
-    // normalize data no host-side
-    LOGV("Normalizing grid data on host...");
+    const int gx = hsd.prms.GridXTotal;
+    const int gy = hsd.prms.GridYTotal;
+    const double cellsize_sq = hsd.prms.cellsize * hsd.prms.cellsize;
 
-    // --- 1. Get grid dimensions and parameters for clarity ---
-    const int gx = model->prms.GridXTotal;
-    const int gy = model->prms.GridYTotal;
-    const double cellsize_sq = model->prms.cellsize * model->prms.cellsize;
-
-    // --- 2. Define which grid planes (slices) need to be normalized by mass ---
-    // This array makes the code cleaner and easier to maintain.
+    // List of grid quantities that need to be normalized by mass
     const size_t planes_to_normalize[] = {
-        SimParams::grid_idx_px,
-        SimParams::grid_idx_py,
-        SimParams::grid_idx_vis_r,
-        SimParams::grid_idx_vis_g,
-        SimParams::grid_idx_vis_b,
-        SimParams::grid_idx_vis_Jpinv,
-        SimParams::grid_idx_vis_P,
-        SimParams::grid_idx_vis_Q,
-        SimParams::grid_idx_vis_strain_EqvGreenLagrange,
-        SimParams::grid_idx_vis_strain_vonMises
+        SimParams::GridArrayIndex::grid_idx_px,
+        SimParams::GridArrayIndex::grid_idx_py,
+        SimParams::GridArrayIndex::grid_idx_vis_r,
+        SimParams::GridArrayIndex::grid_idx_vis_g,
+        SimParams::GridArrayIndex::grid_idx_vis_b,
+        SimParams::GridArrayIndex::grid_idx_vis_Jpinv,
+        SimParams::GridArrayIndex::grid_idx_vis_P,
+        SimParams::GridArrayIndex::grid_idx_vis_Q,
+        SimParams::GridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange,
+        SimParams::GridArrayIndex::grid_idx_vis_strain_vonMises
     };
 
-    const size_t mass_plane_offset = grid_plane_size * SimParams::grid_idx_mass;
+    const size_t mass_plane_offset = grid_plane_size * SimParams::GridArrayIndex::grid_idx_mass;
 
 // --- 3. Iterate over every grid node ---
 // The memory layout of host_grid_buffer is column-major.
@@ -736,7 +571,7 @@ void GPU_Implementation5::transfer_grid_to_host()
             const size_t idx = (size_t)j + (size_t)i * gy; // Column-major index
 
             // Get the mass at this node.
-            const t_GridReal mass = host_grid_buffer[mass_plane_offset + idx];
+            const double mass = hsd.host_grid_buffer[mass_plane_offset + idx];
 
             if (mass == 0) {
                 continue;
@@ -744,12 +579,12 @@ void GPU_Implementation5::transfer_grid_to_host()
 
             // --- 4. Normalize all specified planes by the mass ---
             for (const auto& plane_idx : planes_to_normalize) {
-                host_grid_buffer[grid_plane_size * plane_idx + idx] /= mass;
+                hsd.host_grid_buffer[grid_plane_size * plane_idx + idx] /= mass;
             }
 
             // --- 5. Finally, update the mass plane itself ---
             // This is done last so the original mass value could be used above.
-            host_grid_buffer[mass_plane_offset + idx] /= cellsize_sq;
+            hsd.host_grid_buffer[mass_plane_offset + idx] /= cellsize_sq;
         }
     }
 }
@@ -784,28 +619,26 @@ void GPU_Implementation5::reset_timings()
 
 void GPU_Implementation5::transfer_wind_and_current_data_to_device()
 {
-    LOGV("GPU_Implementation5::transfer_wind_and_current_data_to_device()");
+    LOGR("GPU_Implementation5::transfer_wind_and_current_data_to_device()");
     for(GPU_Partition &p : partitions)
     {
-        p.update_current_field(model->wac_interpolator);
+        p.update_current_field(hsd.waci);
     }
 }
 
 
 
-// ===================================================== multi-gpu
-
-
-
-/*
-
-// ========================================= initialization and kernel execution
-
-void CUDART_CB GPU_Implementation5::callback_from_stream(cudaStream_t stream, cudaError_t status, void *userData)
+void GPU_Implementation5::SplitIntoPartitionsAndTransferToDevice()
 {
-    // simulation data was copied to host memory -> proceed with processing of this data
-    GPU_Implementation5 *gpu = reinterpret_cast<GPU_Implementation5*>(userData);
-    // any additional processing here
-    if(gpu->transfer_completion_callback) gpu->transfer_completion_callback();
+    // particle volume and mass
+    hsd.prms.ComputeHelperVariables();
+    hsd.prms.Printout();
+
+    // allocate GPU partitions
+    initialize();
+    split_hssoa_into_partitions();
+    allocate_device_arrays();
+    transfer_to_device();
+    LOGR("GPU_Implementation5::SplitIntoPartitionsAndTransferToDevice done\n");
 }
-*/
+

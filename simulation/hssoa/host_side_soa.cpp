@@ -9,22 +9,22 @@ HostSideSOA::~HostSideSOA()
 
 
 
-std::pair<PointVector2r, PointVector2r> HostSideSOA::getBlockDimensions()
+std::pair<Eigen::Vector2d, Eigen::Vector2d> HostSideSOA::getBlockDimensions()
 {
-    PointVector2r result[2];
+    Eigen::Vector2d result[2];
     for(int k=0;k<SimParams::dim;k++)
     {
         std::pair<SOAIterator, SOAIterator> it_res = std::minmax_element(begin(), end(),
                                                                          [k](ProxyPoint &p1, ProxyPoint &p2)
-                                                                         {return p1.getValue(SimParams::posx+k)<p2.getValue(SimParams::posx+k);});
-        result[0][k] = (*it_res.first).getValue(SimParams::posx+k);
-        result[1][k] = (*it_res.second).getValue(SimParams::posx+k);
+                                                                         {return p1.getValue(SimParams::PtArrIdx::posx+k)<p2.getValue(SimParams::PtArrIdx::posx+k);});
+        result[0][k] = (*it_res.first).getValue(SimParams::PtArrIdx::posx+k);
+        result[1][k] = (*it_res.second).getValue(SimParams::PtArrIdx::posx+k);
     }
     return {result[0], result[1]};
 }
 
 
-void HostSideSOA::convertToIntegerCellFormat(t_PointReal h)
+void HostSideSOA::convertToIntegerCellFormat(double h)
 {
     for(SOAIterator it = begin(); it!=end(); ++it)
     {
@@ -37,7 +37,7 @@ void HostSideSOA::convertToIntegerCellFormat(t_PointReal h)
 
 void HostSideSOA::RemoveDisabledAndSort(int GridY)
 {
-    LOGR("RemoveDisabledAndSort; nPtsArrays {}", SimParams::nPtsArrays);
+    LOGR("RemoveDisabledAndSort; nPtsArrays {}", SimParams::PtArrIdx::nPtsArrays);
     unsigned size_before = size;
     SOAIterator it_result = std::remove_if(begin(), end(), [](ProxyPoint &p){return p.getDisabledStatus();});
     size = it_result.m_point.pos;
@@ -45,7 +45,7 @@ void HostSideSOA::RemoveDisabledAndSort(int GridY)
     std::sort(begin(), end(),
               [&](ProxyPoint &p1, ProxyPoint &p2)
               {return p1.getCellIndex(GridY)<p2.getCellIndex(GridY);});
-    LOGV("RemoveDisabledAndSort done");
+    LOGR("RemoveDisabledAndSort done");
 }
 
 
@@ -55,13 +55,11 @@ void HostSideSOA::Allocate(int pts_capacity)
     LOGR("HostSideSOA::Allocate; pts {}", pts_capacity);
     capacity = pts_capacity;
     size = 0;
-    size_t allocation_size = sizeof(t_PointReal)*capacity*SimParams::nPtsArrays;
-    size_t allocation_elems = capacity*SimParams::nPtsArrays;
+    size_t allocation_size = sizeof(double)*capacity*SimParams::PtArrIdx::nPtsArrays;
+    size_t allocation_elems = capacity*SimParams::PtArrIdx::nPtsArrays;
 
     delete[] host_buffer;
-    host_buffer = new t_PointReal[allocation_elems];
-
-    second_buffer.resize(allocation_elems);
+    host_buffer = new double[allocation_elems];
 
     /*
     cudaFreeHost(host_buffer);
@@ -70,7 +68,7 @@ void HostSideSOA::Allocate(int pts_capacity)
     {
         const char *description = cudaGetErrorString(err);
         LOGR("allocating host buffer of size {}: {}",allocation_size,description);
-        LOGR("nPtsArrays {}; sizeof(t_PointReal) {}", SimParams::nPtsArrays, sizeof(t_PointReal));
+        LOGR("nPtsArrays {}; sizeof(double) {}", SimParams::PtArrIdx::nPtsArrays, sizeof(double));
         throw std::runtime_error("allocating host buffer for points");
     }
 */
@@ -80,23 +78,12 @@ void HostSideSOA::Allocate(int pts_capacity)
 }
 
 
-t_PointReal *HostSideSOA::getBuffer()
-{
-    return second_buffer.data();
-}
-
-void HostSideSOA::transferToSecondBuffer()
-{
-    second_buffer.assign(host_buffer, host_buffer + (capacity*SimParams::nPtsArrays));
-}
-
-
 
 void HostSideSOA::PrintOutNearestPoint(double x, double y, double gridSize, int GridY)
 {
     // calculate cell index
 
-    const t_PointReal hinv = 1.0f/gridSize;
+    const double hinv = 1.0f/gridSize;
     uint32_t x_idx = (uint32_t)(x*hinv + 0.5);
     uint32_t y_idx = (uint32_t)(y*hinv + 0.5);
     int cellIdx = x_idx*GridY + y_idx;
@@ -107,13 +94,13 @@ void HostSideSOA::PrintOutNearestPoint(double x, double y, double gridSize, int 
 
     while(result!=end() && (*result).getCellIndex(GridY) == cellIdx)
     {
-        LOGR("Point index {}", (*result).getValueInt(SimParams::integer_point_idx));
-        LOGR("P: {}", (*result).getValue(SimParams::idx_P));
+        LOGR("Point index {}", (*result).getValueInt(SimParams::PtArrIdx::integer_point_idx));
+        LOGR("P: {}", (*result).getValue(SimParams::PtArrIdx::idx_P));
 
-        PointMatrix2r Fe;
+        Eigen::Matrix2d Fe;
         for(int i=0; i<SimParams::dim; i++)
         for(int j=0; j<SimParams::dim; j++)
-            Fe(i,j) = (*result).getValue(SimParams::Fe00 + i*SimParams::dim + j);
+            Fe(i,j) = (*result).getValue(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j);
 
         LOGR("Fe: [{},{}],[{},{}]\n",Fe(0,0), Fe(0,1), Fe(1,0), Fe(1,1));
         ++result;
@@ -124,7 +111,7 @@ void HostSideSOA::PrintOutNearestPoint(double x, double y, double gridSize, int 
 
 // ==================================================== SOAIterator
 
-SOAIterator::SOAIterator(unsigned pos, t_PointReal *soa_data, unsigned pitch)
+SOAIterator::SOAIterator(unsigned pos, double *soa_data, unsigned pitch)
 {
     m_point.isReference = true;
     m_point.pos = pos;
