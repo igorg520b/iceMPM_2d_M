@@ -2,6 +2,7 @@
 #include "visual_representation.h"
 #include "flowfieldgenerator.h"
 #include "fluentflowimporter.h"
+#include "simulation/parameters_sim.h"
 #include <QFileDialog>
 #include <QMetaEnum>
 #include <QVBoxLayout>
@@ -17,14 +18,11 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), representation(hsd)
 {
-    setWindowTitle("Plate Preparer");
+    setWindowTitle("Preparer");
     setGeometry(100, 100, 1200, 800);
 
     // Setup settings file
     settingsFileName = QDir::currentPath() + "/preparer.ini";
-
-    // Enable debug grid in preparer (for none mode visualization)
-    representation.enableDebugGrid = true;
 
     // Setup UI programmatically
     setupUI();
@@ -96,9 +94,19 @@ void MainWindow::setupUI()
     renderer->AddActor(representation.actor_points);
     renderer->AddActor(representation.raster_actor);
     renderer->AddActor(representation.actor_region_boundary);
-    renderer->AddActor(representation.actor_debug_grid);
     renderer->AddActor(representation.actorText);
+    renderer->AddActor(representation.actorTextTitle);
     renderer->AddActor(representation.scalarBar);
+
+    // Create status bar with point count (left side) and time display (right side)
+    statusLabel = new QLabel("Points: 0");
+    statusBar()->addWidget(statusLabel);
+
+    // Add permanent widget on the right side of status bar for time display
+    timeLabel = new QLabel("Time: 0.0 s");
+    timeLabel->setFixedWidth(150);
+    timeLabel->setAlignment(Qt::AlignRight);
+    statusBar()->addPermanentWidget(timeLabel);
 
     // Populate visualization options combobox
     QMetaEnum qme = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
@@ -174,18 +182,28 @@ void MainWindow::LoadParameterFile(QString fileName)
     try {
         // Construct file paths from config file directory (images are in same dir as JSON)
         std::string configDir = params.ConfigFileDirectory;
-        std::string landmaskPath = configDir + "/" + params.ImageLandMask;
+        // Land mask is optional - only construct path if provided
+        std::string landmaskPath = params.ImageLandMask.empty() ? "" : (configDir + "/" + params.ImageLandMask);
         std::string colorPath = configDir + "/" + params.ImageColor;
         std::string icemaskPath = configDir + "/" + params.ImageIceMask;
-        std::string crushedmaskPath = configDir + "/" + params.ImageCrushedMask;
+        // Crushed mask is optional - only construct path if provided
+        std::string crushedmaskPath = params.ImageCrushedMask.empty() ? "" : (configDir + "/" + params.ImageCrushedMask);
+        // Thickness mask is optional - only construct path if provided
+        std::string thicknessmaskPath = params.ImageThicknessMask.empty() ? "" : (configDir + "/" + params.ImageThicknessMask);
         std::string projectDir = params.ProjectDirectory;
 
         // Unified grid and points preparation (loads images once, flips them, then processes)
         hsd.PrepareGridAndPoints(landmaskPath, colorPath, icemaskPath, crushedmaskPath,
                                  projectDir, params.DimensionHorizontal, params.PointsPerCell,
-                                 params.ThicknessFrom, params.ThicknessTo);
+                                 params.ThicknessFrom, params.ThicknessTo, thicknessmaskPath);
 
         spdlog::info("Preparer: Grid and Points prepared successfully");
+
+        // Update status bar with point count (with thousands separator)
+        unsigned numPoints = hsd.hssoa.size;
+        QLocale locale = QLocale::English;
+        QString pointCountStr = locale.toString((int)numPoints);
+        statusLabel->setText(QString("Points: %1").arg(pointCountStr));
 
         // Generate flow field if specified in JSON
         if (!params.FlowType.empty()) {
@@ -233,19 +251,28 @@ void MainWindow::limits_changed(double val)
 
 void MainWindow::flowTimeSliderChanged(int value)
 {
-    // Convert slider value (0-1000) to actual time (0-1000 seconds)
-    // Slider range is [0, 1000], directly representing seconds
-    double time_t = static_cast<double>(value);
+    // Convert slider value (0-1000) to actual time (0-TimeScale seconds)
+    // TimeScale parameter controls the time range (default=1000, so slider maps to 0-1000 seconds)
+    double time_t = (static_cast<double>(value) / 1000.0) * params.TimeScale;
+
+    LOGR("MainWindow::flowTimeSliderChanged: slider_value={}, time_t={}, TimeScale={}", value, time_t, params.TimeScale);
 
     // Update WACI with new time
     bool frames_changed = hsd.waci.SetTime(time_t);
+    LOGR("MainWindow::flowTimeSliderChanged: frames_changed={}", frames_changed);
 
     // Update visualization time in representation
-    representation.wind_visualization_time = time_t;
+
+
+    // Update time display in status bar
+    timeLabel->setText(QString("Time: %1 s").arg(time_t, 0, 'f', 1));
 
     // Redraw with new flow field frame
+    LOGR("MainWindow::flowTimeSliderChanged: Calling SynchronizeTopology and Render");
+    representation.simulationTime = time_t;
     representation.SynchronizeTopology();
     renderWindow->Render();
+    LOGR("MainWindow::flowTimeSliderChanged: Done");
 }
 
 void MainWindow::loadSettings()

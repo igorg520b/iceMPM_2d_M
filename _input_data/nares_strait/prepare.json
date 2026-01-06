@@ -2,12 +2,12 @@
 "ProjectName":"nares_strait_2k",
 
 "ImageColor":"color.png",
-"ImageCrushedMask":"crushed.png",
 "ImageIceMask":"ice.png",
 "ImageLandMask":"land.png",
+"ImageThicknessMask":"thickness.png",
 
 "ThicknessFrom":0.8,
-"ThicknessTo":1.0,
+"ThicknessTo":1.2,
 
 "PointsPerCell":5,
 "DimensionHorizontal":430000,
@@ -17,5 +17,5 @@
 "SVG":"resized_bc_v2.svg",
 "RectanglePathID":"rect320",
 "FluentPathID":"path1340",
-"VelocityMultiplier":3.0
+"VelocityMultiplier":5.0
 }

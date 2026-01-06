@@ -68,7 +68,7 @@ public:
     void convertToIntegerCellFormat(double h);
 
     // debugging / testing
-    void PrintOutNearestPoint(double pos_x, double pos_y, double gridSize, int GridY);
+
 };
 
 #endif // HOSTSIDESOA_H

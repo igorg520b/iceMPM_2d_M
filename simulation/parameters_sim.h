@@ -29,16 +29,61 @@ public:
     constexpr static float MPM_points_per_cell = 5.0;    // approximate average value
     constexpr static double g = 9.8;
     constexpr static double pi = 3.14159265358979323846;
+    constexpr static double gravity = 9.81;
+    constexpr static double rho_water = 1030.0;         // water density
 
     constexpr static int dim = 2;
     constexpr static int MAX_REGIONS = 255;
     constexpr static int ModelledAreaIndicator = 255;
 
+    // Status flags (bit masks for utility_data)
+    constexpr static uint32_t status_crushed = 0x10000;
+    constexpr static uint32_t status_cracked = 0x20000;
+    constexpr static uint32_t status_disabled = 0x40000;
+
+    // GPU allocation
+    constexpr static double extra_space_pts = 0.15;               // reserved additional space on devices for points
+    constexpr static double points_transfer_buffer_fraction = 0.07;  // % of points that could "fly over" during a given cycle
+
     // layout of the grid arrays
-    enum GridArrayIndex : size_t {
-        grid_idx_mass = 0,
+    constexpr static int grid_arrays_to_clear = 8;  // at reset_grid, which should be cleared
+    enum GPUGridArrayIndex : size_t {
+        // --- Persistent Arrays (Group 0) ---
+        // These arrays persist across the entire time step and are not overwritten by visualization logic
+        gpu_grid_idx_mass = 0,
+        gpu_grid_idx_px = 1,
+        gpu_grid_idx_py = 2,
+        gpu_grid_idx_fx = 8,
+        gpu_grid_idx_fy = 9,
+
+        // --- Visualization Group 1 (Standard) ---
+        // Overwrites slots 3-7. Can reuse 8,9 (fx, fy) as forces are consumed before visualization
+        gpu_grid_idx_vis_r = 3,
+        gpu_grid_idx_vis_g = 4,
+        gpu_grid_idx_vis_b = 5,
+        gpu_grid_idx_vis_Jpinv = 6,
+        gpu_grid_idx_vis_P = 7,
+        gpu_grid_idx_vis_Q = 8,           // Reuses fx (slot 8)
+        gpu_grid_idx_vis_pts_density = 9, // Reuses fy (slot 9)
+
+        // --- Visualization Group 2 (Strains & Fracture) ---
+        // Overwrites slots 3-7. Can reuse 8,9.
+        gpu_grid_idx_vis_crushed = 3,     // Reuses slot 3
+        gpu_grid_idx_vis_cracked = 4,     // Reuses slot 4
+        gpu_grid_idx_vis_thickness = 5,   // Reuses slot 5
+        gpu_grid_idx_vis_strain_EqvGreenLagrange = 6, // Reuses slot 6
+        gpu_grid_idx_vis_strain_vonMises = 7, // Reuses slot 7
+
+        // total count (allocation size)
+        nGridArraysGPU = 10
+    };
+
+
+    enum HostGridArrayIndex : size_t {
+        host_grid_idx_mass = 0,
         grid_idx_px = 1,
         grid_idx_py = 2,
+
         grid_idx_vis_r = 3,
         grid_idx_vis_g = 4,
         grid_idx_vis_b = 5,
@@ -48,30 +93,48 @@ public:
         grid_idx_vis_strain_EqvGreenLagrange = 9,
         grid_idx_vis_strain_vonMises = 10,
         grid_idx_vis_pts_density = 11,
-        grid_idx_fx = 12,
-        grid_idx_fy = 13,
-        grid_idx_current_vx_frame0 = 14,
-        grid_idx_current_vx_frame1 = 15,
-        grid_idx_current_vy_frame0 = 16,
-        grid_idx_current_vy_frame1 = 17,
-        nGridArrays = 18
+
+        grid_idx_vis_crushed = 12,
+        grid_idx_vis_cracked = 13,
+        grid_idx_vis_thickness = 14,
+
+        nGridArraysHost = 15
+    };
+
+    static bool IsPersistentGridArray(int idx);
+
+
+    // indices in the grid_forcing_buffer to access
+    enum GridForcingFramesIndex : size_t {
+         grid_idx_current_vx_frame0 = 0,
+         grid_idx_current_vy_frame0 = 1,
+         grid_idx_current_vx_frame1 = 2,
+         grid_idx_current_vy_frame1 = 3,
+         
+         nGridForcingArrays = 4
     };
 
     // index of the corresponding array in SoA
     enum PtArrIdx : size_t {
+        // --- Standard Model (Indices 0-19) ---
         idx_utility_data = 0,
         integer_cell_idx = 1,
-        integer_point_idx = 2,
-        idx_P = 3,
-        idx_Q = 4,
-        idx_Jp_inv = 5,
-        posx = 6,
-        velx = 8,
-        Fe00 = 10,
-        Bp00 = 14,
-        idx_thickness = 18,
-        idx_pt_color_RGB = 19,
-        nPtsArrays = 22
+        
+        idx_P = 2,
+        idx_Q = 3,
+        idx_Jp_inv = 4,
+
+        posx = 5,
+        posy = 6,
+        
+        velx = 7,
+        vely = 8,
+
+        Fe00 = 9,       // size 4: deformation gradient (9,10,11,12)
+        Bp00 = 13,      // size 4: grad of v with respect to x,y (13,14,15,16)
+        
+        idx_thickness = 17,
+        nPtsArrays = 18,
     };
 
     // GPU and multi-GPU-related params
@@ -80,8 +143,6 @@ public:
     unsigned GridHaloSize;
     unsigned HaloDiffusionThreshold;    // must be <GridHaloSize-1
     unsigned PointTransferPeriod;       // how often do we try to transfer points (~GridHaloSize)
-    float extra_space_pts;               // reserved additional space on devices for points
-    float points_transfer_buffer_fraction;  // % of points that could "fly over" during a given cycle
 
     int nPtsInitial;
     double InitialTimeStep, SimulationEndTime;
@@ -97,19 +158,23 @@ public:
     int InitializationImageSizeX, InitializationImageSizeY;
     double DimensionHorizontal; // with respect to initialization image
 
+
+
     // wind and/or current data
     double windDragCoeff_airDensity;
-    bool UseWindData, UseCurrentData;
-    double sea_water_density;
     double waterDragEffectiveLinear, waterDragEffectiveQuadratic;
 
     // material properties
     double IceDensity, PoissonsRatio, YoungsModulus;
     double IceCompressiveStrength, IceTensileStrength, IceShearStrength, IceTensileStrength2;
-    double DP_phi, DP_threshold_p;
+    double IceCompressiveThreshold;     // exceding this causes the material to crush
+
     double RidgeFormationCoeff;
+
+
+    double DP_phi, DP_threshold_p;
     double cellsize;
-    double ParticleVolume, ParticleViewSize;
+    double ParticleArea, ParticleViewSize;
 
     // computed parameters/properties
     double dt_vol_Dpinv, vmax;

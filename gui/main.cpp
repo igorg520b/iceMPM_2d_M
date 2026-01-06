@@ -2,6 +2,8 @@
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QCommandLineParser>
+#include <QFileInfo>
+#include <QDir>
 #include <iostream>
 #include <omp.h>
 
@@ -45,6 +47,14 @@ int main(int argc, char *argv[])
         }
 
         QString parameters_file = args[0];
+
+        // Check if the provided path is a directory
+        QFileInfo fileInfo(parameters_file);
+        if (fileInfo.isDir()) {
+            // If it's a directory, append default filename "simulation.json"
+            parameters_file = QDir(parameters_file).filePath("simulation.json");
+        }
+
         w.LoadParameterFile(parameters_file, resumeFilename);
     }
 

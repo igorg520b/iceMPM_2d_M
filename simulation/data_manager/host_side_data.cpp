@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <utility>
 #include <type_traits>
+#include <random>
 
 #include <cmath>
 #include <limits>
@@ -79,11 +80,11 @@ void HostSideData::AllocateGridArrays()
     original_image_colors_rgb.resize(3 * initial_image_total);
     allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
 
-    host_grid_buffer.resize(modeled_grid_total * SimParams::nGridArrays);
-    allocated_bytes[0] += modeled_grid_total * SimParams::nGridArrays * sizeof(double);
+    host_grid_buffer.resize(modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost);
+    allocated_bytes[0] += modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
 
-    tmp_halo_buffer.resize(prms.GridYTotal * prms.GridHaloSize * SimParams::nGridArrays);
-    allocated_bytes[0] += prms.GridYTotal * prms.GridHaloSize * SimParams::nGridArrays * sizeof(double);
+    tmp_halo_buffer.resize(prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost);
+    allocated_bytes[0] += prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
 
     rgb.resize(3 * initial_image_total);
     allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
@@ -94,13 +95,13 @@ void HostSideData::AllocateGridArrays()
 void HostSideData::AllocatePointArrays()
 {
     // This function is called in two contexts:
-    // 1. In plate_preparer (PopulatePoints): HSSOA not yet allocated, needs allocation
+    // 1. In preparer (PopulatePoints): HSSOA not yet allocated, needs allocation
     // 2. In simulation (LoadParameterFile): HSSOA already allocated by ReadPointsFromSnapshot()
 
     // Check if HSSOA needs allocation
     if(hssoa.capacity == 0)
     {
-        // Case 1: plate_preparer - allocate HSSOA with extra space
+        // Case 1: preparer - allocate HSSOA with extra space
         const size_t requested_capacity = (size_t)(double(prms.nPtsInitial) * (1.0 + prms.extra_space_pts));
         hssoa.Allocate(requested_capacity);
     }
@@ -221,117 +222,131 @@ void HostSideData::LoadGridDataFromFile(const std::string& gridFilePath)
 void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::string fileNameColor,
                                        std::string fileNameIceMask, std::string fileNameCrushedMask,
                                        std::string projectDirectory, double dimensionHorizontal, int pointsPerCell,
-                                       double thicknessFrom, double thicknessTo)
+                                       double thicknessFrom, double thicknessTo, std::string fileNameThicknessMask)
 {
     LOGR("PrepareGridAndPoints: starting");
 
     // Store the data directory for later use when saving snapshots
     data_directory = projectDirectory;
 
-    // Load all images
-    int channels_land, width, height;
-    unsigned char *landmask_data = stbi_load(fileNameLandMask.c_str(), &width, &height, &channels_land, 1);
-    if (!landmask_data) {
-        throw std::runtime_error("Failed to load ImageLandMask: " + fileNameLandMask);
-    }
-
-    int channels_color, width_color, height_color;
-    unsigned char *color_data = stbi_load(fileNameColor.c_str(), &width_color, &height_color, &channels_color, 3);
-    if (!color_data) {
-        stbi_image_free(landmask_data);
+    // Load ImageColor first to determine image dimensions (ImageColor is mandatory)
+    int channels_color, width, height;
+    unsigned char *color_raw = stbi_load(fileNameColor.c_str(), &width, &height, &channels_color, 3);
+    if (!color_raw) {
         throw std::runtime_error("Failed to load ImageColor: " + fileNameColor);
     }
+    std::vector<uint8_t> color_vec(color_raw, color_raw + width * height * 3);
+    stbi_image_free(color_raw);
 
-    if (width != width_color || height != height_color) {
-        stbi_image_free(landmask_data);
-        stbi_image_free(color_data);
-        throw std::runtime_error(
-            fmt::format("Image dimension mismatch: landmask={}x{}, color={}x{}",
-                       width, height, width_color, height_color)
-        );
+    // Load or create ImageLandMask (optional)
+    std::vector<uint8_t> landmask_vec;
+    if (!fileNameLandMask.empty()) {
+        int channels_land, width_land, height_land;
+        unsigned char *landmask_raw = stbi_load(fileNameLandMask.c_str(), &width_land, &height_land, &channels_land, 1);
+        if (!landmask_raw) {
+            throw std::runtime_error("Failed to load ImageLandMask: " + fileNameLandMask);
+        }
+        if (width_land != width || height_land != height) {
+            stbi_image_free(landmask_raw);
+            throw std::runtime_error(
+                fmt::format("ImageLandMask dimension mismatch: expected {}x{}, got {}x{}",
+                           width, height, width_land, height_land)
+            );
+        }
+        landmask_vec.assign(landmask_raw, landmask_raw + width * height);
+        stbi_image_free(landmask_raw);
+        LOGR("Loaded ImageLandMask from file: {}x{}", width, height);
+    } else {
+        landmask_vec.assign(width * height, 0); // Default to all water
+        LOGR("No ImageLandMask provided - creating zero buffer (entire domain is modeled area): {}x{}", width, height);
     }
 
+    // Load ImageIceMask (mandatory)
     int channels_ice, width_ice, height_ice;
-    unsigned char *icemask_data = stbi_load(fileNameIceMask.c_str(), &width_ice, &height_ice, &channels_ice, 1);
-    if (!icemask_data) {
-        stbi_image_free(landmask_data);
-        stbi_image_free(color_data);
+    unsigned char *icemask_raw = stbi_load(fileNameIceMask.c_str(), &width_ice, &height_ice, &channels_ice, 1);
+    if (!icemask_raw) {
         throw std::runtime_error("Failed to load ImageIceMask: " + fileNameIceMask);
     }
-
     if (width_ice != width || height_ice != height) {
-        stbi_image_free(landmask_data);
-        stbi_image_free(color_data);
-        stbi_image_free(icemask_data);
+        stbi_image_free(icemask_raw);
         throw std::runtime_error(
             fmt::format("ImageIceMask dimension mismatch: expected {}x{}, got {}x{}",
                        width, height, width_ice, height_ice)
         );
     }
+    std::vector<uint8_t> icemask_vec(icemask_raw, icemask_raw + width * height);
+    stbi_image_free(icemask_raw);
 
     // Load crushed mask if provided (optional)
-    unsigned char *crushed_data = nullptr;
+    std::vector<uint8_t> crushed_vec(width * height, 255); // Default to white (not crushed)
     bool has_crushed_mask = false;
-
     if (!fileNameCrushedMask.empty()) {
         int channels_crushed, width_crushed, height_crushed;
-        crushed_data = stbi_load(fileNameCrushedMask.c_str(), &width_crushed, &height_crushed, &channels_crushed, 1);
-        if (!crushed_data) {
-            stbi_image_free(landmask_data);
-            stbi_image_free(color_data);
-            stbi_image_free(icemask_data);
+        unsigned char *crushed_raw = stbi_load(fileNameCrushedMask.c_str(), &width_crushed, &height_crushed, &channels_crushed, 1);
+        if (!crushed_raw) {
             throw std::runtime_error("Failed to load ImageCrushedMask: " + fileNameCrushedMask);
         }
-
         if (width_crushed != width || height_crushed != height) {
-            stbi_image_free(landmask_data);
-            stbi_image_free(color_data);
-            stbi_image_free(icemask_data);
-            stbi_image_free(crushed_data);
+            stbi_image_free(crushed_raw);
             throw std::runtime_error(
                 fmt::format("ImageCrushedMask dimension mismatch: expected {}x{}, got {}x{}",
                            width, height, width_crushed, height_crushed)
             );
         }
+        crushed_vec.assign(crushed_raw, crushed_raw + width * height);
+        stbi_image_free(crushed_raw);
         has_crushed_mask = true;
-        LOGR("All images loaded (including crushed mask): {}x{}", width, height);
+    }
+
+    // Load or generate thickness mask (optional)
+    std::vector<uint8_t> thickness_vec;
+    bool has_thickness_mask = false;
+
+    if (!fileNameThicknessMask.empty()) {
+        int channels_thickness, width_thickness, height_thickness;
+        unsigned char *thickness_raw = stbi_load(fileNameThicknessMask.c_str(), &width_thickness, &height_thickness, &channels_thickness, 1);
+        if (!thickness_raw) {
+            throw std::runtime_error("Failed to load ImageThicknessMask: " + fileNameThicknessMask);
+        }
+        if (width_thickness != width || height_thickness != height) {
+            stbi_image_free(thickness_raw);
+            throw std::runtime_error(
+                fmt::format("ImageThicknessMask dimension mismatch: expected {}x{}, got {}x{}",
+                           width, height, width_thickness, height_thickness)
+            );
+        }
+        thickness_vec.assign(thickness_raw, thickness_raw + width * height);
+        stbi_image_free(thickness_raw);
+        has_thickness_mask = true;
     } else {
-        LOGR("All images loaded (no crushed mask provided): {}x{}", width, height);
+        thickness_vec.resize(width * height);
+        std::mt19937 gen(1337);
+        std::normal_distribution<double> dist(127.5, 255.0 / 4.0);
+        for (int i = 0; i < width * height; ++i) {
+            thickness_vec[i] = (uint8_t)std::clamp(dist(gen), 0.0, 255.0);
+        }
+        has_thickness_mask = true;
+        LOGR("No ImageThicknessMask provided - initialized with random values (Normal distribution, mean 127.5, 4-sigma range)");
     }
 
     // Flip all images vertically (PNG uses top-left origin, simulation uses bottom-left)
     std::vector<uint8_t> landmask_flipped(width * height);
     std::vector<uint8_t> color_flipped(width * height * 3);
     std::vector<uint8_t> icemask_flipped(width * height);
-    std::vector<uint8_t> crushed_flipped(width * height, 0);  // Initialize to 0 (no crushing) if not provided
+    std::vector<uint8_t> crushed_flipped(width * height);
+    std::vector<uint8_t> thickness_flipped(width * height);
 
     for (int y = 0; y < height; y++) {
         int y_flipped = height - y - 1;
         for (int x = 0; x < width; x++) {
-            // Flip landmask
-            landmask_flipped[x + y * width] = landmask_data[x + y_flipped * width];
-
-            // Flip color (3 channels)
+            landmask_flipped[x + y * width] = landmask_vec[x + y_flipped * width];
+            icemask_flipped[x  + y * width] = icemask_vec[x  + y_flipped * width];
+            crushed_flipped[x  + y * width] = crushed_vec[x  + y_flipped * width];
+            thickness_flipped[x + y * width] = thickness_vec[x + y_flipped * width];
             for (int c = 0; c < 3; c++) {
-                color_flipped[(x + y * width) * 3 + c] = color_data[(x + y_flipped * width) * 3 + c];
-            }
-
-            // Flip ice mask
-            icemask_flipped[x + y * width] = icemask_data[x + y_flipped * width];
-
-            // Flip crushed mask (only if provided)
-            if (has_crushed_mask) {
-                crushed_flipped[x + y * width] = crushed_data[x + y_flipped * width];
+                color_flipped[(x + y * width) * 3 + c] = color_vec[(x + y_flipped * width) * 3 + c];
             }
         }
-    }
-
-    // Free original loaded data
-    stbi_image_free(landmask_data);
-    stbi_image_free(color_data);
-    stbi_image_free(icemask_data);
-    if (crushed_data) {
-        stbi_image_free(crushed_data);
     }
 
     LOGR("All images flipped");
@@ -344,7 +359,7 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
 
     // Process points using original colors (before blue painting)
     PopulatePoints(icemask_flipped, crushed_flipped, original_colors_copy, width, height, pointsPerCell,
-                   thicknessFrom, thicknessTo);
+                   thicknessFrom, thicknessTo, thickness_flipped);
 
     LOGR("PrepareGridAndPoints: completed");
 }
@@ -611,7 +626,7 @@ void HostSideData::generate_and_save_poisson(int gx, int gy, float points_per_ce
 
 void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std::vector<uint8_t> &crushed,
                                   const std::vector<uint8_t> &original_colors, int imgWidth, int imgHeight, int pointsPerCell,
-                                  double thicknessFrom, double thicknessTo)
+                                  double thicknessFrom, double thicknessTo, const std::vector<uint8_t> &thicknessMask)
 {
     LOGR("PopulatePoints: starting");
     LOGR("  Ice thickness scaling: [{}, {}]", thicknessFrom, thicknessTo);
@@ -631,10 +646,10 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
         throw std::runtime_error("No Poisson points generated or loaded");
     }
 
-    // (4) Calculate ParticleVolume BEFORE filtering
+    // (4) Calculate ParticleArea BEFORE filtering
     const double h = prms.cellsize;
-    prms.ParticleVolume = (h * h * gx * gy) / (double)pt_buffer.size();
-    LOGR("ParticleVolume (before filtering): {}", prms.ParticleVolume);
+    prms.ParticleArea = (h * h * gx * gy) / (double)pt_buffer.size();
+    LOGR("ParticleArea (before filtering): {}", prms.ParticleArea);
 
     // (5) Helper lambda to convert normalized point coords to grid indices
     auto idxPt = [&](const std::array<float, 2> &pt) -> std::pair<int, int> {
@@ -699,7 +714,7 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
         p.setValue(SimParams::PtArrIdx::posx + 1, pt[1] * pointScale);
 
         // Point index
-        p.setValueInt(SimParams::PtArrIdx::integer_point_idx, k);
+        // p.setValueInt(SimParams::PtArrIdx::integer_point_idx, k);
 
         // Color from image (using original colors, not the blue-painted version)
         const size_t idx_in_image = ((i + ox) + (j + oy) * width) * 3;
@@ -707,41 +722,64 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
         uint32_t g = original_colors[idx_in_image + 1];
         uint32_t b = original_colors[idx_in_image + 2];
 
-        double color_r = ((double)r) / 255.0;
-        double color_g = ((double)g) / 255.0;
-        double color_b = ((double)b) / 255.0;
+        // RGB stored in utility_data now
 
-        p.setValue(SimParams::PtArrIdx::idx_pt_color_RGB + 0, color_r);
-        p.setValue(SimParams::PtArrIdx::idx_pt_color_RGB + 1, color_g);
-        p.setValue(SimParams::PtArrIdx::idx_pt_color_RGB + 2, color_b);
 
-        // Thickness and crushed status from crushed mask
+        // Determine thickness: use thickness mask if provided, otherwise use crushed mask
         // Images are already flipped, so no additional Y-flip needed
-        uint8_t crushed_pixel = crushed[(i + ox) + (j + oy) * width];
         float thickness;
-        bool is_crushed;
+        bool is_crushed = false;
 
-        if (crushed_pixel == 255) {
-            // White = not crushed
-            thickness = 1.0f;
-            is_crushed = false;
+        if (!thicknessMask.empty()) {
+            // Use thickness mask to determine thickness
+            // White (255) = ThicknessTo, Black (0) = ThicknessFrom, Gray = interpolation
+            uint8_t thickness_pixel = thicknessMask[(i + ox) + (j + oy) * width];
+            thickness = (float)thickness_pixel / 255.0f;  // Scale to [0, 1]
+            // Scale thickness from [0, 1] range to [ThicknessFrom, ThicknessTo]
+            thickness = (float)(thicknessFrom + thickness * (thicknessTo - thicknessFrom));
+
+            // Determine crushed status from the thickness mask if crushed mask is not available
+            // If both masks are present, the crushed mask is purely for the crushed flag
+            if (!crushed.empty()) {
+                uint8_t crushed_pixel = crushed[(i + ox) + (j + oy) * width];
+                is_crushed = (crushed_pixel < 255);
+            }
         } else {
-            // Gray = crushed with thickness = grayscale / 255
-            thickness = (float)crushed_pixel / 255.0f;
-            is_crushed = true;
-        }
+            // Use crushed mask (fallback when no thickness mask provided)
+            uint8_t crushed_pixel = crushed[(i + ox) + (j + oy) * width];
 
-        // Scale thickness from [0, 1] range to [ThicknessFrom, ThicknessTo]
-        // Formula: scaled = ThicknessFrom + thickness * (ThicknessTo - ThicknessFrom)
-        thickness = (float)(thicknessFrom + thickness * (thicknessTo - thicknessFrom));
+            if (crushed_pixel == 255) {
+                // White = not crushed
+                thickness = 1.0f;
+                is_crushed = false;
+            } else {
+                // Gray = crushed with thickness = grayscale / 255
+                thickness = (float)crushed_pixel / 255.0f;
+                is_crushed = true;
+            }
+
+            // Scale thickness from [0, 1] range to [ThicknessFrom, ThicknessTo]
+            // Formula: scaled = ThicknessFrom + thickness * (ThicknessTo - ThicknessFrom)
+            thickness = (float)(thicknessFrom + thickness * (thicknessTo - thicknessFrom));
+        }
 
         p.setValue(SimParams::PtArrIdx::idx_thickness, thickness);
 
-        uint32_t utility_data = 0;
+        // Pack RGB into utility_data (starting at bit 24)
+        uint64_t utility_data = 0;
+        
+        // R: 24-31, G: 32-39, B: 40-47
+        utility_data |= ((uint64_t)r << 24);
+        utility_data |= ((uint64_t)g << 32);
+        utility_data |= ((uint64_t)b << 40);
+
         if (is_crushed) {
-            utility_data |= 0x10000;  // Crushed flag
+            utility_data |= SimParams::status_crushed;  // Crushed flag (bit 16)
         }
-        p.setValueInt(SimParams::PtArrIdx::idx_utility_data, utility_data);
+        
+        // Initialize partition index (bits 0-15) to 0 (will be set later)
+        
+        p.setValueUInt64(SimParams::PtArrIdx::idx_utility_data, utility_data);
 
         // Initialize other fields
         p.setValue(SimParams::PtArrIdx::idx_P, 0.0);
@@ -791,7 +829,7 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     unsigned hssoa_size;
     ds.openAttribute("HSSOA_size").read(H5::PredType::NATIVE_UINT, &hssoa_size);
 
-    ds.openAttribute("ParticleVolume").read(H5::PredType::NATIVE_DOUBLE, &prms.ParticleVolume);
+    ds.openAttribute("ParticleArea").read(H5::PredType::NATIVE_DOUBLE, &prms.ParticleArea);
 
     int nPtsArrays;
     ds.openAttribute("nPtsArrays").read(H5::PredType::NATIVE_INT, &nPtsArrays);
@@ -847,13 +885,13 @@ void HostSideData::PrepareRGB_Buffer()
 #pragma omp parallel for
     for(int idx = 0; idx < gridSize; idx++)
     {
-        double val_pt_density = host_grid_buffer[idx + gridSize*SimParams::grid_idx_vis_pts_density];
-        val_pt_density *= (2./5.);
-        float alpha = std::min((double)val_pt_density, 1.);
+        double val_mass = host_grid_buffer[idx + gridSize*SimParams::HostGridArrayIndex::host_grid_idx_mass];
+        val_mass *= (2./5.);
+        float alpha = std::min((double)val_mass, 1.);
         std::array<uint8_t, 3> _rgb;
         for(int k = 0; k < 3; k++)
         {
-            float v = host_grid_buffer[idx + gridSize*(SimParams::grid_idx_vis_r+k)];
+            float v = host_grid_buffer[idx + gridSize*(SimParams::HostGridArrayIndex::grid_idx_vis_r+k)];
             float cv = std::clamp(v, 0.f, 1.f);
             _rgb[k] = (uint8_t)(cv*255);
         }
@@ -902,36 +940,13 @@ void HostSideData::SaveFrame(int SimulationStep, double SimulationTime)
     ds_rgb.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace)
         .write(H5::PredType::NATIVE_DOUBLE, &SimulationTime);
 
-    // save grid data
-    hsize_t dims_grid[2] = {(hsize_t)gx, (hsize_t)gy};
-    H5::DataSpace dspg(2, dims_grid);
+    // save grid data - entire buffer as 3D dataset: [nGridArraysHost] x [gx] x [gy]
+    const int nGridArrays = SimParams::HostGridArrayIndex::nGridArraysHost;
+    hsize_t dims_grid_3d[3] = {(hsize_t)nGridArrays, (hsize_t)gx, (hsize_t)gy};
+    H5::DataSpace dsp_grid_3d(3, dims_grid_3d);
 
-    H5::DataType file_dtype = H5::PredType::NATIVE_FLOAT;
-
-    file.createDataSet("grid_idx_px", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_px],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_py", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_py],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_mass", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_mass],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_vis_pts_density", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_vis_pts_density],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_vis_Jpinv", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_vis_Jpinv],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_vis_P", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_vis_P],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_vis_Q", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_vis_Q],
-               H5::PredType::NATIVE_DOUBLE);
-    file.createDataSet("grid_idx_vis_strain_vonMises", file_dtype, dspg)
-        .write(&host_grid_buffer[gridSize*SimParams::GridArrayIndex::grid_idx_vis_strain_vonMises],
-               H5::PredType::NATIVE_DOUBLE);
+    file.createDataSet("grid_data", H5::PredType::NATIVE_FLOAT, dsp_grid_3d)
+        .write(host_grid_buffer.data(), H5::PredType::NATIVE_DOUBLE);
 
     // additionally, save region forces in a separate file
     SaveForces(frame);
@@ -942,13 +957,17 @@ void HostSideData::SaveFrame(int SimulationStep, double SimulationTime)
 
 void HostSideData::SaveForces(const int frame)
 {
-    fs::path outputDir = "output";
-    fs::path framesDir = "frames";
-    fs::path targetPath = outputDir / SimulationTitle / framesDir;
-    fs::create_directories(targetPath);
+    fs::path targetPath;
+    if (!output_directory.empty()) {
+        targetPath = output_directory;
+    } else {
+        targetPath = "output";
+    }
+    fs::path framesDir = targetPath / "frames";
+    fs::create_directories(framesDir);
 
     // save forces
-    fs::path fullPathForces = targetPath / "forces.h5";
+    fs::path fullPathForces = framesDir / "forces.h5";
     bool file_exists = std::filesystem::exists(fullPathForces);
     H5::H5File file_forces(fullPathForces.string(), file_exists ? H5F_ACC_RDWR : H5F_ACC_TRUNC);
     H5::DataSet ds_forces;
@@ -1019,7 +1038,7 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
     }
     else
     {
-        // Default behavior: save to output/SimulationTitle/snapshots (used by plate_preparer for initial snapshot)
+        // Default behavior: save to output/SimulationTitle/snapshots (used by preparer for initial snapshot)
         fs::path outputDir = "output";
         fs::path snapshotsDir = "snapshots";
         targetPath = outputDir / SimulationTitle / snapshotsDir;
@@ -1082,8 +1101,8 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
         .write(H5::PredType::NATIVE_INT, &nPtsArrays);
     dataset_pts.createAttribute("nPtsInitial", H5::PredType::NATIVE_INT, att_dspace)
         .write(H5::PredType::NATIVE_INT, &prms.nPtsInitial);
-    dataset_pts.createAttribute("ParticleVolume", H5::PredType::NATIVE_DOUBLE, att_dspace)
-        .write(H5::PredType::NATIVE_DOUBLE, &prms.ParticleVolume);
+    dataset_pts.createAttribute("ParticleArea", H5::PredType::NATIVE_DOUBLE, att_dspace)
+        .write(H5::PredType::NATIVE_DOUBLE, &prms.ParticleArea);
 
     LOGR("SaveSnapshot done");
 }
@@ -1142,7 +1161,7 @@ void HostSideData::LoadFrameData(const std::string& framePath)
         const size_t gridSize = (size_t)gx * gy;
 
         rgb.resize(gridSize * 3);
-        host_grid_buffer.assign(gridSize * SimParams::nGridArrays, 0.0);
+        host_grid_buffer.assign(gridSize * SimParams::HostGridArrayIndex::nGridArraysHost, 0.0);
 
         // 3. Load the pre-rendered RGB data into the rgb buffer
         try {
@@ -1155,9 +1174,9 @@ void HostSideData::LoadFrameData(const std::string& framePath)
         // 4. De-interleave and transpose RGB data into host_grid_buffer
         // The HDF5 data has dims (gx, gy, 3) in row-major (x varies fastest)
         // Our internal grid buffers are column-major (y varies fastest)
-        const size_t r_offset = gridSize * SimParams::grid_idx_vis_r;
-        const size_t g_offset = gridSize * SimParams::grid_idx_vis_g;
-        const size_t b_offset = gridSize * SimParams::grid_idx_vis_b;
+        const size_t r_offset = gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_r;
+        const size_t g_offset = gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_g;
+        const size_t b_offset = gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_b;
 
         for (int i = 0; i < gx; ++i) {
             for (int j = 0; j < gy; ++j) {
@@ -1170,15 +1189,9 @@ void HostSideData::LoadFrameData(const std::string& framePath)
             }
         }
 
-        // 5. Load all other raw scalar grid datasets
-        readGridDataset(file, "grid_idx_mass", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_mass);
-        readGridDataset(file, "grid_idx_px", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_px);
-        readGridDataset(file, "grid_idx_py", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_py);
-        readGridDataset(file, "grid_idx_vis_pts_density", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_vis_pts_density);
-        readGridDataset(file, "grid_idx_vis_Jpinv", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_vis_Jpinv);
-        readGridDataset(file, "grid_idx_vis_P", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_vis_P);
-        readGridDataset(file, "grid_idx_vis_Q", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_vis_Q);
-        readGridDataset(file, "grid_idx_vis_strain_vonMises", host_grid_buffer, gridSize * SimParams::GridArrayIndex::grid_idx_vis_strain_vonMises);
+        // 5. Load grid_data: 3D array [nGridArraysHost] x [gx] x [gy]
+        const H5::DataSet grid_dset = file.openDataSet("grid_data");
+        grid_dset.read(host_grid_buffer.data(), H5::PredType::NATIVE_DOUBLE);
 
         LOGR("Successfully loaded frame from {}", framePath);
     } catch (const H5::Exception& e) {
@@ -1264,7 +1277,7 @@ void HostSideData::LoadParametersFromConfigFile(const std::string& parameterFile
     const int gx = prms.GridXTotal;
     const int gy = prms.GridYTotal;
     const size_t gridSize = (size_t)gx * gy;
-    host_grid_buffer.assign(gridSize * SimParams::nGridArrays, 0.0);
+    host_grid_buffer.assign(gridSize * SimParams::HostGridArrayIndex::nGridArraysHost, 0.0);
 
     // 5. Generate grid_status_buffer (landmask_buffer for post-processor)
     landmask_buffer.resize((size_t)gx * gy);

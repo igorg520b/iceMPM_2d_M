@@ -39,7 +39,8 @@ public:
     void transfer_wind_and_current_data_to_device();
 
     void transfer_from_device();
-    void transfer_grid_to_host();
+    void transfer_grid_group_to_host(int group);
+    void normalize_grid_on_host();
 
     void render_visualized_data();
 
@@ -60,7 +61,7 @@ public:
     void SplitIntoPartitionsAndTransferToDevice();  // transfer the data to one or more GPU devices/partitions
 
 private:
-//    static void CUDART_CB callback_from_stream(cudaStream_t stream, cudaError_t status, void *userData);
+    static std::vector<std::pair<int, int>> getGroupSlotMapping(int group);
 };
 
 #endif

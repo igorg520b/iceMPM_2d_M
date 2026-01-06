@@ -9,6 +9,8 @@
 #include <cxxopts.hpp>
 #include "model.h"
 
+namespace fs = std::filesystem;
+
 
 int main(int argc, char** argv)
 {
@@ -32,6 +34,12 @@ int main(int argc, char** argv)
     if (!result.count("parameter")) {
         LOGR("Error: Parameter file argument is required."); // Minimal error output
         throw std::runtime_error("Parameter file is required."); // Still need to signal failure
+    }
+
+    // Check if the provided path is a directory
+    if (fs::is_directory(parameter_filename)) {
+        // If it's a directory, append default filename "simulation.json"
+        parameter_filename = (fs::path(parameter_filename) / "simulation.json").string();
     }
 
     Model model;

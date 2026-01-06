@@ -49,9 +49,11 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     renderer->AddActor(representation.scalarBarBgActor);
     renderer->AddActor(representation.raster_actor);
     renderer->AddActor(representation.actor_region_boundary);
-    renderer->AddActor(representation.actor_debug_grid);
+
     renderer->AddActor(representation.scalarBar);
     renderer->AddActor(representation.actorText);
+    renderer->AddActor(representation.actorTextTitle);
+
 
     // Create toolbar
     toolBar = addToolBar("Controls");
@@ -68,14 +70,17 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     qdsbValRange->setSingleStep(0.25);
     toolBar->addWidget(qdsbValRange);
 
-    // Transparency control
-    qdsbTransparency = new QDoubleSpinBox();
-    qdsbTransparency->setRange(0, 1);
-    qdsbTransparency->setValue(0);
-    qdsbTransparency->setDecimals(1);
+    // Transparency spinner
+    toolBar->addWidget(new QLabel(" Transparency:"));
+    qdsbTransparency = new QDoubleSpinBox(this);
+    qdsbTransparency->setRange(0.01, 5.0);
     qdsbTransparency->setSingleStep(0.1);
+    qdsbTransparency->setValue(1.0);
+    qdsbTransparency->setDecimals(2);
     toolBar->addWidget(qdsbTransparency);
 
+
+    
     toolBar->addSeparator();
 
     // Frame range selection
@@ -111,6 +116,10 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     renderer->ResetCamera();
     camera->ParallelProjectionOn();
 
+    // Create render selector dialog (hidden by default)
+    m_renderSelectorDialog = new RenderSelectorDialog(this);
+    m_renderSelectorDialog->hide();
+
     // Load and restore user settings
     settingsFileName = QDir::currentPath() + "/ppcm.ini";
     QFileInfo fi(settingsFileName);
@@ -134,21 +143,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
             camera->Modified();
         }
 
-        // Restore visualization ranges
-        var = settings.value("visualization_ranges");
-        if(!var.isNull())
-        {
-            QByteArray ba = var.toByteArray();
-            memcpy(representation.ranges, ba.constData(), ba.size());
-        }
 
-        // Restore transparency coefficients
-        var = settings.value("transparency_coeffs");
-        if(!var.isNull())
-        {
-            QByteArray ba = var.toByteArray();
-            memcpy(representation.transparency_coeffs, ba.constData(), ba.size());
-        }
 
         // Restore visualization option
         var = settings.value("vis_option");
@@ -161,11 +156,16 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         // Restore scroll tracking preference
         bool scrollTracking = settings.value("scroll_tracking", false).toBool();
         slider2->setTracking(scrollTracking);
+
+
     }
     else
     {
         cameraReset_triggered();
     }
+
+    // Load render selector saved selections
+    m_renderSelectorDialog->loadSelections(settingsFileName);
 
     // ========== MENUS ==========
 
@@ -190,21 +190,37 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
 
     QAction *resetCameraAction = toolsMenu->addAction("&Reset Camera");
-    resetCameraAction->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_R));
+    resetCameraAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
     connect(resetCameraAction, &QAction::triggered, this, &PPMainWindow::cameraReset_triggered);
 
     QAction *renderFrameAction = toolsMenu->addAction("&Render Frame");
-    renderFrameAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_F));
+    renderFrameAction->setShortcut(QKeySequence((int)Qt::CTRL | (int)Qt::Key_F));
     connect(renderFrameAction, &QAction::triggered, this, &PPMainWindow::render_frame_triggered);
 
     QAction *renderAllAction = toolsMenu->addAction("&Render All");
     renderAllAction->setShortcut(QKeySequence(Qt::Key_F5));
     connect(renderAllAction, &QAction::triggered, this, &PPMainWindow::render_all_triggered);
 
+    // View menu
+    QMenu *viewMenu = menuBar()->addMenu("&View");
+
+    QAction *renderSelectorAction = viewMenu->addAction("&Render Selector");
+    renderSelectorAction->setCheckable(true);
+    renderSelectorAction->setChecked(false);
+    connect(renderSelectorAction, &QAction::triggered, this, &PPMainWindow::toggleRenderSelector);
+
+
+
     // Connect value range changes
     connect(qdsbValRange, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, &PPMainWindow::limits_changed);
-    connect(qdsbTransparency,QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &PPMainWindow::limits_changed);
+    connect(qdsbTransparency, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &PPMainWindow::limits_changed);
+
+
+
+    connect(comboBox_visualizations, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &PPMainWindow::comboboxIndexChanged_visualizations);
 
     qDebug() << "PPMainWindow constructor done";
 }
@@ -231,14 +247,13 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
     QByteArray arr((char*)data, sizeof(data));
     settings.setValue("camData", arr);
 
-    QByteArray ranges((char*)representation.ranges, sizeof(representation.ranges));
-    settings.setValue("visualization_ranges", ranges);
 
-    QByteArray transparency_coeffs((char*)representation.transparency_coeffs, sizeof(representation.transparency_coeffs));
-    settings.setValue("transparency_coeffs", transparency_coeffs);
 
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
     settings.setValue("scroll_tracking", slider2->hasTracking());
+
+    // Save render selector state
+    m_renderSelectorDialog->saveSelections(settingsFileName);
 
     event->accept();
 }
@@ -317,6 +332,18 @@ void PPMainWindow::LoadParametersFile(QString fileName)
     hsd.LoadGridDataFromFile(gridPath.string());
     LOGR("Grid loaded successfully");
 
+    // Load flow field data (for v_eta and v_norm visualization)
+    LOGR("Loading flow field data...");
+    fs::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
+    LOGR("Flow field file: {}", flowPath.string());
+    if (!fs::exists(flowPath)) {
+        LOGR("Warning: Flow field file not found: {}", flowPath.string());
+        LOGR("  v_eta and v_norm visualizations will not be available");
+    } else {
+        hsd.waci.SetHDF5Path(flowPath.string());
+        LOGR("Flow field loaded successfully");
+    }
+
     // Note: We only visualize grid data, not particle data, so we skip loading snapshots
 
     // Set up the output directory where simulation frames are saved
@@ -381,12 +408,15 @@ void PPMainWindow::sliderValueChanged(int val)
         std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, val);
         hsd.LoadFrameData(framePath);
 
+        representation.simulationTime = hsd.prms.SimulationTime;
+        qDebug() << "time set to " << hsd.prms.SimulationTime;
+
+        // Update WACI time to match current frame (for v_eta and v_norm visualization)
+        hsd.waci.SetTime(hsd.prms.SimulationTime);
+
         // Update the visualization with new frame data
         this->representation.SynchronizeTopology();
 
-        // Update the time display in HH:MM:SS format
-        representation.simulationTime = hsd.prms.SimulationTime;
-        representation.UpdateTimeText();
 
         // Update status bar with current frame number
         statusBar->showMessage(QString("Frame %1 | Time: %2").arg(val).arg(hsd.prms.SimulationTime, 0, 'f', 2));
@@ -462,6 +492,17 @@ void PPMainWindow::render_all_triggered()
     const int frameFrom = qsbFrameFrom->value();
     const int frameTo = qsbFrameTo->value();
 
+    // Get selected visualization options from dialog
+    std::vector<VisualRepresentation::VisOpt> visOptsToRender =
+        m_renderSelectorDialog->getSelectedOptions();
+
+    // Validate that at least one option is selected
+    if (visOptsToRender.empty()) {
+        QMessageBox::warning(this, "No Visualizations Selected",
+            "Please select at least one visualization option in the Render Selector (View → Render Selector).");
+        return;
+    }
+
     // Generate ffmpeg script for animation
     generate_ffmpeg_script(frameFrom, frameTo);
 
@@ -475,7 +516,7 @@ void PPMainWindow::render_all_triggered()
     statusBar->showMessage(QString("Rendering %1 frames...").arg(totalFrames));
 
     // Create a progress dialog to show rendering status
-    const int totalOperations = totalFrames * m_visOptsToRender.size();
+    const int totalOperations = totalFrames * visOptsToRender.size();
     QProgressDialog progress("Rendering all frames...", "Abort", 0, totalOperations, this);
     progress.setWindowModality(Qt::WindowModal);
     QCoreApplication::processEvents();
@@ -504,15 +545,18 @@ void PPMainWindow::render_all_triggered()
         try {
             std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, frameNum);
             hsd.LoadFrameData(framePath);
+            representation.simulationTime = hsd.prms.SimulationTime;
+            // Update WACI time to match current frame
+            hsd.waci.SetTime(hsd.prms.SimulationTime);
         } catch (const std::exception& e) {
             LOGR("Failed to load frame {}: {}", frameNum, e.what());
-            operationCount += m_visOptsToRender.size();
+            operationCount += visOptsToRender.size();
             progress.setValue(operationCount);
             continue;
         }
 
         // Render each visualization option for this frame
-        for (const auto& visOpt : m_visOptsToRender) {
+        for (const auto& visOpt : visOptsToRender) {
             if (progress.wasCanceled()) break;
             operationCount++;
 
@@ -598,8 +642,12 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     const std::string fmtStr = R"(ffmpeg -y -r {0:} -f image2 -start_number {1:} -i "{2:}" -vframes {3:} -vcodec libx264 -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:white" -crf 21 -pix_fmt yuv420p "{4:}")";
     const QMetaEnum metaEnum = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
 
-    // Loop through the class member list to generate a command for each visualization.
-    for (const auto& visOpt : m_visOptsToRender) {
+    // Get selected visualization options from dialog
+    std::vector<VisualRepresentation::VisOpt> visOptsToRender =
+        m_renderSelectorDialog->getSelectedOptions();
+
+    // Loop through the selected visualizations to generate a command for each
+    for (const auto& visOpt : visOptsToRender) {
         const std::string visName = metaEnum.valueToKey(visOpt);
         const std::string inputFilePattern = visName + "/%05d.jpg";
         const std::string outputVideoFile = visName + ".mp4";
@@ -627,6 +675,18 @@ void PPMainWindow::toggleScrollTracking(bool checked)
 {
     qDebug() << "tracking toggled: " << checked;
     slider2->setTracking(checked);
+}
+
+
+void PPMainWindow::toggleRenderSelector()
+{
+    if (m_renderSelectorDialog->isVisible()) {
+        m_renderSelectorDialog->hide();
+    } else {
+        m_renderSelectorDialog->show();
+        m_renderSelectorDialog->raise();
+        m_renderSelectorDialog->activateWindow();
+    }
 }
 
 
@@ -684,4 +744,19 @@ void PPMainWindow::openFrames_triggered()
     {
         LoadFramesDirectory(framesDir);
     }
+}
+
+void PPMainWindow::toggleContours(bool checked)
+{
+    qDebug() << "toggleContours: " << checked;
+    // representation.ShowEtaContours = checked;
+    representation.SynchronizeTopology(); // Will update visibility and data
+    renderWindow->Render();
+}
+
+void PPMainWindow::contourIntervalChanged(double val)
+{
+    // representation.ContourInterval = val;
+    representation.SynchronizeTopology(); // Trigger update if contours are shown
+    renderWindow->Render();
 }

@@ -40,6 +40,7 @@ void ParameterParser::LoadParamsFile(std::string fileName)
     if(doc.HasMember("ImageColor")) ImageColor = doc["ImageColor"].GetString();
     if(doc.HasMember("ImageCrushedMask")) ImageCrushedMask = doc["ImageCrushedMask"].GetString();
     if(doc.HasMember("ImageLandMask")) ImageLandMask = doc["ImageLandMask"].GetString();
+    if(doc.HasMember("ImageThicknessMask")) ImageThicknessMask = doc["ImageThicknessMask"].GetString();
 
     if(doc.HasMember("PointsPerCell")) PointsPerCell = doc["PointsPerCell"].GetInt();
     if(doc.HasMember("DimensionHorizontal")) DimensionHorizontal = doc["DimensionHorizontal"].GetDouble();
@@ -54,9 +55,37 @@ void ParameterParser::LoadParamsFile(std::string fileName)
     if(doc.HasMember("FlowSpeed")) FlowSpeed = doc["FlowSpeed"].GetDouble();
     if(doc.HasMember("WaveAmplitude")) WaveAmplitude = doc["WaveAmplitude"].GetDouble();
     if(doc.HasMember("WaveLength")) WaveLength = doc["WaveLength"].GetDouble();
+    if(doc.HasMember("WavePeriod")) WavePeriod = doc["WavePeriod"].GetDouble();
     if(doc.HasMember("PhaseSpeed")) PhaseSpeed = doc["PhaseSpeed"].GetDouble();
-    if(doc.HasMember("NFrames")) NFrames = doc["NFrames"].GetInt();
+    if(doc.HasMember("AmplitudeDecayDistance")) AmplitudeDecayDistance = doc["AmplitudeDecayDistance"].GetDouble();
+    if(doc.HasMember("ShipSpeed")) ShipSpeed = doc["ShipSpeed"].GetDouble();
+    if(doc.HasMember("X_Ship")) X_Ship = doc["X_Ship"].GetDouble();
+    if(doc.HasMember("Y_Ship")) Y_Ship = doc["Y_Ship"].GetDouble();
+    if(doc.HasMember("FrameSkip")) FrameSkip = doc["FrameSkip"].GetInt();
+    if(doc.HasMember("TimeScale")) TimeScale = doc["TimeScale"].GetDouble();
     if(doc.HasMember("CompressFlow")) CompressFlow = doc["CompressFlow"].GetBool();
+
+    // Set NFrames default based on FlowType (before parsing explicit value)
+    // Default: 30 frames per period for dynamic flows, 1 frame for static flows
+    if (FlowType == "wave" || FlowType == "Kelvin_wake" || FlowType == "Kelvin_wake_alt" || FlowType == "standing_wave") {
+        NFrames = 30;  // Dynamic flow: default to 30 frames per wave period
+    } else {
+        NFrames = 1;   // Static flow (constant, FLUENT-static, or empty): single frame
+    }
+
+    // Override with explicit NFrames from JSON if provided
+    if(doc.HasMember("NFrames")) NFrames = doc["NFrames"].GetInt();
+
+    // Log flow field parameters for debugging
+    if (!FlowType.empty()) {
+        spdlog::info("Flow field parameters: FlowType={}, NFrames={}, TimeScale={}", FlowType, NFrames, TimeScale);
+        if (FlowType == "constant") {
+            spdlog::info("  Constant flow: bearing={}, speed={}", FlowBearing, FlowSpeed);
+        } else if (FlowType == "wave") {
+            spdlog::info("  Wave parameters: amplitude={}, wavelength={}, phase_speed={}, bearing={}",
+                        WaveAmplitude, WaveLength, PhaseSpeed, FlowBearing);
+        }
+    }
 
     // FLUENT-specific parameters
     if(doc.HasMember("InputFluentDAT")) InputFluentDAT = doc["InputFluentDAT"].GetString();

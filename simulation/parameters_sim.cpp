@@ -16,11 +16,9 @@ void SimParams::Reset()
     GridHaloSize = 10;
     HaloDiffusionThreshold = 5;
     PointTransferPeriod = 20;
-    extra_space_pts = 0.15;
-    points_transfer_buffer_fraction = 0.07;
 
-    UseWindData = false;
-    UseCurrentData = false;
+
+
     DimensionHorizontal = 0;
     SaveSnapshots = false;
     SnapshotPeriod = 25;
@@ -34,7 +32,6 @@ void SimParams::Reset()
     InitialTimeStep = 3.e-5;
     YoungsModulus = 5.e8;
     ParticleViewSize = 2.5f;
-    sea_water_density = 1030;
 
     SimulationEndTime = 20000;
     AnimationFramePeriod = 200;
@@ -44,6 +41,9 @@ void SimParams::Reset()
 
     IceCompressiveStrength = 100e6;
     IceTensileStrength = 10e6;
+
+    IceCompressiveThreshold = 5e6; // 5 MPa
+
     IceShearStrength = 1e6;
     IceTensileStrength2 = 10e6;
     RidgeFormationCoeff = 30;
@@ -89,7 +89,8 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     else result["SimulationTitle"] = "default_simulation";
 
     if(doc.HasMember("SaveSnapshots")) SaveSnapshots = doc["SaveSnapshots"].GetBool();
-    if(doc.HasMember("UseCurrentData")) UseCurrentData = doc["UseCurrentData"].GetBool();
+
+
 
     if(doc.HasMember("SnapshotPeriod")) SnapshotPeriod = doc["SnapshotPeriod"].GetInt();
     if(doc.HasMember("SimulationEndTime")) SimulationEndTime = doc["SimulationEndTime"].GetDouble();
@@ -107,6 +108,8 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("IceTensileStrength2")) IceTensileStrength2 = doc["IceTensileStrength2"].GetDouble();
     if(doc.HasMember("IceShearStrength")) IceShearStrength = doc["IceShearStrength"].GetDouble();
 
+
+    if(doc.HasMember("IceCompressiveThreshold")) IceCompressiveThreshold = doc["IceCompressiveThreshold"].GetDouble();
     if(doc.HasMember("DP_phi")) DP_phi = doc["DP_phi"].GetDouble();
     if(doc.HasMember("DP_threshold_p")) DP_threshold_p = doc["DP_threshold_p"].GetDouble();
     if(doc.HasMember("RidgeFormationCoeff")) RidgeFormationCoeff = doc["RidgeFormationCoeff"].GetDouble();
@@ -121,9 +124,6 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("GridHaloSize")) GridHaloSize = doc["GridHaloSize"].GetUint();
     if(doc.HasMember("HaloDiffusionThreshold")) HaloDiffusionThreshold = doc["HaloDiffusionThreshold"].GetUint();
 
-    if(doc.HasMember("extra_space_pts")) extra_space_pts = doc["extra_space_pts"].GetFloat();
-    if(doc.HasMember("points_transfer_buffer_fraction")) points_transfer_buffer_fraction = doc["points_transfer_buffer_fraction"].GetFloat();
-
     spdlog::info("SimParams::ParseFile done");
     return result;
 }
@@ -137,12 +137,12 @@ void SimParams::ComputeLame()
 
 void SimParams::ComputeHelperVariables()
 {
-    ParticleMass = ParticleVolume * IceDensity;
+    ParticleMass = ParticleArea * IceDensity;
 
     UpdateEveryNthStep = (int)(AnimationFramePeriod / InitialTimeStep);
     cellsize_inv = 1./cellsize; // cellsize itself is set when loading .h5 file
     Dp_inv = 4./(cellsize*cellsize);
-    dt_vol_Dpinv = InitialTimeStep*ParticleVolume*Dp_inv;
+    dt_vol_Dpinv = InitialTimeStep*ParticleArea*Dp_inv;
     vmax = 0.25*cellsize/InitialTimeStep;
 
     // compute suggested time step
@@ -160,11 +160,14 @@ void SimParams::Printout()
     spdlog::info(fmt::format(fmt::runtime("nPartitions: {}"), nPartitions));
     spdlog::info(fmt::format(fmt::runtime("InitialTimeStep: {}, SimulationEndTime: {}"), InitialTimeStep, SimulationEndTime));
     spdlog::info(fmt::format(fmt::runtime("AnimationFramePeriod: {}"), AnimationFramePeriod));
+    spdlog::info(fmt::format(fmt::runtime("GridXTotal: {}, GridYTotal: {}"), GridXTotal, GridYTotal));
+    spdlog::info(fmt::format(fmt::runtime("ModeledRegionOffsetX: {}, ModeledRegionOffsetY: {}"), ModeledRegionOffsetX, ModeledRegionOffsetY));
+    spdlog::info(fmt::format(fmt::runtime("InitializationImageSizeX: {}, InitializationImageSizeY: {}"), InitializationImageSizeX, InitializationImageSizeY));
+    spdlog::info(fmt::format(fmt::runtime("DimensionHorizontal: {}"), DimensionHorizontal));
     spdlog::info(fmt::format(fmt::runtime("SimulationStep: {}"), SimulationStep));
     spdlog::info(fmt::format(fmt::runtime("SimulationTime: {}"), SimulationTime));
     spdlog::info(fmt::format(fmt::runtime("UpdateEveryNthStep: {}"), UpdateEveryNthStep));
-    spdlog::info(fmt::format(fmt::runtime("UseWindData: {}"), UseWindData));
-    spdlog::info(fmt::format(fmt::runtime("UseCurrentData: {}"), UseCurrentData));
+
 
     // parameters
     spdlog::info("");
@@ -172,7 +175,7 @@ void SimParams::Printout()
     spdlog::info(fmt::format(fmt::runtime("dt_vol_Dpinv: {}, vmax: {}"), dt_vol_Dpinv, vmax));
     spdlog::info(fmt::format(fmt::runtime("windDragCoeff_airDensity: {}"), windDragCoeff_airDensity));
     spdlog::info(fmt::format(fmt::runtime("lambda: {}, mu: {}, kappa: {}"), lambda, mu, kappa));
-    spdlog::info(fmt::format(fmt::runtime("ParticleVolume: {}, ParticleViewSize: {}"), ParticleVolume, ParticleViewSize));
+    spdlog::info(fmt::format(fmt::runtime("ParticleArea: {}, ParticleViewSize: {}"), ParticleArea, ParticleViewSize));
     spdlog::info(fmt::format(fmt::runtime("ParticleMass: {}"), ParticleMass));
     spdlog::info(fmt::format(fmt::runtime("DP_phi: {}, DP_threshold_p: {}"), DP_phi, DP_threshold_p));
     spdlog::info(fmt::format(fmt::runtime("PoissonsRatio: {}, YoungsModulus: {}"),
@@ -195,4 +198,12 @@ void SimParams::Printout()
     spdlog::info(fmt::format(fmt::runtime("Original image: {} x {}"), InitializationImageSizeX, InitializationImageSizeY));
     spdlog::info(fmt::format(fmt::runtime("Offset of the modelled region: [{}, {}]"),
                              ModeledRegionOffsetX, ModeledRegionOffsetY));
+}
+
+bool SimParams::IsPersistentGridArray(int idx)
+{
+    // All GPU arrays are cleared before visualization rendering
+    // Forces (fx, fy) are summarized in a separate phase before render_visualized_data()
+    // So no arrays need to be marked as persistent
+    return false;
 }

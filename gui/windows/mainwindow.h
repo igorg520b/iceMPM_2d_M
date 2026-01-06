@@ -83,7 +83,6 @@ private Q_SLOTS:
 
     void comboboxIndexChanged_visualizations(int index);
     void limits_changed(double val);
-    void sliderValueChanged(int val);
     void spinbox_slowdown_value_changed(int val);
 
     void parameters_updated();
@@ -112,7 +111,6 @@ private:
 
     ObjectPropertyBrowser *pbrowser;    // to show simulation settings/properties
     QSplitter *splitter;
-    QSlider *slider1;
 
     // VTK
     vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;

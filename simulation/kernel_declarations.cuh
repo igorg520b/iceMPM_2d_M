@@ -45,7 +45,8 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams,
 
 // Renders visualization data: prepares per-particle values (pressure, stress, etc.)
 // for display in the GUI by gathering and formatting data from particle state
-__global__ void partition_kernel_render_results(const PartitionParams pparams);
+// Renders in three groups: (1) mass/momentum/strain, (2) RGB/stress, (3) curvature/rotation
+__global__ void partition_kernel_render_results(const PartitionParams pparams, int group);
 
 // Normalizes rendered data: computes final visualization values after halo exchange
 // (for multi-GPU partitions, halo data needs to be additively blended)
@@ -68,19 +69,6 @@ __global__ void partition_kernel_receive_subgrid(const PartitionParams pparams,
                                                  const size_t transfer_buffer_idx,
                                                  const size_t receive_offset,
                                                  const size_t receive_width);
-
-// Receives rendered halo data from neighboring partitions and adds it to visualization buffer
-// Similar to receive_subgrid but for rendering data (may have different array structure)
-// Parameters:
-//   - transfer_buffer_idx: which buffer contains the incoming halo data (0 or 1)
-//   - receive_offset: starting grid X index where halo data should be placed
-//   - receive_width: width (in X) of the halo region being received
-//   - nArrays: number of arrays in the render data structure
-__global__ void partition_kernel_receive_render_subgrid(const PartitionParams pparams,
-                                                        const size_t transfer_buffer_idx,
-                                                        const size_t receive_offset,
-                                                        const size_t receive_width,
-                                                        const int nArrays);
 
 // Checks which points need to be transferred to neighboring partitions
 // Sets flags in partition state (transfer_to_left, transfer_to_right counts)
@@ -124,7 +112,8 @@ __device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
 // Implements elastic and plastic deformation for ice material
 // Parameters:
 //   - initial_strength: ice strength at start of timestep
-__device__ void Wolper_Drucker_Prager(const double &initial_strength,
+__device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data,
+    const double &initial_strength,
                                       const double &p_tr, const double &q_tr, const double &Je_tr,
                                       const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigmaSquared, const Eigen::Vector2d &v_s_hat_tr,
                                       Eigen::Matrix2d &Fe, double &Jp_inv);
@@ -140,7 +129,7 @@ __device__ void Glen_Nye_flow_law(const double dt, const double &q_tr,
 
 // Checks if a material point has exceeded the failure surface (yield criterion)
 // Sets status flags if failure has occurred
-__device__ void CheckIfPointIsInsideFailureSurface(uint32_t &utility_data, const uint16_t &grain,
+__device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_data,
                                                    const double &p, const double &q,
                                                    const double &strength);
 
@@ -163,6 +152,45 @@ __device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d
 
 // Retrieves wind vector at given position and time from interpolated wind field data
 __device__ Eigen::Vector2d get_wind_vector(float lat, float lon, float tb);
+
+// Computes bending moment tensor and maximum principal moment for plate fracture
+__device__ void ComputeMp(
+    const Eigen::Matrix2d &kappa_curvature,
+    const double &thickness,
+    const double &E,
+    const double &nu,
+    Eigen::Matrix2d &Mp,
+    double &max_M_principal
+);
+
+
+__device__ void ComputeStressResultants(
+    // Inputs
+    const Eigen::Matrix2d &kappa_raw,       // Raw curvature (gradient of omega)
+    const Eigen::Vector2d &gamma,           // Shear strain
+    const Eigen::Matrix2d &Damage,          // Anisotropic Damage Tensor (Eigenvalues 0 to 1)
+    const double thickness,
+    const double E,                         // Young's Modulus
+    const double nu,                        // Poisson's Ratio
+    const double mu,                        // Shear Modulus
+    // Outputs (by reference)
+    Eigen::Matrix2d &Mp_out,
+    Eigen::Vector2d &Q_out
+    );
+
+__device__ void ComputeElasticForces(
+    const Eigen::Matrix2d &kappa_raw,
+    const Eigen::Vector2d &gamma,
+    const double thickness, const double E, const double nu, const double mu,
+    Eigen::Matrix2d &Mp_elastic,
+    Eigen::Vector2d &Q_elastic
+    );
+
+__device__ void EigenDecomposition2x2(
+    const Eigen::Matrix2d &M,
+    double &eig1, double &eig2,      // Eigenvalues
+    Eigen::Vector2d &v1, Eigen::Vector2d &v2 // Eigenvectors
+    );
 
 // ============================================================================
 // DEVICE STATE - Accessed by all kernels

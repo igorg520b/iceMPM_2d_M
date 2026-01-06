@@ -3,6 +3,8 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QTimer>
+#include <QFileInfo>
+#include <QDir>
 
 int main(int argc, char *argv[])
 {
@@ -22,6 +24,14 @@ int main(int argc, char *argv[])
     if(args.size() >= 1)
     {
         QString parametersFile = args[0];
+
+        // Check if the provided path is a directory
+        QFileInfo fileInfo(parametersFile);
+        if (fileInfo.isDir()) {
+            // If it's a directory, append default filename "prepare.json"
+            parametersFile = QDir(parametersFile).filePath("prepare.json");
+        }
+
         w.LoadParameterFile(parametersFile);
     }
 

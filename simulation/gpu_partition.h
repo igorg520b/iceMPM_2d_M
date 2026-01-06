@@ -78,8 +78,9 @@ struct GPU_Partition
     void receive_points(const unsigned fromLeft, const unsigned fromRight);
 
     // render visualized data
-    void render_visualized_data();
-    void normalize_visualized_data();
+    void summarize_forces();
+    void transfer_force_summary_from_device();  // copy force summary results from GPU to host
+    void render_visualized_data(int group);  // render specific visualization group (1, 2, or 3)
 
     // analysis
     void reset_timings();

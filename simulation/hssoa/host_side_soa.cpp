@@ -37,7 +37,7 @@ void HostSideSOA::convertToIntegerCellFormat(double h)
 
 void HostSideSOA::RemoveDisabledAndSort(int GridY)
 {
-    LOGR("RemoveDisabledAndSort; nPtsArrays {}", SimParams::PtArrIdx::nPtsArrays);
+    LOGR("RemoveDisabledAndSort; nPtsArrays {}", (int)SimParams::PtArrIdx::nPtsArrays);
     unsigned size_before = size;
     SOAIterator it_result = std::remove_if(begin(), end(), [](ProxyPoint &p){return p.getDisabledStatus();});
     size = it_result.m_point.pos;
@@ -79,33 +79,7 @@ void HostSideSOA::Allocate(int pts_capacity)
 
 
 
-void HostSideSOA::PrintOutNearestPoint(double x, double y, double gridSize, int GridY)
-{
-    // calculate cell index
 
-    const double hinv = 1.0f/gridSize;
-    uint32_t x_idx = (uint32_t)(x*hinv + 0.5);
-    uint32_t y_idx = (uint32_t)(y*hinv + 0.5);
-    int cellIdx = x_idx*GridY + y_idx;
-
-    auto result = std::lower_bound(begin(), end(),cellIdx,
-                     [&](ProxyPoint &p1, int cell)
-                     {return p1.getCellIndex(GridY)<cell;});
-
-    while(result!=end() && (*result).getCellIndex(GridY) == cellIdx)
-    {
-        LOGR("Point index {}", (*result).getValueInt(SimParams::PtArrIdx::integer_point_idx));
-        LOGR("P: {}", (*result).getValue(SimParams::PtArrIdx::idx_P));
-
-        Eigen::Matrix2d Fe;
-        for(int i=0; i<SimParams::dim; i++)
-        for(int j=0; j<SimParams::dim; j++)
-            Fe(i,j) = (*result).getValue(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j);
-
-        LOGR("Fe: [{},{}],[{},{}]\n",Fe(0,0), Fe(0,1), Fe(1,0), Fe(1,1));
-        ++result;
-    }
-}
 
 
 

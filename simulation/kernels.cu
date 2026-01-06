@@ -10,8 +10,7 @@ constexpr double coeff1 = 1.4142135623730950; // sqrt((6-d)/2.);
 constexpr double coeff1_inv = 0.7071067811865475;
 
 // flags writte into point's utility_data
-constexpr uint32_t status_crushed = 0x10000;
-constexpr uint32_t status_disabled = 0x20000;
+// (Defined in SimParams)
 
 // error indicator and flags
 __device__ uint32_t gpu_error_indicator;
@@ -31,14 +30,14 @@ constexpr uint32_t error_code_grid_nan = 0x0400;            // velocity on the g
 __constant__ SimParams gprms;
 
 
-
-
 __global__ void partition_kernel_p2g(const PartitionParams pparams)
 {
     const size_t pt_idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
     if(pt_idx >= pparams.count_pts) return;
 
     const double &h = gprms.cellsize;
+
+
     const int &gridY = gprms.GridYTotal;
     const unsigned &halo = gprms.GridHaloSize;
     const size_t &pitch = pparams.pitch_pts;
@@ -46,37 +45,48 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
     double* const &bpts = pparams.buffer_pts;
     double* const &bgrid = pparams.buffer_grid;
 
-    const uint32_t utility_data = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
+    const double utility_double = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_utility_data];
+    const long long utility_data = __double_as_longlong(utility_double);
+    if(utility_data & SimParams::status_disabled) return; // point is disabled
 
     // pull point data from SOA
     Eigen::Vector2d pos, velocity;
-    Eigen::Matrix2d Cp, Fe;
+    Eigen::Matrix2d Cp, Fe, PFt;
+    Eigen::Matrix2d stress_contribution = Eigen::Matrix2d::Zero();
+
+    double Jp_inv;
+
+    const double thickness = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_thickness];
+    const double particle_mass = gprms.ParticleMass * thickness;
 
     for(int i=0; i<SimParams::dim; i++)
     {
         pos[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::posx+i)];
+    }
+
+    for(int i=0; i<SimParams::dim; i++)
+    {
         velocity[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::velx+i)];
+
         for(int j=0; j<SimParams::dim; j++)
         {
             Fe(i,j) = bpts[pt_idx + pitch*(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j)];
             Cp(i,j) = bpts[pt_idx + pitch*(SimParams::PtArrIdx::Bp00 + i*SimParams::dim + j)];
         }
     }
-    const double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
-    const double thickness = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_thickness];
-    const double particle_mass = gprms.ParticleMass * thickness;
+    Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
 
-    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx]);
-    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
-
-    // perform computation
-    const Eigen::Matrix2d PFt = KirchhoffStress_Wolper(Fe);
-//    Eigen::Matrix2d subterm2 = particle_mass*Bp - (gprms.dt_vol_Dpinv)*PFt;
-
-    // version that accounts for surface density change
-    Eigen::Matrix2d stress_contribution = -(gprms.dt_vol_Dpinv*Jp_inv*thickness)*PFt;
+    // PFt is 1st Piola-Kirchhoff Stress times F-transposed
+    PFt = KirchhoffStress_Wolper(Fe);
+    stress_contribution = -(gprms.dt_vol_Dpinv*Jp_inv*thickness)*PFt;
     stress_contribution += Cp*particle_mass;    // this is part of the linear term from the velocity approximateion
+
+
+
+
+    const double cell_double = bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx];
+    const long long cell = __double_as_longlong(cell_double);
+    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
 
     Eigen::Array2d ww[3];
     CalculateWeightCoeffs(pos, ww);
@@ -85,21 +95,26 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
         for (int j = -1; j <= 1; j++)
         {
             const double Wip = ww[i+1][0]*ww[j+1][1];
-            const double incM = Wip*particle_mass;
             const Eigen::Vector2d dpos((i-pos[0])*h, (j-pos[1])*h);
-            Eigen::Vector2d velocity_at_node = velocity;
-            const Eigen::Vector2d incV = Wip*(velocity_at_node*particle_mass + stress_contribution*dpos);
 
             // index of the cell takes into accout the partition's offset of the gird fragment
             const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
 
-            // distribute values to the grid (mass and momentum)
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_mass*pparams.pitch_grid + idx_gridnode], (double)incM);
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_px*pparams.pitch_grid + idx_gridnode], (double)incV[0]);
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_py*pparams.pitch_grid + idx_gridnode], (double)incV[1]);
+            const double incM = Wip*particle_mass;
+            atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_mass*pparams.pitch_grid + idx_gridnode], incM);
 
+            const Eigen::Vector2d incV = Wip*(velocity*particle_mass + stress_contribution*dpos);
+
+            // distribute values to the grid (mass and momentum)
+            atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_px*pparams.pitch_grid + idx_gridnode], incV[0]);
+            atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_py*pparams.pitch_grid + idx_gridnode], incV[1]);
+
+            // sanity checks
             if(isnan(incV[0]) || isnan(incV[1])) gpu_error_indicator |= error_code_grid_p2g_nan_vel;
             if(isnan(incM)) gpu_error_indicator |= error_code_grid_p2g_nan_mass;
+
+
+
         }
 
     // check if a point is out of bounds of the local grid partition
@@ -118,8 +133,6 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
 }
 
 
-
-
 __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
                                               const double simulation_time, const double current_alpha)
 {
@@ -130,16 +143,19 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
     //const int &gridY = gprms.GridYTotal;
     const size_t &pitch_grid = pparams.pitch_grid;
     double* const &bgrid = pparams.buffer_grid;
+    const size_t &pitch_grid_forcing = pparams.pitch_grid_forcing;
+    double* const &bgrid_forcing = pparams.buffer_grid_forcing;
 
     //const double &cellsize = gprms.cellsize;
     const double &dt = gprms.InitialTimeStep;               // time step
 
-    const double mass = bgrid[SimParams::GridArrayIndex::grid_idx_mass*pitch_grid + idx];
+    const double mass = bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_mass*pitch_grid + idx];
     if(mass == 0) return;
 
-    double vx = bgrid[SimParams::GridArrayIndex::grid_idx_px*pitch_grid + idx];
-    double vy = bgrid[SimParams::GridArrayIndex::grid_idx_py*pitch_grid + idx];
-
+    double vx = bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_px*pitch_grid + idx];
+    double vy = bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_py*pitch_grid + idx];
+    
+    // Normalize momentum to get velocity
     const Vector2i gi((int)idx/gprms.GridYTotal+(int)pparams.gridX_offset-(int)gprms.GridHaloSize, idx%gprms.GridYTotal);   // integer x-y index of the grid node
     const Eigen::Vector2d gnpos = gi.cast<double>()*gprms.cellsize;    // position of the grid node in the whole grid
 
@@ -147,23 +163,25 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
     Eigen::Vector2d velocity = momentum/mass;
 
     uint8_t is_modeled_area = pparams.buffer_grid_regions[idx];
-    if(is_modeled_area != SimParams::MAX_REGIONS)
+    if(is_modeled_area != SimParams::ModelledAreaIndicator)
     {
         velocity.setZero();
-        bgrid[SimParams::grid_idx_fx*pitch_grid + idx] += momentum[0];
-        bgrid[SimParams::grid_idx_fy*pitch_grid + idx] += momentum[1];
+        bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fx*pitch_grid + idx] += momentum[0];
+        bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fy*pitch_grid + idx] += momentum[1];
     }
     else
     {
-        //grid_water_current - interpolate between two frames
-        Eigen::Vector2d v_frame0(bgrid[SimParams::grid_idx_current_vx_frame0*pitch_grid + idx],
-                                 bgrid[SimParams::grid_idx_current_vy_frame0*pitch_grid + idx]);
+        // obtain horizontal velocity from 2 time frames for drag calculation
+        Eigen::Vector2d v_frame0(bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame0*pitch_grid_forcing + idx],
+                                 bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_current_vy_frame0*pitch_grid_forcing + idx]);
 
-        Eigen::Vector2d v_frame1(bgrid[SimParams::grid_idx_current_vx_frame1*pitch_grid + idx],
-                                 bgrid[SimParams::grid_idx_current_vy_frame1*pitch_grid + idx]);
+        Eigen::Vector2d v_frame1(bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame1*pitch_grid_forcing + idx],
+                                 bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_current_vy_frame1*pitch_grid_forcing + idx]);
 
         Eigen::Vector2d v_w = (1.0 - current_alpha) * v_frame0 + current_alpha * v_frame1;
 
+
+        // effect of the water drag on horizontal velocity
         const double kL = gprms.waterDragEffectiveLinear * dt; // linear param
         const double kQp = gprms.waterDragEffectiveQuadratic * dt; // quadratic
 
@@ -178,158 +196,13 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
 
     // write the updated grid velocity back to memory
     if(velocity.squaredNorm() > gprms.vmax*gprms.vmax*0.5) velocity.setZero();
+
     bgrid[SimParams::grid_idx_px*pitch_grid + idx] = velocity[0];
     bgrid[SimParams::grid_idx_py*pitch_grid + idx] = velocity[1];
-
     if(isnan(velocity[0]) || isnan(velocity[1])) gpu_error_indicator |= error_code_grid_nan;
+
+
 }
-
-
-__global__ void partition_kernel_render_results(const PartitionParams pparams)
-{
-    // from the point data, populate the gird arrays:
-    // grid_idx_vis_r/g/b, grid_idx_vis_Jpinv, grid_idx_vis_P/Q,
-    // grid_idx_vis_strain_EqvGreenLagrange, grid_idx_vis_strain_vonMises
-
-    const size_t pt_idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if(pt_idx >= pparams.count_pts) return;
-
-    const unsigned &halo = gprms.GridHaloSize;
-    const int &gridY = gprms.GridYTotal;
-    const size_t &gridX_offset = pparams.gridX_offset;
-    const size_t &pitch = pparams.pitch_pts;
-    const size_t &pitch_g = pparams.pitch_grid;
-
-    double* const &bpts = pparams.buffer_pts;
-    double* const &bgrid = pparams.buffer_grid;
-
-    const uint32_t utility_data = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
-
-    Eigen::Vector2d pos, velocity;
-    Eigen::Matrix2d Fe;
-
-    // pull point data from SOA
-    for(int i=0; i<SimParams::dim; i++)
-    {
-        pos[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::posx+i)];
-        velocity[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::velx+i)];
-        for(int j=0; j<SimParams::dim; j++)
-        {
-            Fe(i,j) = bpts[pt_idx + pitch*(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j)];
-        }
-    }
-    const double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
-
-    const double thickness = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_thickness];
-
-    const double particle_mass = gprms.ParticleMass * thickness;
-
-    const double rR = bpts[pt_idx + pitch*(SimParams::PtArrIdx::idx_pt_color_RGB+0)];
-    const double rG = bpts[pt_idx + pitch*(SimParams::PtArrIdx::idx_pt_color_RGB+1)];
-    const double rB = bpts[pt_idx + pitch*(SimParams::PtArrIdx::idx_pt_color_RGB+2)];
-    const double P = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_P];
-    const double Q = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Q];
-
-    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx]);
-    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
-
-    Eigen::Array2d ww[3];
-    CalculateWeightCoeffs(pos, ww);
-
-    Eigen::Matrix2d E = 0.5f*(Fe.transpose()*Fe-Eigen::Matrix2d::Identity()); // GreenLagrangeStrainTensor
-    Eigen::Matrix2d E_dev = dev(E);
-    const double str_vonMises = std::sqrt((2.0f / 3.0f) * (E_dev.array() * E_dev.array()).sum());
-    const double str_EqvGreenLagrange = std::sqrt(E.squaredNorm());
-
-    for (int i = -1; i <= 1; i++)
-        for (int j = -1; j <= 1; j++)
-        {
-            const double Wip = ww[i+1][0]*ww[j+1][1];
-
-            // index of the cell takes into accout the partition's offset of the gird fragment
-            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
-
-
-            const double incM = Wip*particle_mass;
-            const Eigen::Vector2d incV = incM*velocity;
-
-            // distribute values to the grid
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_mass*pitch_g + idx_gridnode], (double)incM);
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_px*pitch_g + idx_gridnode], (double)incV[0]);
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_py*pitch_g + idx_gridnode], (double)incV[1]);
-
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_r*pitch_g + idx_gridnode], (double)(rR*incM));
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_g*pitch_g + idx_gridnode], (double)(rG*incM));
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_b*pitch_g + idx_gridnode], (double)(rB*incM));
-
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_Jpinv*pitch_g + idx_gridnode], (double)(Jp_inv*incM));
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_P*pitch_g + idx_gridnode], (double)(P*incM));
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_Q*pitch_g + idx_gridnode], (double)(Q*incM));
-
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange*pitch_g + idx_gridnode], (double)(str_EqvGreenLagrange*incM));
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_strain_vonMises*pitch_g + idx_gridnode], (double)(str_vonMises*incM));
-            atomicAdd(&bgrid[SimParams::GridArrayIndex::grid_idx_vis_pts_density*pitch_g + idx_gridnode], (double)Wip);
-        }
-}
-
-__global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
-{
-    // forces that were recorded (accumulated) in grid_idx_fx/fy are now summarized by region
-    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
-    if(idx >= nNodes) return;
-
-    //const int &gridY = gprms.GridYTotal;
-    const size_t &pitch_grid = pparams.pitch_grid;
-    double* const &bgrid = pparams.buffer_grid;
-
-    double fx = bgrid[SimParams::grid_idx_fx*pitch_grid + idx];
-    double fy = bgrid[SimParams::grid_idx_fy*pitch_grid + idx];
-
-    uint8_t area_idx = pparams.buffer_grid_regions[idx];
-    if(area_idx < SimParams::MAX_REGIONS && (fx != 0 || fy != 0))
-    {
-        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+0], fx);
-        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+1], fy);
-    }
-}
-
-
-
-__global__ void partition_kernel_normalize_render(const PartitionParams pparams)
-{
-    // forces that were recorded (accumulated) in grid_idx_fx/fy are now summarized by region
-    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
-    if(idx >= nNodes) return;
-
-    //const int &gridY = gprms.GridYTotal;
-    const size_t &pitch_grid = pparams.pitch_grid;
-    double* const &bgrid = pparams.buffer_grid;
-
-    // normalize grid data
-    const double mass = bgrid[SimParams::GridArrayIndex::grid_idx_mass*pitch_grid + idx];
-    if(mass == 0) return;
-
-    //  double pt_density = bgrid[SimParams::grid_idx_vis_pts_density*pitch_grid + idx];
-
-    bgrid[SimParams::GridArrayIndex::grid_idx_px*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_py*pitch_grid + idx] /= mass;
-
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_r*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_g*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_b*pitch_grid + idx] /= mass;
-
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_Jpinv*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_P*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_Q*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange*pitch_grid + idx] /= mass;
-    bgrid[SimParams::GridArrayIndex::grid_idx_vis_strain_vonMises*pitch_grid + idx] /= mass;
-
-    bgrid[SimParams::GridArrayIndex::grid_idx_mass*pitch_grid + idx] /= (gprms.cellsize*gprms.cellsize); // make it mass per area
-}
-
 
 __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ)
 {
@@ -350,39 +223,42 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     const int &gridY = gprms.GridYTotal;
 
     // skip if a point is disabled
-    uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
+    const double utility_double_g2p = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data];
+    unsigned long long utility_data = __double_as_longlong(utility_double_g2p);
+    if(utility_data & SimParams::status_disabled) return; // point is disabled
+    unsigned long long utility_original = utility_data;
 
     Eigen::Vector2d pos;
-    Eigen::Matrix2d Fe;
+    Eigen::Vector2d p_velocity; p_velocity.setZero();
+    double Je_tr, p_tr, q_tr;
+
+    Eigen::Matrix2d Fe;         // deformation gradient
+    Eigen::Matrix2d p_Bp; p_Bp.setZero();
 
     // pull point data from SOA
     for(int i=0; i<SimParams::dim; i++)
     {
         pos[i] = bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::posx+i)];
+    }
+    const double initial_thickness = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_thickness];
+
+    double Jp_inv;
+    Jp_inv = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Jp_inv];
+    for(int i=0; i<SimParams::dim; i++)
+    {
         for(int j=0; j<SimParams::dim; j++)
         {
             Fe(i,j) = bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j)];
         }
     }
 
-    const double initial_thickness = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_thickness];
-    double Jp_inv = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Jp_inv];
-
-    uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
-    // coords of grid node for point
+    const double cell_double = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx];
+    long long cell = __double_as_longlong(cell_double);
     Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
-
 
     // optimized method of computing the quadratic weight function without conditional operators
     Eigen::Array2d ww[3];
     CalculateWeightCoeffs(pos, ww);
-
-    Eigen::Vector2d p_velocity;
-    Eigen::Matrix2d p_Bp;
-    p_velocity.setZero();
-    p_Bp.setZero();
-
     // pull velocity from the grid
     for (int i = -1; i <= 1; i++)
         for (int j = -1; j <= 1; j++)
@@ -393,14 +269,16 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
             // grid node index within the 3x3 loop
             const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
 
-            Eigen::Vector2d node_velocity;
-            node_velocity[0] = (double)bgrid[SimParams::grid_idx_px*pitch_grid + idx_gridnode];
-            node_velocity[1] = (double)bgrid[SimParams::grid_idx_py*pitch_grid + idx_gridnode];
+            Eigen::Vector2d node_velocity;  // normal in-plane velocity
+            node_velocity[0] = bgrid[SimParams::grid_idx_px*pitch_grid + idx_gridnode];
+            node_velocity[1] = bgrid[SimParams::grid_idx_py*pitch_grid + idx_gridnode];
             p_velocity += weight * node_velocity;
             p_Bp += (4.*h_inv*weight) * (node_velocity*dpos.transpose());
         }
 
     // Advection and update of the deformation gradient
+    bool cell_updated = false;
+
     pos += p_velocity * (dt*h_inv); // position is in local cell coordinates [-0.5 to 0.5]
 
     // check if there is an error
@@ -408,10 +286,8 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     if(isnan(pos[0]) || isnan(pos[1])) gpu_error_indicator |= error_code_point_pos_nan;
     if(isnan(p_Bp(0,0)) || isnan(p_Bp(1,0)) || isnan(p_Bp(0,1)) || isnan(p_Bp(1,1))) gpu_error_indicator |= error_code_point_Bp_nan;
 
-
     // encode the position of the point as coordinates + cell index
     // if a point moves to the next cell, account for the change
-    bool cell_updated = false;
     if(pos.x() > 0.5) { pos.x() -= 1.0; cell_i.x()++; cell_updated = true; }
     else if(pos.x() < -0.5) { pos.x() += 1.0; cell_i.x()--; cell_updated = true; }
     if(pos.y() > 0.5) { pos.y() -= 1.0; cell_i.y()++; cell_updated = true; }
@@ -422,7 +298,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     {
         if(cell_i.x() <= 1 || cell_i.x() >= gprms.GridXTotal-2 || cell_i.y() <= 1 || cell_i.y() >= gridY-2)
         {
-            utility_data |= status_disabled;
+            utility_data |= SimParams::status_disabled;
             atomicAdd(pparams.disabled_points_count, 1);
         }
     }
@@ -433,22 +309,22 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     Fe = (Eigen::Matrix2d::Identity() + dt*p_Bp) * Fe;     // Bp plays the role of the gradient of the velocity vector
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
-
-    double Je_tr, p_tr, q_tr;
     ComputePQ(Je_tr, p_tr, q_tr, kappa, mu, Fe);    // computes P, Q, J
 
     Eigen::Matrix2d U, V;
     Eigen::Vector2d vSigma, vSigmaSquared, v_s_hat_tr;
     ComputeSVD(Fe, U, vSigma, V, vSigmaSquared, v_s_hat_tr, kappa, mu, Je_tr);
-
-    if(!(utility_data & status_crushed)) CheckIfPointIsInsideFailureSurface(utility_data, 0, p_tr, q_tr, initial_thickness);
-    if(utility_data & status_crushed)
+    if(!(utility_data & SimParams::status_crushed))
     {
-        Wolper_Drucker_Prager(initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
+        CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr, initial_thickness);
     }
 
+    if((utility_data & SimParams::status_crushed) || (utility_data & SimParams::status_cracked))
+    {
+        Wolper_Drucker_Prager(utility_data, initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
+    }
 
-    // distribute the values of p back into GPU memory: pos, velocity, BP, Fe, Jp_inv, PQ
+    // distribute the values of p back into GPU memory
     for(int i=0; i<SimParams::dim; i++)
     {
         bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::posx+i)] = pos[i];
@@ -462,13 +338,10 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Jp_inv] = Jp_inv;
 
-    // save crushed/disabled status
-    *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data]) = utility_data;
-
     if(cell_updated)
     {
-        cell = ((uint32_t)cell_i[1] << 16) | (uint32_t)cell_i[0];
-        *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]) = cell;
+        cell = ((long long)cell_i[1] << 16) | (long long)cell_i[0];
+        bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx] = __longlong_as_double(cell);
     }
 
     // upon request, PQ are recorded for visualization
@@ -477,7 +350,164 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_P] = p_tr;
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Q] = q_tr;
     }
+
+    // save crushed/disabled status (preserves upper 32 bits with color info)
+    if(utility_data != utility_original)
+        bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data] = __longlong_as_double(utility_data);
 }
+
+
+__global__ void partition_kernel_render_results(const PartitionParams pparams, int group)
+{
+    // from the point data, populate the gird arrays:
+    // grid_idx_vis_r/g/b, grid_idx_vis_Jpinv, grid_idx_vis_P/Q,
+    // grid_idx_vis_strain_EqvGreenLagrange, grid_idx_vis_strain_vonMises
+
+    const size_t pt_idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if(pt_idx >= pparams.count_pts) return;
+
+    const unsigned &halo = gprms.GridHaloSize;
+    const int &gridY = gprms.GridYTotal;
+    const size_t &gridX_offset = pparams.gridX_offset;
+    const size_t &pitch = pparams.pitch_pts;
+    const size_t &pitch_g = pparams.pitch_grid;
+
+    double* const &bpts = pparams.buffer_pts;
+    double* const &bgrid = pparams.buffer_grid;
+
+    const double utility_double = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_utility_data];
+    unsigned long long utility = __double_as_longlong(utility_double);
+    unsigned long long utility_original = utility;
+
+    if(utility & SimParams::status_disabled) return; // point is disabled
+
+    Eigen::Vector2d pos;
+    for(int i=0; i<SimParams::dim; i++)
+    {
+        pos[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::posx+i)];
+    }
+    Eigen::Array2d ww[3];
+    CalculateWeightCoeffs(pos, ww);
+
+    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx]);
+    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
+
+    const double thickness = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_thickness];
+    const double particle_mass = gprms.ParticleMass * thickness;
+
+
+    if(group == 1)
+    {
+        // group 1: Color, Physics scalars, Density
+        Eigen::Vector2d velocity;
+        
+        // pull point data from SOA
+        for(int i=0; i<SimParams::dim; i++)
+        {
+            velocity[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::velx+i)];
+        }
+
+        // Extract RGB (R: 24-31, G: 32-39, B: 40-47)
+        uint8_t r = (utility >> 24) & 0xFF;
+        uint8_t g = (utility >> 32) & 0xFF;
+        uint8_t b = (utility >> 40) & 0xFF;
+
+        const double rR = (double)r / 255.0;
+        const double rG = (double)g / 255.0;
+        const double rB = (double)b / 255.0;
+
+        // P and Q are scalars (pressure and deviatoric stress measure)
+        const double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
+        const double P = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_P];
+        const double Q = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Q];
+
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const double Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+
+                const double incM = Wip*particle_mass;
+                const Eigen::Vector2d incV = incM*velocity;
+                
+                // distribute values to the grid
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_mass*pitch_g + idx_gridnode], incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_px*pitch_g + idx_gridnode], incV.x());
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_py*pitch_g + idx_gridnode], incV.y());
+                
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_r*pitch_g + idx_gridnode], rR*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_g*pitch_g + idx_gridnode], rG*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_b*pitch_g + idx_gridnode], rB*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Jpinv*pitch_g + idx_gridnode], Jp_inv*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_P*pitch_g + idx_gridnode], P*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Q*pitch_g + idx_gridnode], Q*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_pts_density*pitch_g + idx_gridnode], Wip);
+            }
+    }
+    else if(group == 2)
+    {
+        // group 2: Strains
+        Eigen::Matrix2d Fe;
+        for(int i=0; i<SimParams::dim; i++)
+        {
+            for(int j=0; j<SimParams::dim; j++)
+            {
+                Fe(i,j) = bpts[pt_idx + pitch*(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j)];
+            }
+        }
+
+        Eigen::Matrix2d E = 0.5f*(Fe.transpose()*Fe-Eigen::Matrix2d::Identity()); // GreenLagrangeStrainTensor
+        Eigen::Matrix2d E_dev = dev(E);
+        const double str_vonMises = std::sqrt((2.0f / 3.0f) * (E_dev.array() * E_dev.array()).sum());
+        const double str_EqvGreenLagrange = std::sqrt(E.squaredNorm());
+
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const double Wip = ww[i+1][0]*ww[j+1][1];
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+                const double incM = Wip*particle_mass;
+
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_EqvGreenLagrange*pitch_g + idx_gridnode], str_EqvGreenLagrange*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_vonMises*pitch_g + idx_gridnode], str_vonMises*incM);
+                
+                const double thickness = bpts[pt_idx + pitch * SimParams::PtArrIdx::idx_thickness];
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness*pitch_g + idx_gridnode], thickness*incM);
+                
+                // Determine status from utility flags read at kernel start
+                double val_crushed = (utility & SimParams::status_crushed) ? 1.0 : 0.0;
+                double val_cracked = (utility & SimParams::status_cracked) ? 1.0 : 0.0;
+
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_crushed*pitch_g + idx_gridnode], val_crushed*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked*pitch_g + idx_gridnode], val_cracked*incM);
+            }
+    }
+}
+
+__global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
+{
+    // forces that were recorded (accumulated) in grid_idx_fx/fy are now summarized by region
+    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
+    if(idx >= nNodes) return;
+
+    //const int &gridY = gprms.GridYTotal;
+    const size_t &pitch_grid = pparams.pitch_grid;
+    double* const &bgrid = pparams.buffer_grid;
+
+    double fx = bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fx*pitch_grid + idx];
+    double fy = bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fy*pitch_grid + idx];
+
+    uint8_t area_idx = pparams.buffer_grid_regions[idx];
+    if(area_idx < SimParams::MAX_REGIONS && (fx != 0 || fy != 0))
+    {
+        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+0], fx);
+        atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+1], fy);
+    }
+}
+
+
 
 
 
@@ -493,32 +523,13 @@ __global__ void partition_kernel_receive_subgrid(const PartitionParams pparams,
     const size_t receive_elem_count = gprms.GridYTotal * receive_width;
     if(idx >= receive_elem_count) return;
 
-    for(int i=0; i<3; i++)
+    for(int i=0; i<SimParams::grid_arrays_to_clear; i++)
     {
         const size_t elem_idx = idx + i*pparams.pitch_grid + receive_offset*gprms.GridYTotal;
         const size_t buffer_idx = idx + i*pparams.transfer_buffer_width*gprms.GridYTotal;
         pparams.buffer_grid[elem_idx] += pparams.halo_transfer_buffer[transfer_buffer_idx][buffer_idx];
     }
 }
-
-__global__ void partition_kernel_receive_render_subgrid(const PartitionParams pparams,
-                                                 const size_t transfer_buffer_idx,
-                                                 const size_t receive_offset,
-                                                 const size_t receive_width,
-                                                        const int nArrays)
-{
-    const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    const size_t receive_elem_count = gprms.GridYTotal * receive_width;
-    if(idx >= receive_elem_count) return;
-
-    for(int i=0; i<nArrays; i++)
-    {
-        const size_t elem_idx = idx + i*pparams.pitch_grid + receive_offset*gprms.GridYTotal;
-        const size_t buffer_idx = idx + i*pparams.transfer_buffer_width*gprms.GridYTotal;
-        pparams.buffer_grid[elem_idx] += pparams.halo_transfer_buffer[transfer_buffer_idx][buffer_idx];
-    }
-}
-
 
 
 __global__ void partition_kernel_check_if_transfer_needed(const PartitionParams pparams)
@@ -533,10 +544,12 @@ __global__ void partition_kernel_check_if_transfer_needed(const PartitionParams 
     const size_t &gridX = pparams.partition_gridX;
 
     // skip if a point is disabled
-    const uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
+    const double utility_double_pt = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data];
+    const unsigned long long utility_data = __double_as_longlong(utility_double_pt);
+    if(utility_data & SimParams::status_disabled) return; // point is disabled
 
-    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
+    const double cell_double = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx];
+    const uint32_t cell = (uint32_t)__double_as_longlong(cell_double);
 
     const int cx = (int)(cell & 0xffff) - (int)gridX_offset; // x-index of the cell of the point
 
@@ -565,10 +578,12 @@ __global__ void partition_kernel_point_transfer(const PartitionParams pparams)
     const size_t &gridX = pparams.partition_gridX;
 
     // skip if a point is disabled
-    uint32_t utility_data = *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data]);
-    if(utility_data & status_disabled) return; // point is disabled
+    const double utility_double_g2p = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data];
+    unsigned long long utility_data = __double_as_longlong(utility_double_g2p);
+    if(utility_data & SimParams::status_disabled) return; // point is disabled
 
-    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
+    const double cell_double = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx];
+    const long long cell = __double_as_longlong(cell_double);
 
     const int cx = (int)(cell & 0xffff) - (int)gridX_offset; // x-index of the cell in the current partition
     int transfer_threshold = 0;
@@ -582,8 +597,8 @@ __global__ void partition_kernel_point_transfer(const PartitionParams pparams)
                 ptb[i + flyIdx*SimParams::PtArrIdx::nPtsArrays] = bpts[pt_idx + pitch_pts*i];
 
             atomicAdd(pparams.disabled_points_count, 1);
-            utility_data |= status_disabled;
-            *reinterpret_cast<uint32_t*>(&bpts[pt_idx + pitch_pts * SimParams::PtArrIdx::idx_utility_data]) = utility_data;
+            utility_data |= SimParams::status_disabled;
+            bpts[pt_idx + pitch_pts * SimParams::PtArrIdx::idx_utility_data] = __longlong_as_double(utility_data);
         }
     };
 
@@ -622,7 +637,7 @@ __global__ void partition_kernel_receive_points(const PartitionParams pparams, c
 
 
 
-__forceinline__ __device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d ww[3])
+__device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d ww[3])
 {
     // optimized method of computing the quadratic (!) weight function (no conditional operators)
     Eigen::Array2d arr_v0 = 0.5 - pos.array();
@@ -643,9 +658,7 @@ __device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
 }
 
 
-
-
-__device__ void CheckIfPointIsInsideFailureSurface(uint32_t &utility_data, const uint16_t &grain,
+__device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_data,
                             const double &p, const double &q, const double &strength)
 {
     const double pmax = gprms.IceCompressiveStrength;
@@ -657,27 +670,39 @@ __device__ void CheckIfPointIsInsideFailureSurface(uint32_t &utility_data, const
     const double beta = gprms.IceTensileStrength/gprms.IceCompressiveStrength;
     const double M_sq = (4.*qmax*qmax*(1.+2.*beta))/((pmax-pmin)*(pmax-pmin));
 
-    if(p<0)
+    if(p < pmin2)
     {
-        if(p<pmin2) { utility_data |= status_crushed; return; }
+        // cracked by exceeding tensile threshold
+        utility_data |= SimParams::status_cracked;
+        return;
+    }
+    else if(p < 0)
+    {
+        // can be cracked in tension/shear (if outside failure envelope)
         double q0 = 2*sqrt(-pmax*pmin)*qmax/(pmax-pmin);
         double k = -q0/pmin2;
         double q_limit = k*(p-pmin2);
-        if(q > q_limit) { utility_data |= status_crushed; return; }
+        if(q > q_limit) utility_data |= SimParams::status_cracked;
+        return;
     }
     else
     {
+        // does not exceed raw compressive failure - can be cracked in shear
         double y = (1.+2.*beta)*q*q + M_sq*(p+beta*pmax) * (p-pmax);
-        if(y > 0) utility_data |= status_crushed;
+        if(y > 0)
+        {
+            if(p <= gprms.IceCompressiveThreshold) utility_data |= SimParams::status_cracked;
+            else utility_data |= SimParams::status_crushed;
+        }
     }
 }
 
 
 
 
-__device__ void Wolper_Drucker_Prager(const double &initial_thickness,
+__device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, const double &initial_thickness,
                                       const double &p_tr, const double &q_tr, const double &Je_tr,
-const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigmaSquared, const Eigen::Vector2d &v_s_hat_tr,
+                                      const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigmaSquared, const Eigen::Vector2d &v_s_hat_tr,
                                       Eigen::Matrix2d &Fe, double &Jp_inv)
 {
     const double &mu = gprms.mu;
@@ -730,8 +755,23 @@ const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigm
             // plasticity will be applied
 
             // estimate the new P based on the ridge height
-            const double p_ridge_max = gprms.RidgeFormationCoeff * SimParams::g * gprms.IceDensity * initial_thickness * (Jp_inv);
-            p_n_1 = min(p_tr, p_ridge_max);
+            if(p_tr < 0 && Jp_inv < 0.1)
+            {
+                p_n_1 = p_tr;
+                // otherwise p_n_1 = 0
+            }
+            else if(p_tr >= 0)
+            {
+                if(utility_data & SimParams::status_crushed)
+                {
+                    const double p_ridge_max = gprms.RidgeFormationCoeff * SimParams::g * gprms.IceDensity * initial_thickness * (Jp_inv);
+                    p_n_1 = min(p_tr, p_ridge_max);
+                }
+                else
+                {
+                    if(Jp_inv >= 1.0) p_n_1 = p_tr;
+                }
+            }
 
             // re-evaluate q (to find the new "projected" value)
             if(p_n_1 < pmax)
@@ -751,7 +791,7 @@ const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigm
             //Matrix2d B_hat_E_new = s_hat_n_1_norm*(pow(Je_tr,2./d)/mu)*s_hat_tr.normalized() + Matrix2d::Identity()*(SigmaSquared.trace()/d);
 
             const Eigen::Vector2d vB_hat_E_new = s_hat_n_1_norm*(Je_tr/mu)*v_s_hat_tr.normalized() +
-                                               Eigen::Vector2d::Constant(1)*(Je_new);
+                                                 Eigen::Vector2d::Constant(1)*(Je_new);
 
             const Eigen::Vector2d vSigma_new = vB_hat_E_new.array().sqrt().matrix();
             Fe = U*vSigma_new.asDiagonal()*V.transpose();
@@ -765,6 +805,9 @@ const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigm
         gpu_error_indicator |= error_code_point_Fe_nan;
     }
 }
+
+
+
 
 
 __device__ void svd2x2(const Eigen::Matrix2d &mA, Eigen::Matrix2d &mU, Eigen::Vector2d &mS, Eigen::Matrix2d &mV)
@@ -821,53 +864,6 @@ __device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F)
 
 
 
-
-
-/*
-__device__ Eigen::Vector2d get_wind_vector(float lat, float lon, float tb)
-{
-    const double &gridLatMin = gprms.gridLatMin;
-    const double &gridLonMin = gprms.gridLonMin;
-
-    // space
-    int lat_cell = (int)((lat-gridLatMin)/WindInterpolator::gridCellSize);
-    int lon_cell = (int)((lon-gridLonMin)/WindInterpolator::gridCellSize);
-
-    // Compute local coordinates within the cell
-    float localLon = lon - (gridLonMin + lon_cell * WindInterpolator::gridCellSize);
-    float localLat = lat - (gridLatMin + lat_cell * WindInterpolator::gridCellSize);
-
-    // Compute barycentric coordinates
-    float ub = localLon / WindInterpolator::gridCellSize;
-    float vb = localLat / WindInterpolator::gridCellSize;
-
-    Eigen::Vector2d cell_values0[2][2], cell_values1[2][2];
-    for(int i=0;i<2;i++)
-        for(int j=0;j<2;j++)
-        {
-            cell_values0[i][j] = Eigen::Vector2d(wgrid[lat_cell+i][lon_cell+j][0], wgrid[lat_cell+i][lon_cell+j][1]);
-            cell_values1[i][j] = Eigen::Vector2d(wgrid[lat_cell+i][lon_cell+j][2], wgrid[lat_cell+i][lon_cell+j][3]);
-        }
-    Eigen::Vector2d ipVal[2];
-
-    ipVal[0] =
-        (1 - ub) * (1 - vb) * cell_values0[0][0] +
-        ub * (1 - vb) * cell_values0[0][1] +
-        (1 - ub) * vb * cell_values0[1][0] +
-        ub * vb * cell_values0[1][1];
-
-    ipVal[1] =
-        (1 - ub) * (1 - vb) * cell_values1[0][0] +
-        ub * (1 - vb) * cell_values1[0][1] +
-        (1 - ub) * vb * cell_values1[1][0] +
-        ub * vb * cell_values1[1][1];
-
-    Eigen::Vector2d final_result = (1-tb)*ipVal[0] + tb*ipVal[1];
-    return final_result;
-}
-*/
-
-
 /*
 __device__ void Glen_Nye_flow_law(const double dt, const double &q_tr,
 const Eigen::Vector2d &vSigmaSquared,
@@ -896,4 +892,10 @@ const Eigen::Vector2d &v_s_hat_tr,
     qp *= (q_n_1/q_tr);
 }
 */
+
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
 

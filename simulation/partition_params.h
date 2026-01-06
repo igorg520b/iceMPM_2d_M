@@ -12,13 +12,14 @@ struct PartitionParams
 
     // device-side arrays
     double *buffer_pts;  // *pts_array
-    double *buffer_grid;  // *grid_array
+    double *buffer_grid;  // *grid_array (simulation grid)
+    double *buffer_grid_forcing;  // *grid_forcing_array (forcing frames: vx, vy, eta for 2 frames)
     uint8_t *buffer_grid_regions;     // grid_status_array
 
     double *point_transfer_buffer[4]; // GPU-side buffers to send/receive points between adj. partitions
     size_t point_transfer_buffer_capacity;  // max points it can hold
 
-    size_t pitch_grid, count_pts, pitch_pts;
+    size_t pitch_grid, pitch_grid_forcing, count_pts, pitch_pts;
     size_t partition_gridX, gridX_offset;
     size_t gridX_alloc_capacity;    // max resize capacity (in X-direction) excluding halos
 

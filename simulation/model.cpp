@@ -26,7 +26,12 @@ bool Model::Step()
         gpu.reset_grid();
         gpu.p2g();
 
-        if(sim_data.waci.SetTime(simulation_time)) gpu.transfer_wind_and_current_data_to_device();
+        bool frames_changed = false;
+        {
+            std::lock_guard<std::mutex> lg(lock_data_for_GUI);
+            frames_changed = sim_data.waci.SetTime(simulation_time);
+        }
+        if(frames_changed) gpu.transfer_wind_and_current_data_to_device();
 
         gpu.update_nodes(simulation_time, 0, 0);
         const bool isCycleEnd = (step + 1) % sim_data.prms.UpdateEveryNthStep == 0;
@@ -48,38 +53,38 @@ bool Model::Step()
     sim_data.prms.SimulationStep += count_unupdated_steps;
 
     if(m_save_future.valid()) m_save_future.get();
-
     gpu.render_visualized_data();
 
-    lock_data_for_GUI.lock(); // prevent GUI from accessing data
-    gpu.transfer_from_device();
-
-    // Normalize timings and check for squeeze conditions
-    bool squeeze_required = false;
-    for(GPU_Partition &p : gpu.partitions)
     {
-        p.normalize_timings(count_unupdated_steps);
-        const unsigned pts_free_slots = p.pparams.pitch_pts-p.pparams.count_pts;
+        std::lock_guard<std::mutex> lg(lock_data_for_GUI);
+        gpu.transfer_from_device();
 
-        const float disabled_proportion = (float)p.get_disabled_pts()/p.pparams.count_pts;
-        if(disabled_proportion > SimParams::disabled_pts_proportion_threshold) squeeze_required = true;
-        const float free_space_proportion = (float)pts_free_slots/p.pparams.pitch_pts;
-        if(gpu.partitions.size() > 1 && free_space_proportion < SimParams::free_space_threshold) squeeze_required = true;
+        // Normalize timings and check for squeeze conditions
+        bool squeeze_required = false;
+        for(GPU_Partition &p : gpu.partitions)
+        {
+            p.normalize_timings(count_unupdated_steps);
+            const unsigned pts_free_slots = p.pparams.pitch_pts-p.pparams.count_pts;
+
+            const float disabled_proportion = (float)p.get_disabled_pts()/p.pparams.count_pts;
+            if(disabled_proportion > SimParams::disabled_pts_proportion_threshold) squeeze_required = true;
+            const float free_space_proportion = (float)pts_free_slots/p.pparams.pitch_pts;
+            if(gpu.partitions.size() > 1 && free_space_proportion < SimParams::free_space_threshold) squeeze_required = true;
+        }
+        PrintTimingTable();
+
+        if(squeeze_required)
+        {
+            sim_data.hssoa.RemoveDisabledAndSort(sim_data.prms.GridYTotal);
+            gpu.split_hssoa_into_partitions();
+            gpu.transfer_to_device();
+            sim_data.waci.SetTime(prms.SimulationTime);
+            gpu.transfer_wind_and_current_data_to_device();
+            SyncTopologyRequired = true;
+            LOGR("Model::Step() squeezing and sorting HSSOA done\n");
+        }
     }
-    PrintTimingTable();
 
-    if(squeeze_required)
-    {
-        sim_data.hssoa.RemoveDisabledAndSort(sim_data.prms.GridYTotal);
-        gpu.split_hssoa_into_partitions();
-        gpu.transfer_to_device();
-        sim_data.waci.SetTime(prms.SimulationTime);
-        gpu.transfer_wind_and_current_data_to_device();
-        SyncTopologyRequired = true;
-        LOGR("Model::Step() squeezing and sorting HSSOA done\n");
-    }
-
-    lock_data_for_GUI.unlock();     // allow GUI to access the data
     if(transfer_completion_callback) transfer_completion_callback();    // signal GUI to udpate
 
     // snapshot is synchronous, frame save is async
@@ -90,9 +95,8 @@ bool Model::Step()
     m_save_future = std::async(std::launch::async, &HostSideData::SaveFrame, &sim_data,
                               sim_data.prms.SimulationStep, sim_data.prms.SimulationTime);
 
-    return (sim_data.prms.SimulationTime < sim_data.prms.SimulationEndTime && !gpu.error_code);
+    return (sim_data.prms.SimulationTime < sim_data.prms.SimulationEndTime && !gpu.error_code && sim_data.hssoa.size);
 }
-
 
 Model::Model() : gpu(sim_data), prms(sim_data.prms)
 {

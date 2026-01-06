@@ -49,6 +49,7 @@
 
 #include "visual_representation.h"
 #include "host_side_data.h"
+#include "render_selector_dialog.h"
 
 
 class PPMainWindow : public QMainWindow
@@ -74,6 +75,9 @@ private Q_SLOTS:
     void toggleScrollTracking(bool checked);
     void openProject_triggered();
     void openFrames_triggered();
+    void toggleRenderSelector();
+    void toggleContours(bool checked);
+    void contourIntervalChanged(double val);
 
 private:
     HostSideData hsd;
@@ -85,6 +89,7 @@ private:
     QComboBox *comboBox_visualizations;
     QDoubleSpinBox *qdsbValRange;   // high and low limits for value scale
     QDoubleSpinBox *qdsbTransparency;
+    QDoubleSpinBox *qdsbContourInterval;
 
     QSpinBox *qsbFrameFrom, *qsbFrameTo;
     QSlider *slider2;
@@ -102,22 +107,12 @@ private:
     // other
     vtkNew<vtkInteractorStyleImage> interactor;
 
+    // Render selector dialog
+    RenderSelectorDialog* m_renderSelectorDialog;
 
     void generate_ffmpeg_script(int frameFrom, int frameTo);
 
     // Grid size threshold for slider tracking behavior
     static constexpr int GRID_SIZE_TRACKING_THRESHOLD = 4000;
-
-    // List which visualization categories we render for batch operations
-    const std::vector<VisualRepresentation::VisOpt> m_visOptsToRender = {
-        VisualRepresentation::VisOpt::grid_colors,
-        VisualRepresentation::VisOpt::grid_mass,
-        VisualRepresentation::VisOpt::grid_Jpinv,
-        VisualRepresentation::VisOpt::grid_P,
-        VisualRepresentation::VisOpt::grid_Q,
-        VisualRepresentation::VisOpt::grid_vnorm,
-        VisualRepresentation::VisOpt::str_vonMises,
-        VisualRepresentation::VisOpt::grid_ridges
-    };
 };
 #endif

@@ -19,6 +19,7 @@
 #include <vtkActor2D.h>
 #include <vtkUnsignedCharArray.h>
 #include <vtkImageData.h>
+#include <vtkContourFilter.h>
 
 #include "colormap.h"
 
@@ -35,15 +36,17 @@ public:
     vtkNew<vtkActor> actor_points;
     vtkNew<vtkActor> raster_actor;
     vtkNew<vtkActor> actor_region_boundary;  // boundary lines for regions visualization
-    vtkNew<vtkActor> actor_debug_grid;       // debug grid points at 10-cell intervals
+
     vtkNew<vtkTextActor> actorText;
+    vtkNew<vtkTextActor> actorTextTitle;
     vtkNew<vtkScalarBarActor> scalarBar;
     vtkNew<vtkActor2D> textBgActor;
     vtkNew<vtkActor2D> scalarBarBgActor;
 
+
     HostSideData& hsd;
 
-    double wind_visualization_time = 0;
+
     double simulationTime = 0;
 
     enum VisOpt {
@@ -53,22 +56,38 @@ public:
         pt_status, pt_color,
         pt_Jp_inv, pt_ridges,
         pt_P, pt_Q, pt_thickness,
-        pt_partitions,
+        pt_partitions, // 10
         // grid-based visualizations
-        grid_ridges, grid_Jpinv, grid_mass, grid_pointdensity, grid_P, grid_Q,
-        grid_colors, grid_vnorm, grid_force,
+        grid_mass, grid_pt_count, grid_Jpinv,  grid_ridges, grid_P, grid_Q,
+        grid_colors, grid_vnorm, grid_cracked, grid_thickness,
         str_EqvGreenLagrange, str_vonMises,
         // visualization of external currents/forces (to be implemented later)
-        v_u, v_v, v_norm
+        v_norm
     };
     Q_ENUM(VisOpt)
+
+    inline static constexpr std::array<std::string_view, 23> visOptDescriptions = {
+        "", "Regions", "Status", "Color",
+        "Change in Surf. Density", "Ridges",
+        "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions",
+        "Mass", "Point count", "Jp_inv", "Ridges",
+
+        "In-plane Pressure P", "Deviatoric Stress Q",
+        "Colors", "|v|", "Cracked/Crushed Material",
+        "Green-Lagrange Strain", "von Mises Strain",
+        "Current Velocity Norm"   
+    };
+
 
     VisOpt VisualizingVariable = VisOpt::none;
     constexpr static int max_vis_opts = 50;
     double ranges[max_vis_opts] = {};
     double transparency_coeffs[max_vis_opts] = {};
 
-    bool enableDebugGrid = false;  // Debug grid only shown in plate_preparer
+
+
+
+    // actor_contours moved to top
 
     void SynchronizeTopology();
     void ChangeVisualizationOption(int option);
@@ -78,7 +97,7 @@ public:
 private:
     ColorMap colormap;
     void SynchronizeValues();
-    void SetupDebugGrid(int width, int height, double h);
+
     void SetupRegionBoundary(int gx, int gy, int ox, int oy, double h);  // draw rectangle for modeled area
 
     void SaveVisualizationState();

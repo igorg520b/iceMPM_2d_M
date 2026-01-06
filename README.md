@@ -229,24 +229,6 @@ Generated points are filtered by:
 2. **Land mask**: Points outside water/ice region are removed
 3. **Ice mask**: Only points in ice-covered areas are retained
 
-#### Point Color Assignment
-
-**Critical Timing**: Original image colors must be saved **before** water areas are painted blue.
-
-```cpp
-// Save original colors before PrepareGrid paints water blue
-std::vector<uint8_t> original_colors_copy = color_flipped;
-
-// PrepareGrid will paint water areas blue in original_image_colors_rgb
-PrepareGrid(landmask_flipped, color_flipped, ...);
-
-// PopulatePoints uses saved original colors for point visualization
-PopulatePoints(icemask_flipped, crushed_flipped, original_colors_copy, ...);
-```
-
-This ensures:
-- Grid visualization shows blue water for clarity
-- Material points retain original image colors for identification
 
 #### Point Data Storage (HostSideSOA)
 

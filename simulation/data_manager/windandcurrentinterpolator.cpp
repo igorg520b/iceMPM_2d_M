@@ -23,7 +23,6 @@ void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
     }
 
     hdf5_path = filePath;
-    LOGR("WindAndCurrentInterpolator::SetHDF5Path: {}", hdf5_path);
 
     // Lazily open file and load metadata
     LoadHDF5Metadata();
@@ -33,45 +32,42 @@ void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
 void WindAndCurrentInterpolator::LoadHDF5Metadata()
 {
     if (hdf5_path.empty()) {
-        LOGR("WindAndCurrentInterpolator: HDF5 path not set, no flow field available");
         return;
     }
 
-    try {
-        file = std::make_unique<H5::H5File>(hdf5_path, H5F_ACC_RDONLY);
+    file = std::make_unique<H5::H5File>(hdf5_path, H5F_ACC_RDONLY);
 
-        // Open dataset to get dimensions
-        H5::DataSet ds_vx = file->openDataSet("water_current_vx");
-        H5::DataSpace space = ds_vx.getSpace();
+    // 1. Read Flow Type from the root group attribute
+    H5::Group root = file->openGroup("/");
+    H5::Attribute attr_type = root.openAttribute("flow_type");
+    
+    // Read string attribute safely
+    H5::StrType str_type = attr_type.getStrType();
+    size_t len = str_type.getSize();
+    std::vector<char> buf(len + 1, '\0');
+    attr_type.read(str_type, buf.data());
+    flow_type_id = std::string(buf.data());
 
-        hsize_t dims[3];
-        space.getSimpleExtentDims(dims, NULL);
+    // 2. Branch based on Flow Type - Simplified: only standard "water_current_vx" supported now
+    // If flow_type_id == "Kelvin_wake" logic is removed. Assuming standard format.
 
-        num_frames = static_cast<int>(dims[0]);
-        gx = static_cast<int>(dims[1]);
-        gy = static_cast<int>(dims[2]);
+    // Standard wave/current flow
+    H5::DataSet ds_vx = file->openDataSet("water_current_vx");
+    H5::DataSpace space = ds_vx.getSpace();
+    hsize_t dims[3];
+    space.getSimpleExtentDims(dims, NULL);
+    num_frames = static_cast<int>(dims[0]);
+    gx = static_cast<int>(dims[1]);
+    gy = static_cast<int>(dims[2]);
 
-        // Read attributes
-        H5::Attribute attr_time = ds_vx.openAttribute("time_interval");
-        attr_time.read(H5::PredType::NATIVE_DOUBLE, &time_interval);
-
-        H5::Attribute attr_loop = ds_vx.openAttribute("loop_mode");
-        attr_loop.read(H5::PredType::NATIVE_INT, &loop_mode);
-
-        LOGR("WindAndCurrentInterpolator: Loaded metadata - num_frames={}, gx={}, gy={}, time_interval={}, loop_mode={}",
-             num_frames, gx, gy, time_interval, loop_mode);
-
-    } catch (const H5::Exception& e) {
-        LOGR("WindAndCurrentInterpolator: Failed to load HDF5 metadata: {}", e.getCDetailMsg());
-        throw std::runtime_error("Failed to load flow field HDF5 metadata");
-    }
+    ds_vx.openAttribute("time_interval").read(H5::PredType::NATIVE_DOUBLE, &time_interval);
+    ds_vx.openAttribute("loop_mode").read(H5::PredType::NATIVE_INT, &loop_mode);
 }
 
 
 void WindAndCurrentInterpolator::LoadFrame(int frameIdx, int bufferSlot)
 {
     if (!file) {
-        LOGR("WindAndCurrentInterpolator::LoadFrame: File not open, cannot load frame");
         return;
     }
 
@@ -109,66 +105,91 @@ void WindAndCurrentInterpolator::LoadFrame(int frameIdx, int bufferSlot)
         ds_vx.read(vx_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_DOUBLE, mem_space, space_vx);
         ds_vy.read(vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_DOUBLE, mem_space, space_vx);
 
-        LOGR("WindAndCurrentInterpolator: Loaded frame {} (actual idx {})", frameIdx, actualIdx);
-
     } catch (const H5::Exception& e) {
-        LOGR("WindAndCurrentInterpolator::LoadFrame: Failed to read frame: {}", e.getCDetailMsg());
         throw std::runtime_error("Failed to load flow field frame from HDF5");
     }
 }
 
-
 bool WindAndCurrentInterpolator::SetTime(double t)
 {
-//    LOGR("WindAndCurrentInterpolator::SetTime: t={}, hdf5_path.empty()={}, num_frames={}", t, hdf5_path.empty(), num_frames);
+    // If no flow field is initialized, return false (no change needed)
+    if (num_frames == 0) {
+        return false;
+    }
 
     // Calculate frame index from time
     double frame_idx_f;
     if (time_interval > 0.0) {
-        frame_idx_f = std::fmod(t / time_interval, static_cast<double>(num_frames));
+        frame_idx_f = t / time_interval;
     } else {
         // Static flow (time_interval == 0), always use frame 0
         frame_idx_f = 0.0;
     }
 
-    // Handle negative modulo
-    if (frame_idx_f < 0.0) frame_idx_f += num_frames;
+    // Handle frame index based on loop mode
+    if (loop_mode == 0) {
+        // Periodic: wrap around using modulo
+        frame_idx_f = std::fmod(frame_idx_f, static_cast<double>(num_frames));
+        if (frame_idx_f < 0.0) frame_idx_f += num_frames;
+    } else {
+        // Non-periodic (hold last frame): clamp to valid range
+        if (frame_idx_f > num_frames - 1) {
+            frame_idx_f = num_frames - 1;
+        }
+        if (frame_idx_f < 0.0) frame_idx_f = 0.0;
+    }
 
     int first_idx = static_cast<int>(std::floor(frame_idx_f));
-    int second_idx = (first_idx + 1) % num_frames;  // wraps automatically
+    int second_idx = first_idx;  // Will be set properly below
     double alpha = frame_idx_f - first_idx;
 
-//    LOGR("WindAndCurrentInterpolator::SetTime: frame_idx_f={}, first_idx={}, second_idx={}, alpha={}",
-//         frame_idx_f, first_idx, second_idx, alpha);
+    // Determine second frame index based on loop mode
+    if (loop_mode == 0) {
+        // Periodic: wrap to next frame
+        second_idx = (first_idx + 1) % num_frames;
+    } else {
+        // Non-periodic: clamp to last frame
+        second_idx = std::min(first_idx + 1, num_frames - 1);
+    }
 
-    // Handle non-periodic case: if at or beyond last frame, don't interpolate
-    if (loop_mode == 1 && first_idx >= num_frames - 1) {
-        second_idx = first_idx;
-        alpha = 0.0;
-//        LOGR("WindAndCurrentInterpolator::SetTime: Non-periodic, at/beyond last frame");
+    // Validate frame index combinations
+    bool valid_combination = false;
+    if (first_idx == second_idx && first_idx == num_frames - 1) {
+        // Case 1: Both at last frame (happens at end of non-periodic sequence)
+        valid_combination = true;
+    } else if (first_idx == second_idx - 1) {
+        // Case 2: Sequential frames (normal case)
+        valid_combination = true;
+    } else if (loop_mode == 0 && first_idx == num_frames - 1 && second_idx == 0) {
+        // Case 3: Periodic wrap-around at boundary
+        valid_combination = true;
+    }
+
+    if (!valid_combination) {
+        throw std::runtime_error(
+            fmt::format("Invalid frame index combination: first_idx={}, second_idx={}, num_frames={}, loop_mode={}",
+                        first_idx, second_idx, num_frames, loop_mode));
     }
 
     // Check if frames changed
-    if (first_idx != current_first_idx || second_idx != current_second_idx) {
-  //      LOGR("WindAndCurrentInterpolator::SetTime: Loading frames {} and {}", first_idx, second_idx);
+    bool frames_changed = (first_idx != current_first_idx || second_idx != current_second_idx);
+
+    if (frames_changed) {
         LoadFrame(first_idx, 0);
         LoadFrame(second_idx, 1);
         current_first_idx = first_idx;
         current_second_idx = second_idx;
-        current_alpha = alpha;
-//        LOGR("WindAndCurrentInterpolator::SetTime: Loaded new frames, buffer[0].size()={}, buffer[1].size()={}",
-//             vx_frame_buffer[0].size(), vx_frame_buffer[1].size());
-        return true;  // Frames changed, GPU upload needed
     }
 
-    // Update interpolation parameter even if frames didn't change
+    // Always update interpolation parameter (used by GetInterpolatedValue)
     current_alpha = alpha;
-//    LOGR("WindAndCurrentInterpolator::SetTime: Frames did not change");
-    return false;  // Frames didn't change
+
+    // Return true if frame indices changed (GPU upload needed), false otherwise
+    return frames_changed;
 }
 
 
-std::pair<double, double> WindAndCurrentInterpolator::GetInterpolatedValue(int i, int j, double t) const
+std::pair<double, double> WindAndCurrentInterpolator::GetInterpolatedValue(int i, int j) const
 {
     if (hdf5_path.empty() || num_frames == 0) {
         // No flow field, return zero velocity
@@ -187,7 +208,7 @@ std::pair<double, double> WindAndCurrentInterpolator::GetInterpolatedValue(int i
         return {vx_frame_buffer[0][idx], vy_frame_buffer[0][idx]};
     }
 
-    // General case: linear temporal interpolation
+    // General case: linear temporal interpolation using current_alpha
     double vx_first = vx_frame_buffer[0][idx];
     double vx_second = vx_frame_buffer[1][idx];
     double vy_first = vy_frame_buffer[0][idx];
@@ -198,3 +219,5 @@ std::pair<double, double> WindAndCurrentInterpolator::GetInterpolatedValue(int i
 
     return {vx, vy};
 }
+
+

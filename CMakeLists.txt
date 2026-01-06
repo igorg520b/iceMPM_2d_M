@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20.2)
 
-project(Plate_MPM LANGUAGES CXX C CUDA)
+project(inPlaneMPM LANGUAGES CXX C CUDA)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=esa_on_defaulted_function_ignored -use_fast_maths --expt-relaxed-constexpr")
@@ -238,6 +238,8 @@ if(BUILD_POSTPROCESSOR)
     	postprocessor/pp_main.cpp
     	postprocessor/window/pp_mainwindow.cpp
     	postprocessor/window/pp_mainwindow.h
+        postprocessor/window/render_selector_dialog.cpp
+        postprocessor/window/render_selector_dialog.h
         icons.qrc
 
         gui/vtk/visual_representation.cpp
@@ -265,7 +267,6 @@ if(BUILD_POSTPROCESSOR)
         simulation/data_manager/host_side_data.h
         simulation/data_manager/host_side_data.cpp
     )
-    set_source_files_properties(simulation/gpu_partition.cpp simulation/kernels.cu PROPERTIES LANGUAGE CUDA)
 
     target_include_directories(visualizer PRIVATE postprocessor postprocessor/window gui External gui/vtk)
     target_include_directories(visualizer PRIVATE simulation simulation/hssoa simulation/data_manager)
@@ -289,9 +290,6 @@ if(BUILD_POSTPROCESSOR)
     TARGETS visualizer
     MODULES ${VTK_LIBRARIES}
     )
-
-    set_target_properties(visualizer PROPERTIES CUDA_ARCHITECTURES "80;89")
-    set_target_properties(visualizer PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
     target_compile_options(visualizer PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
     target_link_libraries(visualizer PRIVATE gomp)
@@ -327,7 +325,7 @@ if(BUILD_PREPARER)
     ViewsQt
     )
 
-    add_executable(plate_preparer
+    add_executable(preparer
         preparer/preparer_main.cpp
         preparer/mainwindow.cpp
         preparer/mainwindow.h
@@ -366,14 +364,21 @@ if(BUILD_PREPARER)
         simulation/data_manager/poisson_disk_sampling.h
     )
 
-    target_link_libraries(plate_preparer PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES} ${VTK_LIBRARIES})
-    target_link_libraries(plate_preparer PRIVATE Qt${QT_VERSION_MAJOR}::Widgets )
+    # Note: preparer no longer uses CUDA for Kelvin wake computation
+    # Kelvin wake is computed on CPU using OpenMP
 
-    target_include_directories(plate_preparer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
-    target_include_directories(plate_preparer PRIVATE External preparer/vtk preparer/svg preparer/processing preparer gui/vtk gui simulation simulation/hssoa simulation/data_manager)
+    target_link_libraries(preparer PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES} ${VTK_LIBRARIES})
+    target_link_libraries(preparer PRIVATE Qt${QT_VERSION_MAJOR}::Widgets )
+
+    target_include_directories(preparer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_include_directories(preparer PRIVATE External preparer/vtk preparer/svg preparer/processing preparer gui/vtk gui simulation simulation/hssoa simulation/data_manager)
+
+    # OpenMP support for parallel Kelvin wake computation
+    target_compile_options(preparer PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+    target_link_libraries(preparer PRIVATE gomp)
 
     vtk_module_autoinit(
-    TARGETS plate_preparer
+    TARGETS preparer
     MODULES ${VTK_LIBRARIES}
     )
 

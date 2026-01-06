@@ -98,8 +98,9 @@ MainWindow::MainWindow(QWidget *parent)
     renderer->AddActor(representation.actor_points);
     renderer->AddActor(representation.raster_actor);
     renderer->AddActor(representation.actor_region_boundary);
-    renderer->AddActor(representation.actor_debug_grid);
+
     renderer->AddActor(representation.actorText);
+    renderer->AddActor(representation.actorTextTitle);
     renderer->AddActor(representation.scalarBar);
 
     // populate combobox
@@ -108,15 +109,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(comboBox_visualizations, QOverload<int>::of(&QComboBox::currentIndexChanged),
             [&](int index){ comboboxIndexChanged_visualizations(index); });
-
-
-    // slider
-    slider1 = new QSlider(Qt::Horizontal);
-    ui->toolBar->addWidget(slider1);
-    slider1->setTracking(true);
-    slider1->setMinimum(0);
-    slider1->setMaximum(10000);
-//    connect(slider1, SIGNAL(valueChanged(int)), this, SLOT(sliderValueChanged(int)));
 
 
     // read/restore saved settings
@@ -248,7 +240,10 @@ void MainWindow::quit_triggered()
 
 void MainWindow::comboboxIndexChanged_visualizations(int index)
 {
-    representation.ChangeVisualizationOption(index);
+    {
+        std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
+        representation.ChangeVisualizationOption(index);
+    }
     qdsbValRange->blockSignals(true);
     qdsbTransparency->blockSignals(true);
     qdsbValRange->setValue(representation.ranges[index]);
@@ -367,13 +362,6 @@ void MainWindow::spinbox_slowdown_value_changed(int val)
     model.intentionalSlowdown = val;
 }
 
-
-
-void MainWindow::sliderValueChanged(int val)
-{
-    LOGR("sliderValueChanged {}", val);
-    // currently not used
-}
 
 
 void MainWindow::parameters_updated()

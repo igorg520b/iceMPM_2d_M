@@ -26,14 +26,17 @@ public:
     // Set current time; return whether frame indices changed (data needs GPU upload)
     bool SetTime(double t);
 
-    // Get interpolated velocity at grid cell (i,j) and time t
+    // Get interpolated velocity at grid cell (i,j)
     // Assumes SetTime(t) has been called beforehand to set up frame buffers
-    // Returns (vx, vy) pair
-    std::pair<double, double> GetInterpolatedValue(int i, int j, double t) const;
+    // Returns (vx, vy) pair using current_alpha for interpolation
+    std::pair<double, double> GetInterpolatedValue(int i, int j) const;
+
+
 
     // GPU-accessible buffers (only 2 frames in RAM at a time)
     std::vector<double> vx_frame_buffer[2];  // frame data for GPU upload
     std::vector<double> vy_frame_buffer[2];
+
 
     // Interpolation parameter for temporal interpolation between frame buffers
     // Range: [0.0, 1.0] where 0.0 = at first frame, 1.0 = at second frame
@@ -53,6 +56,11 @@ private:
     // Current state
     int current_first_idx = -1;         // index of first cached frame
     int current_second_idx = -1;        // index of second cached frame
+
+    // Flow descriptor (read from HDF5 "/" group)
+    std::string flow_type_id = "";
+
+
 
     // Helper methods
     void LoadHDF5Metadata();

@@ -101,17 +101,39 @@ void ProxyPoint::setValueInt(size_t valueIdx, uint32_t value)
         *reinterpret_cast<uint32_t*>(&data[valueIdx]) = value;
 }
 
+uint64_t ProxyPoint::getValueUInt64(size_t valueIdx)
+{
+    if(isReference)
+        return *reinterpret_cast<uint64_t*>(&soa[pos + pitch*valueIdx]);
+    else
+        return *reinterpret_cast<uint64_t*>(&data[valueIdx]);
+}
+
+void ProxyPoint::setValueUInt64(size_t valueIdx, uint64_t value)
+{
+    if(isReference)
+        *reinterpret_cast<uint64_t*>(&soa[pos + pitch*valueIdx]) = value;
+    else
+        *reinterpret_cast<uint64_t*>(&data[valueIdx]) = value;
+}
+
 
 bool ProxyPoint::getCrushedStatus()
 {
     uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
-    return (val & 0x10000);
+    return (val & SimParams::status_crushed);
+}
+
+bool ProxyPoint::getCrackedStatus()
+{
+    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    return (val & SimParams::status_cracked);
 }
 
 bool ProxyPoint::getDisabledStatus()
 {
     uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
-    return (val & 0x20000);
+    return (val & SimParams::status_disabled);
 }
 
 

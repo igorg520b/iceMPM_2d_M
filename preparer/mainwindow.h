@@ -7,6 +7,8 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QMenuBar>
+#include <QStatusBar>
+#include <QLocale>
 #include <QSettings>
 
 #include <QVTKOpenGLNativeWidget.h>
@@ -57,6 +59,8 @@ private:
     QDoubleSpinBox *qdsbValRange;
     QDoubleSpinBox *qdsbTransparency;
     QSlider *flowTimeSlider;              // slider for flow field time control
+    QLabel *statusLabel;                  // status bar label for point count
+    QLabel *timeLabel;                    // status bar label for flow time display
 
     // VTK
     vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;

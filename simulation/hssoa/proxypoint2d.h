@@ -23,12 +23,15 @@ struct ProxyPoint
     void setValue(size_t valueIdx, double value);
     uint32_t getValueInt(size_t valueIdx);
     void setValueInt(size_t valueIdx, uint32_t value);
+    uint64_t getValueUInt64(size_t valueIdx);
+    void setValueUInt64(size_t valueIdx, uint64_t value);
     Eigen::Matrix2f getTensor(size_t valueIdx);
 
     Eigen::Vector2d getPos();
     Eigen::Vector2d getPos(double cellsize);
     Eigen::Vector2d getVelocity();
     bool getCrushedStatus();
+    bool getCrackedStatus();
     bool getDisabledStatus();
     uint16_t getGrain();
 

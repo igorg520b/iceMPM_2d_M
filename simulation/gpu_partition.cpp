@@ -36,6 +36,7 @@ GPU_Partition::~GPU_Partition()
     cudaStreamDestroy(streamCompute);
 
     cudaFree(pparams.buffer_grid);
+    cudaFree(pparams.buffer_grid_forcing);
     cudaFree(pparams.buffer_pts);
     cudaFree(pparams.buffer_grid_regions);
     cudaFree(pparams.pud);
@@ -91,11 +92,18 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     size_t total_allocated = 0; // count what we allocated
 
     const size_t grid_requested = sizeof(double) * gy * (gx_requested + 2*halo);
-    CUDA_CHECK(cudaMallocPitch (&pparams.buffer_grid, &pparams.pitch_grid, grid_requested, SimParams::nGridArrays));
-    total_allocated += pparams.pitch_grid * SimParams::nGridArrays;
+    CUDA_CHECK(cudaMallocPitch (&pparams.buffer_grid, &pparams.pitch_grid, grid_requested, SimParams::GPUGridArrayIndex::nGridArraysGPU));
+    total_allocated += pparams.pitch_grid * SimParams::GPUGridArrayIndex::nGridArraysGPU;
     if(pparams.pitch_grid % sizeof(double) != 0) throw std::runtime_error("pparams.pitch_grid % sizeof(double) != 0");
     pparams.pitch_grid /= sizeof(double); // assume that this divides without remainder
     pparams.gridX_alloc_capacity = gx_requested;
+
+    // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
+    const size_t grid_forcing_requested = sizeof(double) * gy * (gx_requested + 2*halo);
+    CUDA_CHECK(cudaMallocPitch(&pparams.buffer_grid_forcing, &pparams.pitch_grid_forcing, grid_forcing_requested, SimParams::nGridForcingArrays));
+    total_allocated += pparams.pitch_grid_forcing * SimParams::nGridForcingArrays;
+    if(pparams.pitch_grid_forcing % sizeof(double) != 0) throw std::runtime_error("pparams.pitch_grid_forcing % sizeof(double) != 0");
+    pparams.pitch_grid_forcing /= sizeof(double); // convert from bytes to elements
 
     // grid regions identifiers/indices
     const size_t grid_regions_size = sizeof(uint8_t) * gy * (gx_requested + 2*halo);
@@ -145,7 +153,7 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     // buffers for transferring gird data
     //pparams.transfer_buffer_width = (prms.GridXTotal + 2*halo);   // for testing
     pparams.transfer_buffer_width = 2*prms.GridHaloSize;
-    const int nGridArraysToTransfer = SimParams::nGridArrays - 2;
+    const int nGridArraysToTransfer = SimParams::GPUGridArrayIndex::nGridArraysGPU; // GPU grid arrays only
     size_t transfer_buffer_size = nGridArraysToTransfer * sizeof(double) * pparams.transfer_buffer_width * prms.GridYTotal;
     for(int i=0;i<2;i++)
     {
@@ -290,25 +298,27 @@ void GPU_Partition::update_current_field(const WindAndCurrentInterpolator &wac)
 
     const size_t transfer_size = transfer_width * gy * sizeof(double);
 
-    // Transfer frame 0 (vx and vy)
-    const double* src_vx_frame0 = wac.vx_frame_buffer[0].data() + gy * offset_wac;
-    const double* src_vy_frame0 = wac.vy_frame_buffer[0].data() + gy * offset_wac;
+    // Transfer frames (vx, vy, eta, d_eta_dx, d_eta_dy) to grid_forcing_buffer
+    for(int frame = 0; frame < 2; ++frame)
+    {
+        const double* src_vx = wac.vx_frame_buffer[frame].data() + gy * offset_wac;
+        const double* src_vy = wac.vy_frame_buffer[frame].data() + gy * offset_wac;
 
-    double* dst_vx_frame0 = pparams.buffer_grid + pparams.pitch_grid * SimParams::grid_idx_current_vx_frame0 + gy * offset_gpu;
-    double* dst_vy_frame0 = pparams.buffer_grid + pparams.pitch_grid * SimParams::grid_idx_current_vy_frame0 + gy * offset_gpu;
+        // Determine destination indices based on frame using GridForcingFramesIndex
+        size_t idx_vx = SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame0;
+        size_t idx_vy = SimParams::GridForcingFramesIndex::grid_idx_current_vy_frame0;
+        
+        if (frame == 1) {
+            idx_vx = SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame1;
+            idx_vy = SimParams::GridForcingFramesIndex::grid_idx_current_vy_frame1;
+        }
 
-    CUDA_CHECK(cudaMemcpyAsync(dst_vx_frame0, src_vx_frame0, transfer_size, cudaMemcpyHostToDevice, streamCompute));
-    CUDA_CHECK(cudaMemcpyAsync(dst_vy_frame0, src_vy_frame0, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+        double* dst_vx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vx + gy * offset_gpu;
+        double* dst_vy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vy + gy * offset_gpu;
 
-    // Transfer frame 1 (vx and vy)
-    const double* src_vx_frame1 = wac.vx_frame_buffer[1].data() + gy * offset_wac;
-    const double* src_vy_frame1 = wac.vy_frame_buffer[1].data() + gy * offset_wac;
-
-    double* dst_vx_frame1 = pparams.buffer_grid + pparams.pitch_grid * SimParams::grid_idx_current_vx_frame1 + gy * offset_gpu;
-    double* dst_vy_frame1 = pparams.buffer_grid + pparams.pitch_grid * SimParams::grid_idx_current_vy_frame1 + gy * offset_gpu;
-
-    CUDA_CHECK(cudaMemcpyAsync(dst_vx_frame1, src_vx_frame1, transfer_size, cudaMemcpyHostToDevice, streamCompute));
-    CUDA_CHECK(cudaMemcpyAsync(dst_vy_frame1, src_vy_frame1, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+        CUDA_CHECK(cudaMemcpyAsync(dst_vx, src_vx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+        CUDA_CHECK(cudaMemcpyAsync(dst_vy, src_vy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+    }
 
     CUDA_CHECK(cudaStreamSynchronize(streamCompute));
 
@@ -340,7 +350,7 @@ void GPU_Partition::update_constants()
 void GPU_Partition::reset_grid()
 {
     CUDA_CHECK(cudaSetDevice(Device));
-    const size_t arrays_to_clear = 3;   // mass, px, py
+    const size_t arrays_to_clear = SimParams::grid_arrays_to_clear;
     const size_t gridArraySize = pparams.pitch_grid * arrays_to_clear * sizeof(double);
     CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, gridArraySize, streamCompute));
 }
@@ -350,7 +360,34 @@ void GPU_Partition::clear_force_accumulator()
     CUDA_CHECK(cudaSetDevice(Device));
     const size_t arrays_to_clear = 2;   // fx, fy
     const size_t bytes_to_clear = pparams.pitch_grid * arrays_to_clear * sizeof(double);
-    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid + pparams.pitch_grid*SimParams::grid_idx_fx, 0, bytes_to_clear, streamCompute));
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid + pparams.pitch_grid*SimParams::GPUGridArrayIndex::gpu_grid_idx_fx, 0, bytes_to_clear, streamCompute));
+}
+
+
+void GPU_Partition::summarize_forces()
+{
+    CUDA_CHECK(cudaSetDevice(Device));
+
+    // Summarize forces accumulated in fx, fy into per-region array
+    const size_t nGridNodes = prms.GridYTotal * (pparams.partition_gridX + 2*prms.GridHaloSize);
+    const int &tpb = prms.tpb_Upd;
+    const int nBlocks = (nGridNodes + tpb - 1) / tpb;
+
+    CUDA_CHECK(cudaMemsetAsync(pparams.grid_forces_summary_per_region, 0, sizeof(double)*(SimParams::MAX_REGIONS+1), streamCompute));
+    partition_kernel_summarize_forces<<<nBlocks, tpb, 0, streamCompute>>>(pparams);
+    if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("partition_kernel_summarize_forces");
+}
+
+
+void GPU_Partition::transfer_force_summary_from_device()
+{
+    CUDA_CHECK(cudaSetDevice(Device));
+
+    // Transfer accumulated forces from GPU to host
+    const size_t transfer_bytes = sizeof(double)*SimParams::MAX_REGIONS*2;
+    CUDA_CHECK(cudaMemcpyAsync(host_grid_forces_summary_per_region,
+                               pparams.grid_forces_summary_per_region,
+                               transfer_bytes, cudaMemcpyDeviceToHost, streamCompute));
 }
 
 
@@ -461,28 +498,6 @@ void GPU_Partition::receive_halos()
 }
 
 
-void GPU_Partition::receive_render_halos()
-{
-    CUDA_CHECK(cudaSetDevice(Device));
-
-    const int &tpb = prms.tpb_Upd;   // threads per block
-    const size_t elem_count = 2 * prms.GridHaloSize * prms.GridYTotal;
-    const int blocksPerGrid = (elem_count + tpb - 1) / tpb;
-    if(pparams.PartitionID != 0)
-        partition_kernel_receive_render_subgrid<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams, 0,
-                                                                                   0, 2 * prms.GridHaloSize,
-                                                                                          SimParams::nGridArrays-2);
-    if(pparams.PartitionID != prms.nPartitions-1)
-        partition_kernel_receive_render_subgrid<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams, 1,
-                                                                                   pparams.partition_gridX,
-                                                                                   2 * prms.GridHaloSize,
-SimParams::nGridArrays-2);
-
-    cudaError_t err = cudaGetLastError();
-    if(err != cudaSuccess) throw std::runtime_error("receive_halos kernel execution");
-}
-
-
 void GPU_Partition::evaluate_halo_diffusion()
 {
     CUDA_CHECK(cudaSetDevice(Device));
@@ -554,43 +569,26 @@ void GPU_Partition::receive_points(const unsigned fromLeft, const unsigned fromR
 
 // ================================
 
-void GPU_Partition::render_visualized_data()
+void GPU_Partition::render_visualized_data(int group)
 {
     CUDA_CHECK(cudaSetDevice(Device));
 
-    // clear rendered arrays
-    const size_t arrays_to_clear = 12;   // mass,...,grid_idx_vis_pts_density
-    const size_t gridArraySize = pparams.pitch_grid * arrays_to_clear * sizeof(double);
-    //double *ptr = pparams.getGridLine(SimParams::grid_idx_vis_r);
-    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, gridArraySize, streamCompute));
-
-    // also clear force accumulator
-    CUDA_CHECK(cudaMemsetAsync(pparams.grid_forces_summary_per_region, 0, sizeof(double)*(SimParams::MAX_REGIONS+1), streamCompute));
-
-    // render
     const int &n = pparams.count_pts;
     const int &tpb = prms.tpb_P2G;
     const int blocksPerGrid = (n + tpb - 1) / tpb;
-    partition_kernel_render_results<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams);
+
+    // Render visualization data for specified group
+    // Group 1: mass, momentum, angular momentum, strain measures (slots 0-9)
+    // Group 2: RGB, Jpinv, P, Q, moment tensor components (slots 0-9 reused)
+    // Group 3: curvature, shear strain, angular velocity, rotation angles (slots 0-6 reused)
+
+    // Clear all GPU array slots before this group
+    size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
+
+    // Render particle results into visualization arrays for this group
+    partition_kernel_render_results<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams, group);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("render visualized data");
-
-    // reduction operation on grid forces
-    const size_t nGridNodes = prms.GridYTotal * (pparams.partition_gridX + 2*prms.GridHaloSize);
-    const int &tpb2 = prms.tpb_Upd;
-    const int nBlocks = (nGridNodes + tpb2 - 1) / tpb2;
-    partition_kernel_summarize_forces<<<nBlocks, tpb2, 0, streamCompute>>>(pparams);
-    if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("partition_kernel_summarize_forces");
 }
 
 
-void GPU_Partition::normalize_visualized_data()
-{
-    CUDA_CHECK(cudaSetDevice(Device));
-
-    // reduction operation on grid forces
-    const size_t nGridNodes = prms.GridYTotal * (pparams.partition_gridX + 2*prms.GridHaloSize);
-    const int &tpb2 = prms.tpb_Upd;
-    const int nBlocks = (nGridNodes + tpb2 - 1) / tpb2;
-    partition_kernel_normalize_render<<<nBlocks, tpb2, 0, streamCompute>>>(pparams);
-    if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("partition_kernel_summarize_forces");
-}

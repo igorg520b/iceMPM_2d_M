@@ -53,7 +53,8 @@ public:
     void PrepareGridAndPoints(std::string fileNameLandMask, std::string fileNameColor,
                               std::string fileNameIceMask, std::string fileNameCrushedMask,
                               std::string projectDirectory, double dimensionHorizontal, int pointsPerCell,
-                              double thicknessFrom = 1.0, double thicknessTo = 1.0);
+                              double thicknessFrom = 1.0, double thicknessTo = 1.0,
+                              std::string fileNameThicknessMask = "");
 
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "");
@@ -81,7 +82,8 @@ private:
                      int imgWidth, int imgHeight, std::string projectDirectory, double dimensionHorizontal);
     void PopulatePoints(const std::vector<uint8_t> &icemask, const std::vector<uint8_t> &crushed,
                         const std::vector<uint8_t> &original_colors, int imgWidth, int imgHeight, int pointsPerCell,
-                        double thicknessFrom = 1.0, double thicknessTo = 1.0);
+                        double thicknessFrom = 1.0, double thicknessTo = 1.0,
+                        const std::vector<uint8_t> &thicknessMask = {});
 
     // Poisson point generation helpers
     static std::string prepare_cache_filename(int gx, int gy, int ppc);
