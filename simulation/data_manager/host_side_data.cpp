@@ -221,6 +221,7 @@ void HostSideData::LoadGridDataFromFile(const std::string& gridFilePath)
 
 void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::string fileNameColor,
                                        std::string fileNameIceMask, std::string fileNameCrushedMask,
+                                       std::string fileNameCrackedMask,
                                        std::string projectDirectory, double dimensionHorizontal, int pointsPerCell,
                                        double thicknessFrom, double thicknessTo, std::string fileNameThicknessMask)
 {
@@ -298,6 +299,25 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
         has_crushed_mask = true;
     }
 
+    // Load cracked mask if provided (optional)
+    std::vector<uint8_t> cracked_vec(width * height, 255); // Default to white (not cracked)
+    if (!fileNameCrackedMask.empty()) {
+        int channels_cracked, width_cracked, height_cracked;
+        unsigned char *cracked_raw = stbi_load(fileNameCrackedMask.c_str(), &width_cracked, &height_cracked, &channels_cracked, 1);
+        if (!cracked_raw) {
+            throw std::runtime_error("Failed to load ImageCrackedMask: " + fileNameCrackedMask);
+        }
+        if (width_cracked != width || height_cracked != height) {
+            stbi_image_free(cracked_raw);
+            throw std::runtime_error(
+                fmt::format("ImageCrackedMask dimension mismatch: expected {}x{}, got {}x{}",
+                           width, height, width_cracked, height_cracked)
+            );
+        }
+        cracked_vec.assign(cracked_raw, cracked_raw + width * height);
+        stbi_image_free(cracked_raw);
+    }
+
     // Load or generate thickness mask (optional)
     std::vector<uint8_t> thickness_vec;
     bool has_thickness_mask = false;
@@ -334,6 +354,7 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     std::vector<uint8_t> color_flipped(width * height * 3);
     std::vector<uint8_t> icemask_flipped(width * height);
     std::vector<uint8_t> crushed_flipped(width * height);
+    std::vector<uint8_t> cracked_flipped(width * height);
     std::vector<uint8_t> thickness_flipped(width * height);
 
     for (int y = 0; y < height; y++) {
@@ -342,6 +363,7 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
             landmask_flipped[x + y * width] = landmask_vec[x + y_flipped * width];
             icemask_flipped[x  + y * width] = icemask_vec[x  + y_flipped * width];
             crushed_flipped[x  + y * width] = crushed_vec[x  + y_flipped * width];
+            cracked_flipped[x  + y * width] = cracked_vec[x  + y_flipped * width];
             thickness_flipped[x + y * width] = thickness_vec[x + y_flipped * width];
             for (int c = 0; c < 3; c++) {
                 color_flipped[(x + y * width) * 3 + c] = color_vec[(x + y_flipped * width) * 3 + c];
@@ -358,7 +380,7 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     PrepareGrid(landmask_flipped, color_flipped, width, height, projectDirectory, dimensionHorizontal);
 
     // Process points using original colors (before blue painting)
-    PopulatePoints(icemask_flipped, crushed_flipped, original_colors_copy, width, height, pointsPerCell,
+    PopulatePoints(icemask_flipped, crushed_flipped, cracked_flipped, original_colors_copy, width, height, pointsPerCell,
                    thicknessFrom, thicknessTo, thickness_flipped);
 
     LOGR("PrepareGridAndPoints: completed");
@@ -625,6 +647,7 @@ void HostSideData::generate_and_save_poisson(int gx, int gy, float points_per_ce
 // =============================  POPULATE POINTS
 
 void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std::vector<uint8_t> &crushed,
+                                  const std::vector<uint8_t> &cracked,
                                   const std::vector<uint8_t> &original_colors, int imgWidth, int imgHeight, int pointsPerCell,
                                   double thicknessFrom, double thicknessTo, const std::vector<uint8_t> &thicknessMask)
 {
@@ -775,6 +798,16 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
 
         if (is_crushed) {
             utility_data |= SimParams::status_crushed;  // Crushed flag (bit 16)
+        }
+        
+        // Determine cracked status
+        if (!cracked.empty()) {
+            // White (255) = Not cracked
+            // Anything else = Cracked
+            uint8_t cracked_pixel = cracked[(i + ox) + (j + oy) * width];
+            if (cracked_pixel < 255) {
+                utility_data |= SimParams::status_cracked;
+            }
         }
         
         // Initialize partition index (bits 0-15) to 0 (will be set later)

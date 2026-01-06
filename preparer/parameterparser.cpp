@@ -39,6 +39,7 @@ void ParameterParser::LoadParamsFile(std::string fileName)
 
     if(doc.HasMember("ImageColor")) ImageColor = doc["ImageColor"].GetString();
     if(doc.HasMember("ImageCrushedMask")) ImageCrushedMask = doc["ImageCrushedMask"].GetString();
+    if(doc.HasMember("ImageCrackedMask")) ImageCrackedMask = doc["ImageCrackedMask"].GetString();
     if(doc.HasMember("ImageLandMask")) ImageLandMask = doc["ImageLandMask"].GetString();
     if(doc.HasMember("ImageThicknessMask")) ImageThicknessMask = doc["ImageThicknessMask"].GetString();
 

@@ -425,15 +425,12 @@ void VisualRepresentation::SynchronizeValues()
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
             uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            
-            std::array<uint8_t, 3> c = {255, 255, 255}; // Default Intact (White)
-            
+            std::array<uint8_t, 3> c = ColorMap::rgb_white; // Default Intact (White)
             if (utility & SimParams::status_crushed) {
-                c = {255, 0, 0}; // Crushed (Red)
+                c = ColorMap::rgb_red; // Crushed (Red)
             } else if (utility & SimParams::status_cracked) {
-                c = {0, 255, 0}; // Cracked (Green)
+                c = ColorMap::rgb_green; // Cracked (Green)
             }
-            
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
     } else if (VisualizingVariable == VisOpt::none) {

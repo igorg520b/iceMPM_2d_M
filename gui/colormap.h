@@ -37,6 +37,7 @@ public:
     inline static constexpr std::array<uint8_t, 3> rgb_crushed_overlay = {50, 50, 50};  // Dark grey for crushed regions
     inline static constexpr std::array<uint8_t, 3> rgb_red = {255, 0, 0};  // Red for damage visualization
     inline static constexpr std::array<uint8_t, 3> rgb_green = {0, 128, 0};
+    inline static constexpr std::array<uint8_t, 3> rgb_white = {255, 255, 255};
 };
 
 

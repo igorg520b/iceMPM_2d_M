@@ -13,7 +13,7 @@
 struct ParameterParser
 {
     std::string ProjectName, ProjectDirectory;
-    std::string ImageColor, ImageCrushedMask, ImageIceMask, ImageLandMask, ImageThicknessMask;
+    std::string ImageColor, ImageCrushedMask, ImageCrackedMask, ImageIceMask, ImageLandMask, ImageThicknessMask;
     std::string ConfigFileDirectory;  // directory containing the JSON config file
     int PointsPerCell = 5;
     int height = 0;

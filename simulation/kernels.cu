@@ -377,7 +377,6 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
 
     const double utility_double = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_utility_data];
     unsigned long long utility = __double_as_longlong(utility_double);
-    unsigned long long utility_original = utility;
 
     if(utility & SimParams::status_disabled) return; // point is disabled
 

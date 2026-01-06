@@ -188,12 +188,14 @@ void MainWindow::LoadParameterFile(QString fileName)
         std::string icemaskPath = configDir + "/" + params.ImageIceMask;
         // Crushed mask is optional - only construct path if provided
         std::string crushedmaskPath = params.ImageCrushedMask.empty() ? "" : (configDir + "/" + params.ImageCrushedMask);
+        // Cracked mask is optional - only construct path if provided
+        std::string crackedmaskPath = params.ImageCrackedMask.empty() ? "" : (configDir + "/" + params.ImageCrackedMask);
         // Thickness mask is optional - only construct path if provided
         std::string thicknessmaskPath = params.ImageThicknessMask.empty() ? "" : (configDir + "/" + params.ImageThicknessMask);
         std::string projectDir = params.ProjectDirectory;
 
         // Unified grid and points preparation (loads images once, flips them, then processes)
-        hsd.PrepareGridAndPoints(landmaskPath, colorPath, icemaskPath, crushedmaskPath,
+        hsd.PrepareGridAndPoints(landmaskPath, colorPath, icemaskPath, crushedmaskPath, crackedmaskPath,
                                  projectDir, params.DimensionHorizontal, params.PointsPerCell,
                                  params.ThicknessFrom, params.ThicknessTo, thicknessmaskPath);
 

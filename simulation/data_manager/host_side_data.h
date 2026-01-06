@@ -52,6 +52,7 @@ public:
 
     void PrepareGridAndPoints(std::string fileNameLandMask, std::string fileNameColor,
                               std::string fileNameIceMask, std::string fileNameCrushedMask,
+                              std::string fileNameCrackedMask,
                               std::string projectDirectory, double dimensionHorizontal, int pointsPerCell,
                               double thicknessFrom = 1.0, double thicknessTo = 1.0,
                               std::string fileNameThicknessMask = "");
@@ -81,6 +82,7 @@ private:
     void PrepareGrid(const std::vector<uint8_t> &landmask, std::vector<uint8_t> &color,
                      int imgWidth, int imgHeight, std::string projectDirectory, double dimensionHorizontal);
     void PopulatePoints(const std::vector<uint8_t> &icemask, const std::vector<uint8_t> &crushed,
+                        const std::vector<uint8_t> &cracked,
                         const std::vector<uint8_t> &original_colors, int imgWidth, int imgHeight, int pointsPerCell,
                         double thicknessFrom = 1.0, double thicknessTo = 1.0,
                         const std::vector<uint8_t> &thicknessMask = {});

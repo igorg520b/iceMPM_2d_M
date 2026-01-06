@@ -5,6 +5,7 @@
 "ImageIceMask":"ice.png",
 "ImageLandMask":"land.png",
 "ImageThicknessMask":"thickness.png",
+"ImageCrackedMask":"cracked.png",
 
 "ThicknessFrom":0.8,
 "ThicknessTo":1.2,
