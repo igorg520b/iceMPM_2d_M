@@ -18,7 +18,6 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
-#include <H5Cpp.h>
 // variables related to the formulation of the model
 
 struct SimParams
@@ -111,7 +110,12 @@ public:
          grid_idx_current_vx_frame1 = 2,
          grid_idx_current_vy_frame1 = 3,
          
-         nGridForcingArrays = 4
+         grid_idx_wind_vx_frame0 = 4,
+         grid_idx_wind_vy_frame0 = 5,
+         grid_idx_wind_vx_frame1 = 6,
+         grid_idx_wind_vy_frame1 = 7,
+
+         nGridForcingArrays = 8
     };
 
     // index of the corresponding array in SoA
@@ -163,6 +167,16 @@ public:
     // wind and/or current data
     double windDragCoeff_airDensity;
     double waterDragEffectiveLinear, waterDragEffectiveQuadratic;
+
+    // Wind and ERA5 Data
+    bool UseWindData;
+
+    // Orthographic Projection Parameters
+    double PROJ_LAT_0;
+    double PROJ_LON_0;
+    static constexpr double PROJ_R = 6371000.0;
+    double PROJ_TRANSFORM_COEFFS[6];
+    double PROJ_RESIZE_FACTOR;
 
     // material properties
     double IceDensity, PoissonsRatio, YoungsModulus;

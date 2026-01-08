@@ -8,9 +8,12 @@
 #include <string>
 #include <string_view>
 #include <filesystem>
+#include <memory>
 
-#include <H5Cpp.h>
 #include <Eigen/Core>
+
+// Forward decl
+namespace H5 { class H5File; }
 
 #include "gui/colormap.h"
 #include "parameters_sim.h"

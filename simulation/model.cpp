@@ -29,9 +29,11 @@ bool Model::Step()
         bool frames_changed = false;
         {
             std::lock_guard<std::mutex> lg(lock_data_for_GUI);
-            frames_changed = sim_data.waci.SetTime(simulation_time);
+            auto [ocean_changed, wind_changed] = sim_data.waci.SetTime(simulation_time);
+            if(ocean_changed) gpu.update_ocean_current_field(sim_data.waci);
+            if(wind_changed) gpu.update_wind_field(sim_data.waci);
+            frames_changed = ocean_changed || wind_changed;
         }
-        if(frames_changed) gpu.transfer_wind_and_current_data_to_device();
 
         gpu.update_nodes(simulation_time, 0, 0);
         const bool isCycleEnd = (step + 1) % sim_data.prms.UpdateEveryNthStep == 0;
@@ -79,7 +81,8 @@ bool Model::Step()
             gpu.split_hssoa_into_partitions();
             gpu.transfer_to_device();
             sim_data.waci.SetTime(prms.SimulationTime);
-            gpu.transfer_wind_and_current_data_to_device();
+            gpu.update_ocean_current_field(sim_data.waci);
+            gpu.update_wind_field(sim_data.waci);
             SyncTopologyRequired = true;
             LOGR("Model::Step() squeezing and sorting HSSOA done\n");
         }
@@ -116,7 +119,8 @@ void Model::Prepare()
     LOGR("Model::Prepare()");
     gpu.update_constants();
     sim_data.waci.SetTime(prms.SimulationTime);
-    gpu.transfer_wind_and_current_data_to_device();
+    gpu.update_ocean_current_field(sim_data.waci);
+    gpu.update_wind_field(sim_data.waci);
 }
 
 
@@ -226,8 +230,16 @@ void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFi
     // Load flow field data (mandatory)
     std::filesystem::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
     sim_data.waci.SetHDF5Path(flowPath.string());
+    
+    // Load ERA5 if present
+    if (parseResult.count("ERA5Data")) {
+        std::filesystem::path era5Path = jsonFileDir / parseResult["ERA5Data"];
+        sim_data.waci.SetEra5Path(era5Path.string());
+    }
+
     sim_data.waci.SetTime(sim_data.prms.SimulationTime);
-    gpu.transfer_wind_and_current_data_to_device();
+    gpu.update_ocean_current_field(sim_data.waci);
+    gpu.update_wind_field(sim_data.waci);
 
     // Print memory allocation summary
     LOGR("");

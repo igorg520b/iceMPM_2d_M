@@ -329,6 +329,13 @@ void VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
                 }
+                else if (VisualizingVariable == VisOpt::v_wind_norm) {
+                    auto [vx, vy] = hsd.waci.GetWindValue(i, j);
+                    double val = std::sqrt(vx * vx + vy * vy);
+                    // use same colormap as v_norm for consistency
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
+                }
             } else {
                 // Non-modeled area
                 if (VisualizingVariable == VisOpt::regions) {
@@ -607,6 +614,7 @@ void VisualRepresentation::ConfigureScalarBar()
     case VisOpt::grid_pt_count: // Enable scalar bar
     case VisOpt::grid_mass:
     case VisOpt::v_norm:
+    case VisOpt::v_wind_norm:
         lut_ANSYS->SetTableRange(0, range);
         scalarBar->SetLookupTable(lut_ANSYS);
         scalarBar->SetLabelFormat("%.1e");

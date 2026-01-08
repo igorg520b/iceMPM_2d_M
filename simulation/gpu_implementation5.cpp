@@ -681,12 +681,19 @@ void GPU_Implementation5::reset_timings()
 
 
 
-void GPU_Implementation5::transfer_wind_and_current_data_to_device()
+void GPU_Implementation5::update_ocean_current_field(const WindAndCurrentInterpolator &wac)
 {
-    LOGR("GPU_Implementation5::transfer_wind_and_current_data_to_device()");
     for(GPU_Partition &p : partitions)
     {
-        p.update_current_field(hsd.waci);
+        p.update_ocean_current_field(wac);
+    }
+}
+
+void GPU_Implementation5::update_wind_field(const WindAndCurrentInterpolator &wac)
+{
+    for(GPU_Partition &p : partitions)
+    {
+        p.update_wind_field(wac);
     }
 }
 

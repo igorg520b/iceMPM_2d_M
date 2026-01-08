@@ -59,7 +59,8 @@ struct GPU_Partition
     void transfer_grid_data_to_device(GPU_Implementation5* gpu);
     void update_constants();
 
-    void update_current_field(const WindAndCurrentInterpolator &wac);
+    void update_ocean_current_field(const WindAndCurrentInterpolator &wac);
+    void update_wind_field(const WindAndCurrentInterpolator &wac);
 
     void transfer_from_device(HostSideSOA &hssoa, const int point_idx_offset);
 

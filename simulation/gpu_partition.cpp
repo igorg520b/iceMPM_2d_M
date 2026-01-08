@@ -278,7 +278,7 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 }
 
 
-void GPU_Partition::update_current_field(const WindAndCurrentInterpolator &wac)
+void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator &wac)
 {
     CUDA_CHECK(cudaSetDevice(Device));
 
@@ -298,7 +298,7 @@ void GPU_Partition::update_current_field(const WindAndCurrentInterpolator &wac)
 
     const size_t transfer_size = transfer_width * gy * sizeof(double);
 
-    // Transfer frames (vx, vy, eta, d_eta_dx, d_eta_dy) to grid_forcing_buffer
+    // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
     {
         const double* src_vx = wac.vx_frame_buffer[frame].data() + gy * offset_wac;
@@ -322,7 +322,60 @@ void GPU_Partition::update_current_field(const WindAndCurrentInterpolator &wac)
 
     CUDA_CHECK(cudaStreamSynchronize(streamCompute));
 
-    LOGR("PID {}; offset{}; size {}; transfer_width {} (src_x_wac {} → dst_x {})",
+    LOGR("PID {}; update_ocean_current_field; offset{}; size {}; transfer_width {} (src_x_wac {} → dst_x {})",
+         pparams.PartitionID, pparams.gridX_offset, pparams.partition_gridX,
+         transfer_width, offset_wac, offset_gpu);
+}
+
+void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
+{
+    if (!prms.UseWindData) return;
+
+    CUDA_CHECK(cudaSetDevice(Device));
+
+    const int &gy = prms.GridYTotal;
+    const int &gx_total = prms.GridXTotal;
+    const int halo = prms.GridHaloSize;
+
+    IntInterval gpuBufferInterval((int)pparams.gridX_offset - halo,
+                                  pparams.gridX_offset + pparams.partition_gridX + halo);
+
+    IntInterval wacInterval(0, gx_total);
+
+    IntInterval gpuInWAC = gpuBufferInterval.intersect(wacInterval);
+    int transfer_width = gpuInWAC.size();
+    int offset_gpu = gpuInWAC.offset_within(gpuBufferInterval);
+    int offset_wac = gpuInWAC.offset_within(wacInterval);
+
+    const size_t transfer_size = transfer_width * gy * sizeof(double);
+
+    // Transfer frames (vx, vy) to grid_forcing_buffer
+    for(int frame = 0; frame < 2; ++frame)
+    {
+        // Need to check if wind buffers are allocated
+        if (!wac.wind_vx_frame_buffer[frame].empty()) {
+            const double* src_wvx = wac.wind_vx_frame_buffer[frame].data() + gy * offset_wac;
+            const double* src_wvy = wac.wind_vy_frame_buffer[frame].data() + gy * offset_wac;
+
+            size_t idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame0;
+            size_t idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame0;
+
+            if (frame == 1) {
+                idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame1;
+                idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame1;
+            }
+
+            double* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + gy * offset_gpu;
+            double* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + gy * offset_gpu;
+
+            CUDA_CHECK(cudaMemcpyAsync(dst_wvx, src_wvx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+            CUDA_CHECK(cudaMemcpyAsync(dst_wvy, src_wvy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+        }
+    }
+
+    CUDA_CHECK(cudaStreamSynchronize(streamCompute));
+
+    LOGR("PID {}; update_wind_field; offset{}; size {}; transfer_width {} (src_x_wac {} → dst_x {})",
          pparams.PartitionID, pparams.gridX_offset, pparams.partition_gridX,
          transfer_width, offset_wac, offset_gpu);
 }

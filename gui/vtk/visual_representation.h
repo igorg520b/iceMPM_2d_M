@@ -61,12 +61,13 @@ public:
         grid_mass, grid_pt_count, grid_Jpinv,  grid_ridges, grid_P, grid_Q,
         grid_colors, grid_vnorm, grid_cracked, grid_thickness,
         str_EqvGreenLagrange, str_vonMises,
-        // visualization of external currents/forces (to be implemented later)
-        v_norm
+        // visualization of external currents/forces
+        v_norm,
+        v_wind_norm
     };
     Q_ENUM(VisOpt)
 
-    inline static constexpr std::array<std::string_view, 23> visOptDescriptions = {
+    inline static constexpr std::array<std::string_view, 24> visOptDescriptions = {
         "", "Regions", "Status", "Color",
         "Change in Surf. Density", "Ridges",
         "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions",
@@ -75,7 +76,7 @@ public:
         "In-plane Pressure P", "Deviatoric Stress Q",
         "Colors", "|v|", "Cracked/Crushed Material",
         "Green-Lagrange Strain", "von Mises Strain",
-        "Current Velocity Norm"   
+        "Current Velocity Norm", "Wind Velocity Norm"
     };
 
 

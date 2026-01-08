@@ -207,6 +207,36 @@ void MainWindow::LoadParameterFile(QString fileName)
         QString pointCountStr = locale.toString((int)numPoints);
         statusLabel->setText(QString("Points: %1").arg(pointCountStr));
 
+        // --- Try loading simulation.json for Projection Params & ERA5 Data ---
+        std::filesystem::path configPath(fileName.toStdString());
+        std::filesystem::path simConfigDir = configPath.parent_path();
+        std::filesystem::path simJsonPath = simConfigDir / "simulation.json";
+
+        if (std::filesystem::exists(simJsonPath)) {
+            spdlog::info("Found simulation.json, parsing for projection parameters & ERA5...");
+            // We use hsd.prms.ParseFile which returns map of paths
+            std::map<std::string, std::string> simParseResult = hsd.prms.ParseFile(simJsonPath.string());
+            
+            // If simulation.json had ERA5Data, initialize WACI with it
+            if (simParseResult.count("ERA5Data")) {
+                 std::string era5File = simParseResult["ERA5Data"];
+                 // Check if path is absolute or relative
+                 std::filesystem::path era5Path(era5File);
+                 if (era5Path.is_relative()) {
+                     era5Path = simConfigDir / era5Path;
+                 }
+
+                 if (std::filesystem::exists(era5Path)) {
+                     hsd.waci.SetEra5Path(era5Path.string());
+                     spdlog::info("ERA5 Wind Data loaded from: {}", era5Path.string());
+                 } else {
+                     spdlog::warn("Warning: ERA5Data path in simulation.json not found: {}", era5Path.string());
+                 }
+            }
+        } else {
+            spdlog::info("simulation.json not found in project directory - wind visualization may not work correctly.");
+        }
+
         // Generate flow field if specified in JSON
         if (!params.FlowType.empty()) {
             FlowFieldGenerator flowGen;
@@ -260,8 +290,8 @@ void MainWindow::flowTimeSliderChanged(int value)
     LOGR("MainWindow::flowTimeSliderChanged: slider_value={}, time_t={}, TimeScale={}", value, time_t, params.TimeScale);
 
     // Update WACI with new time
-    bool frames_changed = hsd.waci.SetTime(time_t);
-    LOGR("MainWindow::flowTimeSliderChanged: frames_changed={}", frames_changed);
+    auto [ocean_changed, wind_changed] = hsd.waci.SetTime(time_t);
+    LOGR("MainWindow::flowTimeSliderChanged: ocean_changed={}; wind_changed", ocean_changed, wind_changed);
 
     // Update visualization time in representation
 

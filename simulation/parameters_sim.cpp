@@ -17,8 +17,6 @@ void SimParams::Reset()
     HaloDiffusionThreshold = 5;
     PointTransferPeriod = 20;
 
-
-
     DimensionHorizontal = 0;
     SaveSnapshots = false;
     SnapshotPeriod = 25;
@@ -42,7 +40,7 @@ void SimParams::Reset()
     IceCompressiveStrength = 100e6;
     IceTensileStrength = 10e6;
 
-    IceCompressiveThreshold = 5e6; // 5 MPa
+    IceCompressiveThreshold = 3e6;
 
     IceShearStrength = 1e6;
     IceTensileStrength2 = 10e6;
@@ -56,6 +54,8 @@ void SimParams::Reset()
     tpb_G2P = 128;
 
     InitializationImageSizeX = InitializationImageSizeY = 0;
+
+    UseWindData = false;
 
     ComputeLame();
     ComputeHelperVariables();
@@ -84,6 +84,24 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     result["GridData"] = doc["GridData"].GetString();
     result["CurrentVelocityData"] = doc["CurrentVelocityData"].GetString();
     if(doc.HasMember("Snapshot")) result["Snapshot"] = doc["Snapshot"].GetString();
+
+    if(doc.HasMember("UseWindData")) UseWindData = doc["UseWindData"].GetBool();
+    if(doc.HasMember("ERA5Data")) {
+        result["ERA5Data"] = doc["ERA5Data"].GetString();
+        UseWindData = true; // Auto-enable if path provided
+    }
+
+    // Projection params
+    if(doc.HasMember("PROJ_LAT_0")) PROJ_LAT_0 = doc["PROJ_LAT_0"].GetDouble();
+    if(doc.HasMember("PROJ_LON_0")) PROJ_LON_0 = doc["PROJ_LON_0"].GetDouble();
+    // PROJ_R is static constexpr
+    if(doc.HasMember("PROJ_RESIZE_FACTOR")) PROJ_RESIZE_FACTOR = doc["PROJ_RESIZE_FACTOR"].GetDouble();
+    if(doc.HasMember("PROJ_TRANSFORM_COEFFS")) {
+        const rapidjson::Value& a = doc["PROJ_TRANSFORM_COEFFS"];
+        if(a.IsArray() && a.Size() == 6) {
+            for(int i = 0; i < 6; i++) PROJ_TRANSFORM_COEFFS[i] = a[i].GetDouble();
+        }
+    }
 
     if(doc.HasMember("SimulationTitle")) result["SimulationTitle"] = doc["SimulationTitle"].GetString();
     else result["SimulationTitle"] = "default_simulation";

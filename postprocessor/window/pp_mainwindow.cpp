@@ -73,13 +73,11 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     // Transparency spinner
     toolBar->addWidget(new QLabel(" Transparency:"));
     qdsbTransparency = new QDoubleSpinBox(this);
-    qdsbTransparency->setRange(0.01, 5.0);
+    qdsbTransparency->setRange(0.0, 1.0);
     qdsbTransparency->setSingleStep(0.1);
     qdsbTransparency->setValue(1.0);
-    qdsbTransparency->setDecimals(2);
+    qdsbTransparency->setDecimals(1);
     toolBar->addWidget(qdsbTransparency);
-
-
     
     toolBar->addSeparator();
 

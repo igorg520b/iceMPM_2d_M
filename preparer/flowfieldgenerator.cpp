@@ -12,108 +12,7 @@
 #include <cstdlib>
 #include <omp.h>
 #include <limits>
-
-
-void FlowFieldGenerator::GenerateConstantFlow(double flowBearing, double flowSpeed, bool compressFlow)
-{
-    spdlog::info("FlowFieldGenerator::GenerateConstantFlow: bearing={}, speed={}", flowBearing, flowSpeed);
-
-    // Convert bearing angle to radians (0° = north = +y direction)
-    double bearing_rad = flowBearing * M_PI / 180.0;
-    double vx = flowSpeed * std::sin(bearing_rad);  // east component
-    double vy = flowSpeed * std::cos(bearing_rad);  // north component
-
-    spdlog::info("Constant flow: vx={}, vy={}", vx, vy);
-
-    // Create single frame
-    std::vector<double> vx_data(gx * gy, vx);
-    std::vector<double> vy_data(gx * gy, vy);
-
-    std::vector<std::vector<double>> vx_frames = {vx_data};
-    std::vector<std::vector<double>> vy_frames = {vy_data};
-    std::vector<std::vector<double>> eta_frames = {std::vector<double>(gx * gy, 0.0)};
-
-    double time_interval = 0.0;  // Static flow
-    int loop_mode = 1;           // Hold last frame (irrelevant for single frame)
-
-    WriteFlowFieldToHDF5("constant", 1, time_interval, loop_mode, compressFlow,
-                        vx_frames, vy_frames, eta_frames);
-
-    spdlog::info("GenerateConstantFlow completed");
-}
-
-
-void FlowFieldGenerator::GenerateWaveFlow(double flowBearing, double waveAmplitude, double waveLength, double phaseSpeed,
-                                         int nFrames, bool compressFlow)
-{
-    spdlog::info("FlowFieldGenerator::GenerateWaveFlow: bearing={}, amplitude={}, waveLength={}, phaseSpeed={}, nFrames={}",
-                 flowBearing, waveAmplitude, waveLength, phaseSpeed, nFrames);
-
-    // Wave parameters
-    double k = 2.0 * M_PI / waveLength;  // wavenumber
-    double omega = k * phaseSpeed;        // angular frequency
-    double amplitude_omega_sq = waveAmplitude * std::pow(omega, 2.0);  // A*ω²
-
-    // Convert bearing to wave direction
-    double bearing_rad = flowBearing * M_PI / 180.0;
-    double wave_dir_x = std::sin(bearing_rad);   // wave propagates east
-    double wave_dir_y = std::cos(bearing_rad);   // wave propagates north
-
-    spdlog::info("Wave parameters: k={}, omega={}, A*omega²={}", k, omega, amplitude_omega_sq);
-    spdlog::info("Wave direction: ({}, {})", wave_dir_x, wave_dir_y);
-
-    // Calculate time interval
-    double T = 2.0 * M_PI / omega;
-    double time_interval = T / nFrames;
-
-    spdlog::info("Wave period: {}, time_interval: {}, num_frames: {}", T, time_interval, nFrames);
-
-    int loop_mode = 0;  // Periodic for waves
-    CreateFlowFieldHDF5("wave", nFrames, time_interval, loop_mode, compressFlow);
-
-    // Generate frames one at a time to manage RAM
-    for (int frame = 0; frame < nFrames; frame++) {
-        double t = frame * time_interval;
-
-        for (int i = 0; i < gx; i++) {
-            for (int j = 0; j < gy; j++) {
-                // Physical coordinates (cell centers)
-                double x = (i + ox) * cellsize;
-                double y = (j + oy) * cellsize;
-
-                // Project onto wave direction: phase = k*(x*wave_dir_x + y*wave_dir_y) - omega*t
-                double phase = k * (x * wave_dir_x + y * wave_dir_y) - omega * t;
-
-                // Velocity magnitude: u' = A*ω²*sin(phase)
-                double vel_mag = amplitude_omega_sq * std::sin(phase);
-
-                // Decompose velocity into x and y components
-                size_t idx = j + (size_t)i * gy;
-                vx_frame[idx] = vel_mag * wave_dir_x;
-                vy_frame[idx] = vel_mag * wave_dir_y;
-
-                // Calculate eta: eta = A * sin(phase)
-                // Note: velocity is A*omega^2*sin(phase), so eta = vel_mag / omega^2
-                // Or simply recompute sin(phase)
-                eta_frame[idx] = waveAmplitude * std::sin(phase);
-
-                // Compute derivatives: d(eta)/dx and d(eta)/dy
-                // eta(x,y,t) = A * sin(k*(x*wave_dir_x + y*wave_dir_y) - omega*t)
-                // d(eta)/dx = A * k * wave_dir_x * cos(phase)
-                // d(eta)/dy = A * k * wave_dir_y * cos(phase)
-                double cos_phase = std::cos(phase);
-                d_eta_dx_frame[idx] = waveAmplitude * k * wave_dir_x * cos_phase;
-                d_eta_dy_frame[idx] = waveAmplitude * k * wave_dir_y * cos_phase;
-            }
-        }
-
-        WriteFrameToHDF5(frame);
-    }
-
-    spdlog::info("GenerateWaveFlow completed: saved {} frames", nFrames);
-}
-
-
+#include <filesystem>
 
 
 
@@ -135,92 +34,176 @@ void FlowFieldGenerator::GenerateFlow(const ParameterParser& params,
     // Resize member buffers
     vx_frame.resize(gx * gy);
     vy_frame.resize(gx * gy);
-    eta_frame.resize(gx * gy);
-    d_eta_dx_frame.resize(gx * gy);
-    d_eta_dy_frame.resize(gx * gy);
+
     spdlog::info("FlowFieldGenerator::GenerateFlow: FlowType='{}'", params.FlowType);
 
-    if (params.FlowType == "constant") {
-        GenerateConstantFlow(params.FlowBearing, params.FlowSpeed, params.CompressFlow);
-    }
-    else if (params.FlowType == "wave") {
-        GenerateWaveFlow(params.FlowBearing, params.WaveAmplitude, params.WaveLength, params.PhaseSpeed,
-                        params.NFrames, params.CompressFlow);
-    }
-    else if (params.FlowType == "river") {
-        GenerateRiverFlow(params.FlowSpeed, params.WaveAmplitude, params.CompressFlow);
-    }
-    else if (params.FlowType == "FLUENT-static") {
-        // ... handled inside GenerateFluentFlow which currently calls WriteFlowFieldToHDF5
+    if (params.FlowType == "FLUENT-static") {
         GenerateFluentFlow(params);
     }
-    else if (params.FlowType == "standing_wave") {
-        // Periodic standing wave with linear particle motion at surface
-        GenerateStandingWave(params.FlowBearing, params.WaveAmplitude, params.WaveLength, params.WavePeriod, params.NFrames, params.CompressFlow);
-    }
     else if (params.FlowType.empty()) {
-        spdlog::info("No flow field requested (FlowType is empty)");
+        spdlog::info("No primary flow field requested (FlowType is empty)");
     }
     else {
         throw std::runtime_error("Unknown FlowType: " + params.FlowType);
     }
 
+    // Process optional Wind Data
+    if (!params.WindData.empty()) {
+        std::string windInputPath = params.ConfigFileDirectory + "/" + params.WindData;
+        std::string outputFlowPath = projectDirectory + "/grid_flow.h5";
+        AddWindToFlowFieldHDF5(windInputPath, outputFlowPath, params.CompressFlow);
+    }
+
     spdlog::info("FlowFieldGenerator::GenerateFlow completed");
 }
 
-
-void FlowFieldGenerator::GenerateRiverFlow(double flowSpeed, double waveAmplitude, bool compressFlow)
+void FlowFieldGenerator::AddWindToFlowFieldHDF5(const std::string& windFilePath, const std::string& outputFlowPath, bool compressFlow)
 {
-    spdlog::info("FlowFieldGenerator::GenerateRiverFlow: flowSpeed={}, waveAmplitude={}", 
-                 flowSpeed, waveAmplitude);
-
-    int num_frames = 1;
-    double time_interval = 0.0;
-    int loop_mode = 1;
-
-    // Create the HDF5 file structure first
-    CreateFlowFieldHDF5("river", num_frames, time_interval, loop_mode, compressFlow);
-
-    double L = waveAmplitude; // transition length
-    double x_center = (gx * cellsize) * 0.5;
-
-    // Fill the frame buffers (frame 0)
-    for (int i = 0; i < gx; i++) {
-        double x = (i + 0.5) * cellsize;
-        double eta_val = 0.0;
-        double deta_dx = 0.0;
-        
-        if (x < x_center) {
-            eta_val = 0.0;
-            deta_dx = 0.0;
-        } else if (x > x_center + L) {
-            eta_val = -waveAmplitude;
-            deta_dx = 0.0;
-        } else {
-            // Smooth step transition: f(s) = 3s^2 - 2s^3, f'(s) = 6s - 6s^2
-            double s = (x - x_center) / L;
-            double f_s = 3 * s * s - 2 * s * s * s;
-            double df_ds = 6 * s - 6 * s * s;
-            
-            eta_val = -waveAmplitude * f_s;
-            deta_dx = -waveAmplitude / L * df_ds;
-        }
-
-        for (int j = 0; j < gy; j++) {
-            int idx = j + i * gy;
-            vx_frame[idx] = flowSpeed;
-            vy_frame[idx] = 0.0;
-            eta_frame[idx] = eta_val;
-            d_eta_dx_frame[idx] = deta_dx;
-            d_eta_dy_frame[idx] = 0.0;
-        }
+    spdlog::info("Adding Wind Data from {} to {}", windFilePath, outputFlowPath);
+    
+    if (!std::filesystem::exists(windFilePath)) {
+        throw std::runtime_error("Input wind file does not exist: " + windFilePath);
     }
 
-    // Write the single frame
-    WriteFrameToHDF5(0);
+    try {
+        // Open Input
+        H5::H5File inFile(windFilePath, H5F_ACC_RDONLY);
+        H5::DataSet ds_in_vx = inFile.openDataSet("wind_current_vx");
+        H5::DataSet ds_in_vy = inFile.openDataSet("wind_current_vy");
 
-    spdlog::info("GenerateRiverFlow completed");
+        // Get Input Metadata
+        int num_frames = 0;
+        double time_interval = 0.0;
+        // Attributes on dataset as per python script
+        ds_in_vx.openAttribute("num_frames").read(H5::PredType::NATIVE_INT, &num_frames);
+        ds_in_vx.openAttribute("time_interval").read(H5::PredType::NATIVE_DOUBLE, &time_interval);
+
+         // Get Input Dimensions
+        H5::DataSpace inSpace = ds_in_vx.getSpace();
+        std::vector<hsize_t> inDims(3);
+        inSpace.getSimpleExtentDims(inDims.data(), NULL);
+        int widthIn = inDims[1];
+        int heightIn = inDims[2];
+
+        // Open Output File (Create if not exists, else Append)
+        H5::H5File outFile;
+        if (std::filesystem::exists(outputFlowPath)) {
+            outFile.openFile(outputFlowPath, H5F_ACC_RDWR);
+        } else {
+            outFile = H5::H5File(outputFlowPath, H5F_ACC_TRUNC);
+            // If we created a new file, we should add minimal root attributes to be valid?
+            H5::DataSpace att_space(H5S_SCALAR);
+            std::string flowType = "WindOnly";
+            H5::StrType str_type(H5::PredType::C_S1, flowType.size() + 1);
+            outFile.createGroup("/").createAttribute("flow_type", str_type, att_space).write(str_type, flowType.c_str());
+        }
+
+        // Define Output Dimensions
+        hsize_t outDims[3] = {static_cast<hsize_t>(num_frames), static_cast<hsize_t>(gx), static_cast<hsize_t>(gy)};
+        H5::DataSpace outSpace(3, outDims);
+
+        H5::DSetCreatPropList props;
+        if (compressFlow) {
+            hsize_t chunks[3] = {1, std::min<hsize_t>(gx, 64), std::min<hsize_t>(gy, 64)};
+            props.setChunk(3, chunks);
+            props.setDeflate(6);
+        }
+
+        // Create Datasets in Output
+        // Note: If they exist, we might want to overwrite? Or error?
+        // HDF5 throws if dataset exists.
+        // Let's assume we are adding new data.
+        H5::DataSet out_vx, out_vy;
+        try {
+             out_vx = outFile.createDataSet("wind_current_vx", H5::PredType::NATIVE_DOUBLE, outSpace, props);
+             out_vy = outFile.createDataSet("wind_current_vy", H5::PredType::NATIVE_DOUBLE, outSpace, props);
+        } catch (...) {
+             // If datasets exist (e.g. re-running preparer), try opening them
+             out_vx = outFile.openDataSet("wind_current_vx");
+             out_vy = outFile.openDataSet("wind_current_vy");
+             // Ideally we should check dimensions match, but assuming overwrite behavior for now
+        }
+
+        // Copy Attributes
+        H5::DataSpace att_space(H5S_SCALAR);
+        int loop_mode = 1; 
+        try { ds_in_vx.openAttribute("loop_mode").read(H5::PredType::NATIVE_INT, &loop_mode); } catch(...) {}
+
+        // We can't overwrite attributes easily if they exist, so ignore errors
+        try { out_vx.createAttribute("time_interval", H5::PredType::NATIVE_DOUBLE, att_space).write(H5::PredType::NATIVE_DOUBLE, &time_interval); } catch(...) {}
+        try { out_vx.createAttribute("num_frames", H5::PredType::NATIVE_INT, att_space).write(H5::PredType::NATIVE_INT, &num_frames); } catch(...) {}
+        try { out_vx.createAttribute("loop_mode", H5::PredType::NATIVE_INT, att_space).write(H5::PredType::NATIVE_INT, &loop_mode); } catch(...) {}
+
+        // Process Data 
+        std::vector<double> frame_in(widthIn * heightIn); // Re-use for vx and vy to save memory
+        std::vector<double> frame_out(gx * gy);
+
+        for (int f = 0; f < num_frames; f++) {
+            hsize_t inOffset[3] = {static_cast<hsize_t>(f), 0, 0};
+            hsize_t inCount[3] = {1, static_cast<hsize_t>(widthIn), static_cast<hsize_t>(heightIn)};
+            
+            inSpace.selectHyperslab(H5S_SELECT_SET, inCount, inOffset);
+            H5::DataSpace memSpaceIn(3, inCount);
+            
+            // Output selection
+            hsize_t outOffset[3] = {static_cast<hsize_t>(f), 0, 0};
+            hsize_t outCount[3] = {1, static_cast<hsize_t>(gx), static_cast<hsize_t>(gy)};
+            outSpace.selectHyperslab(H5S_SELECT_SET, outCount, outOffset);
+            H5::DataSpace memSpaceOut(3, outCount);
+
+            // Read/Write VX
+            ds_in_vx.read(frame_in.data(), H5::PredType::NATIVE_DOUBLE, memSpaceIn, inSpace);
+            
+            // Extract
+             for(int i = 0; i < gx; ++i) {
+                for(int j = 0; j < gy; ++j) {
+                    int src_i = i + ox;
+                    int src_j = j + oy;
+                    size_t dstIdx = j + (size_t)i * gy;
+                    
+                    if(src_i >= 0 && src_i < widthIn && src_j >= 0 && src_j < heightIn) {
+                         // Column-major in file input [Width, Height] -> x * strideY + y
+                         // My python script writes [Time, Width, Height]
+                         // x is dim 1, y is dim 2. 
+                         // Flattened index: x * Height + y.
+                         size_t srcIdx = src_i * heightIn + src_j;
+                         frame_out[dstIdx] = frame_in[srcIdx];
+                    } else {
+                        frame_out[dstIdx] = 0.0;
+                    }
+                }
+            }
+            out_vx.write(frame_out.data(), H5::PredType::NATIVE_DOUBLE, memSpaceOut, outSpace);
+
+            // Read/Write VY
+            ds_in_vy.read(frame_in.data(), H5::PredType::NATIVE_DOUBLE, memSpaceIn, inSpace);
+            for(int i = 0; i < gx; ++i) {
+                for(int j = 0; j < gy; ++j) {
+                    int src_i = i + ox;
+                    int src_j = j + oy;
+                    size_t dstIdx = j + (size_t)i * gy;
+                    if(src_i >= 0 && src_i < widthIn && src_j >= 0 && src_j < heightIn) {
+                         size_t srcIdx = src_i * heightIn + src_j;
+                         frame_out[dstIdx] = frame_in[srcIdx];
+                    } else {
+                        frame_out[dstIdx] = 0.0;
+                    }
+                }
+            }
+            out_vy.write(frame_out.data(), H5::PredType::NATIVE_DOUBLE, memSpaceOut, outSpace);
+        }
+
+        inFile.close();
+        outFile.close();
+        spdlog::info("Wind data added successfully");
+
+    } catch (H5::Exception& e) {
+        throw std::runtime_error("HDF5 Error in AddWindToFlowFieldHDF5: " + e.getDetailMsg());
+    }
 }
+
+
+
 
 void FlowFieldGenerator::GenerateFluentFlow(const ParameterParser& params)
 {
@@ -303,14 +286,13 @@ void FlowFieldGenerator::GenerateFluentFlow(const ParameterParser& params)
     // Package into frame containers (single frame for static FLUENT flow)
     std::vector<std::vector<double>> vx_frames = {vx_data};
     std::vector<std::vector<double>> vy_frames = {vy_data};
-    std::vector<std::vector<double>> eta_frames = {std::vector<double>(gx * gy, 0.0)};
 
     // Write to HDF5 with static flow parameters
     double time_interval = 0.0;  // Static flow (single frame, no interpolation)
     int loop_mode = 1;           // Hold last frame (irrelevant for single frame)
 
     WriteFlowFieldToHDF5(params.FlowType, 1, time_interval, loop_mode, params.CompressFlow,
-                        vx_frames, vy_frames, eta_frames);
+                        vx_frames, vy_frames);
 
     spdlog::info("GenerateFluentFlow completed");
 }
@@ -339,9 +321,6 @@ void FlowFieldGenerator::CreateFlowFieldHDF5(const std::string& flowType, int nu
 
     H5::DataSet ds_vx = file.createDataSet("water_current_vx", H5::PredType::NATIVE_DOUBLE, dataspace, props);
     H5::DataSet ds_vy = file.createDataSet("water_current_vy", H5::PredType::NATIVE_DOUBLE, dataspace, props);
-    H5::DataSet ds_eta = file.createDataSet("water_current_eta", H5::PredType::NATIVE_DOUBLE, dataspace, props);
-    H5::DataSet ds_d_eta_dx = file.createDataSet("water_current_d_eta_dx", H5::PredType::NATIVE_DOUBLE, dataspace, props);
-    H5::DataSet ds_d_eta_dy = file.createDataSet("water_current_d_eta_dy", H5::PredType::NATIVE_DOUBLE, dataspace, props);
 
     H5::DataSpace att_space(H5S_SCALAR);
 
@@ -370,9 +349,6 @@ void FlowFieldGenerator::WriteFrameToHDF5(int frame_index)
     // Open existing datasets
     H5::DataSet ds_vx = file.openDataSet("water_current_vx");
     H5::DataSet ds_vy = file.openDataSet("water_current_vy");
-    H5::DataSet ds_eta = file.openDataSet("water_current_eta");
-    H5::DataSet ds_d_eta_dx = file.openDataSet("water_current_d_eta_dx");
-    H5::DataSet ds_d_eta_dy = file.openDataSet("water_current_d_eta_dy");
 
     // Get dataspace and select hyperslab for this frame
     H5::DataSpace dataspace = ds_vx.getSpace();
@@ -383,12 +359,9 @@ void FlowFieldGenerator::WriteFrameToHDF5(int frame_index)
     // Create memory dataspace for single frame
     H5::DataSpace frame_space(3, frame_dims);
 
-    // Write vx, vy, eta, and derivative data for this frame
+    // Write vx, vy data for this frame
     ds_vx.write(vx_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
     ds_vy.write(vy_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
-    ds_eta.write(eta_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
-    ds_d_eta_dx.write(d_eta_dx_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
-    ds_d_eta_dy.write(d_eta_dy_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
 
     file.close();
 }
@@ -397,8 +370,7 @@ void FlowFieldGenerator::WriteFlowFieldToHDF5(const std::string& flowType, int n
                                              int loop_mode,
                                              bool compressFlow,
                                              const std::vector<std::vector<double>>& vx_frames,
-                                             const std::vector<std::vector<double>>& vy_frames,
-                                             const std::vector<std::vector<double>>& eta_frames)
+                                             const std::vector<std::vector<double>>& vy_frames)
 {
     // Legacy wrapper: Create file structure then write all frames
     CreateFlowFieldHDF5(flowType, num_frames, time_interval, loop_mode, compressFlow);
@@ -407,7 +379,6 @@ void FlowFieldGenerator::WriteFlowFieldToHDF5(const std::string& flowType, int n
         // Copy data to member buffers
         vx_frame = vx_frames[frame];
         vy_frame = vy_frames[frame];
-        eta_frame = eta_frames[frame];
         WriteFrameToHDF5(frame);
     }
 
@@ -418,85 +389,7 @@ void FlowFieldGenerator::WriteFlowFieldToHDF5(const std::string& flowType, int n
 
 
 
-void FlowFieldGenerator::GenerateStandingWave(double flowBearing, double waveAmplitude, double waveLength, double wavePeriod, int nFrames, bool compressFlow)
-{
-    spdlog::info("FlowFieldGenerator::GenerateStandingWave: bearing={}, amplitude={}, wavelength={}, period={}, nFrames={}",
-                 flowBearing, waveAmplitude, waveLength, wavePeriod, nFrames);
 
-    // Standing wave parameters with amplitude ramp over first 5 periods
-    // Water elevation: eta(x,t) = A(t) * sin(k·r) * sin(omega*t)
-    // where A(t) = A_max * min(1.0, t / (5*T)), T = wave period
-    // r is the projection onto the wave direction
-    // Horizontal velocity: u(x,t) = (A(t)*omega) * sin(k·r) * cos(omega*t)
-
-    const double k = 2.0 * M_PI / waveLength;  // wavenumber
-    const double omega = 2.0 * M_PI / wavePeriod;  // angular frequency
-
-    // Convert bearing to wave direction (same as GenerateWaveFlow)
-    double bearing_rad = flowBearing * M_PI / 180.0;
-    double wave_dir_x = std::sin(bearing_rad);   // wave propagates east
-    double wave_dir_y = std::cos(bearing_rad);   // wave propagates north
-
-    // Ramp period: amplitude ramps up during first 5 periods
-    const double ramp_time = 5.0 * wavePeriod;
-
-    // Frame spacing
-    double time_interval = wavePeriod / nFrames;
-
-    spdlog::info("Standing wave parameters: k={}, omega={}, ramp_time={}, time_interval={}", k, omega, ramp_time, time_interval);
-    spdlog::info("Wave direction: ({}, {})", wave_dir_x, wave_dir_y);
-
-    // Periodic: loop_mode = 0
-    CreateFlowFieldHDF5("standing_wave", nFrames, time_interval, 0, compressFlow);
-
-    for (int frame = 0; frame < nFrames; frame++) {
-        double t = frame * time_interval;
-
-        // Precompute sin(omega*t) and cos(omega*t) for efficiency
-        double sin_wt = std::sin(omega * t);
-        double cos_wt = std::cos(omega * t);
-
-        for (int i = 0; i < gx; i++) {
-            for (int j = 0; j < gy; j++) {
-                // Physical coordinates
-                double x = (i + ox) * cellsize;
-                double y = (j + oy) * cellsize;
-
-                // Project onto wave direction: r = x*wave_dir_x + y*wave_dir_y
-                double r = x * wave_dir_x + y * wave_dir_y;
-
-                // Precompute sin(k*r)
-                double sin_kr = std::sin(k * r);
-
-                // Water elevation: eta(x,y,t) = A * sin(k*r) * sin(omega*t)
-                double eta = waveAmplitude * sin_kr * sin_wt;
-
-                // Velocity magnitude along wave direction: u(x,y,t) = A * omega * sin(k*r) * cos(omega*t)
-                double u_mag = waveAmplitude * omega * sin_kr * cos_wt;
-
-                // Decompose velocity into x and y components
-                size_t idx = j + (size_t)i * gy;
-                vx_frame[idx] = u_mag * wave_dir_x;   // x-component of particle velocity
-                vy_frame[idx] = u_mag * wave_dir_y;   // y-component of particle velocity
-                eta_frame[idx] = eta;
-
-                // Compute derivatives: d(eta)/dx and d(eta)/dy
-                // eta(x,y,t) = A * sin(k*r) * sin(omega*t), where r = x*wave_dir_x + y*wave_dir_y
-                // d(eta)/dx = A * k * wave_dir_x * cos(k*r) * sin(omega*t)
-                // d(eta)/dy = A * k * wave_dir_y * cos(k*r) * sin(omega*t)
-                double cos_kr = std::cos(k * r);
-                double spatial_factor = waveAmplitude * k * cos_kr * sin_wt;
-                d_eta_dx_frame[idx] = spatial_factor * wave_dir_x;
-                d_eta_dy_frame[idx] = spatial_factor * wave_dir_y;
-            }
-        }
-
-        WriteFrameToHDF5(frame);
-    }
-
-    spdlog::info("GenerateStandingWave completed: created {} frames with period={}, bearing={}, eta(r,t) = A * sin(2π*r/{}) * sin(2π*t/{}) where r is projection onto wave direction, A(t) ramps from 0 to {} over 5 periods",
-                 nFrames, wavePeriod, flowBearing, waveLength, wavePeriod, waveAmplitude);
-}
 
 
 

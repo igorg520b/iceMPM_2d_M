@@ -24,20 +24,8 @@ struct ParameterParser
 
     // Flow field parameters
     std::string FlowType = "";              // "constant", "wave", "Kelvin_wake", "FLUENT-static" (empty = no flow)
-    double FlowBearing = 0.0;               // bearing in degrees (0=north, 90=east, etc.)
-    double FlowSpeed = 0.0;                 // speed for constant flow
-    double WaveAmplitude = 0.0;             // amplitude for wave flow
-    double WaveLength = 0.0;                // wavelength for wave flow
-    double WavePeriod = 0.0;                // wave period for standing_wave flow type
-    double PhaseSpeed = 0.0;                // phase speed for wave flow
-    double AmplitudeDecayDistance = 0.0;    // distance over which amplitude decays by factor of 2 (Kelvin wake)
-    double ShipSpeed = 0.0;                 // speed of ship generating Kelvin wake (only for Kelvin_wake flow type)
-    double X_Ship = 0.0;                    // X-coordinate of ship position at t=0 (default: 0.0)
-    double Y_Ship = 0.0;                    // Y-coordinate of ship centerline (default: 0.0)
-    int FrameSkip = 5;                      // Time step parameter: dt = (cellsize * FrameSkip) / U_ship (default: 5)
-    int NFrames = 1;                        // number of frames per wave period (default=1 for static, 30 for wave/Kelvin_wake)
-    double TimeScale = 1000.0;              // time scale for animation slider (slider 0-1000 maps to 0-TimeScale seconds, default=1000)
     bool CompressFlow = false;              // whether to compress flow field HDF5
+    double TimeScale = 1000.0;              // time scale for animation slider (slider 0-1000 maps to 0-TimeScale seconds, default=1000)
 
     // FLUENT-specific parameters (optional, only used when FlowType == "FLUENT-static")
     std::string InputFluentDAT = "";        // HDF5 file: velocity data
@@ -46,6 +34,10 @@ struct ParameterParser
     std::string RectanglePathID = "";       // SVG path ID: image bounds
     std::string FluentPathID = "";          // SVG path ID: FLUENT grid bounds
     double VelocityMultiplier = 1.0;        // Multiplier for FLUENT velocity field (default: 1.0)
+    
+    // Optional wind data input
+    std::string WindData = "";
+
 
     void LoadParamsFile(std::string fileName);
 };

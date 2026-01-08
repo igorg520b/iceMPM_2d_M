@@ -36,7 +36,8 @@ public:
     void initialize();
     void split_hssoa_into_partitions();     // perform grid and point partitioning
     void transfer_to_device();
-    void transfer_wind_and_current_data_to_device();
+    void update_ocean_current_field(const WindAndCurrentInterpolator &wac);
+    void update_wind_field(const WindAndCurrentInterpolator &wac);
 
     void transfer_from_device();
     void transfer_grid_group_to_host(int group);
