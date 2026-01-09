@@ -201,9 +201,10 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
         k = min(k, 0.1);   // k cannot exceed 0.1
 
         // effect of the wind drag
+        const double drag_coeff = gprms.windDragEffectiveQuadratic;
         Eigen::Vector2d U_rel_wind = (v_wind - velocity);  // relative velocity
         const double U_rel_mag_wind = U_rel_wind.norm();  // magnitude
-        double k_wind = gprms.windDragEffectiveQuadratic * dt*U_rel_mag_wind;
+        double k_wind = drag_coeff * dt * U_rel_mag_wind; // quadratic
         k_wind = min(k_wind, 0.1);   // k cannot exceed 0.1
 
         velocity += (k*U_rel + k_wind*U_rel_wind);
