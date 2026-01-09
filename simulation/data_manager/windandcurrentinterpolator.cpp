@@ -91,7 +91,7 @@ void WindAndCurrentInterpolator::LoadEra5Metadata()
     
     // Load Time
     {
-        H5::DataSet ds_time = file_wind->openDataSet("time"); // ERA5 usually "time" or "valid_time"
+        H5::DataSet ds_time = file_wind->openDataSet("valid_time");
         H5::DataSpace space = ds_time.getSpace();
         hsize_t dims[1];
         space.getSimpleExtentDims(dims, NULL);
@@ -320,13 +320,16 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
     #pragma omp parallel for
     for (int j = 0; j < gy; ++j) {
         for (int i = 0; i < gx; ++i) {
-            int grid_idx = i + j*gx;
+            int grid_idx = j + i*gy;
             
             // Global pixel coordinates
             // Assuming InitializationImageSize aligns with projection size logic
             // Assuming ModeledRegionOffset relates to this full image.
             int global_x = i + prms.ModeledRegionOffsetX;
-            int global_y = j + prms.ModeledRegionOffsetY;
+            // Invert Y because PROJ coeffs are based on top-left origin image, 
+            // while grid is bottom-left origin.
+            int global_y_grid = j + prms.ModeledRegionOffsetY;
+            int global_y = prms.InitializationImageSizeY - 1 - global_y_grid;
             
             // 1. Project
             LatLon ll = ProjectPixel(global_x, global_y);
@@ -502,7 +505,7 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
 }
 
 
-std::pair<double, double> WindAndCurrentInterpolator::GetInterpolatedValue(int i, int j) const
+std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j) const
 {
     if (hdf5_path.empty() || num_frames == 0) {
         // No flow field, return zero velocity
@@ -530,29 +533,15 @@ std::pair<double, double> WindAndCurrentInterpolator::GetInterpolatedValue(int i
     double vx = (1.0 - current_alpha) * vx_first + current_alpha * vx_second;
     double vy = (1.0 - current_alpha) * vy_first + current_alpha * vy_second;
     
-    // Add wind?
-    // GetInterpolatedValue is likely used by Host side methods (e.g. initial point generation, or visualizer)
-    // If we want to include wind here, we should add it.
-    // However, the main simulation uses GPU kernels reading grid_forcing_buffer.
-    // If the visualizer uses this, we should add wind.
-    if (prms.UseWindData && !wind_vx_frame_buffer[0].empty()) {
-        double wvx_f = wind_vx_frame_buffer[0][idx];
-        double wvx_s = wind_vx_frame_buffer[1][idx];
-        double wvy_f = wind_vy_frame_buffer[0][idx];
-        double wvy_s = wind_vy_frame_buffer[1][idx];
-        
-        double wvx = (1.0 - current_wind_alpha) * wvx_f + current_wind_alpha * wvx_s;
-        double wvy = (1.0 - current_wind_alpha) * wvy_f + current_wind_alpha * wvy_s;
-        
-        vx += wvx;
-        vy += wvy;
-    }
+    // GetInterpolatedValue returns pure Ocean Current (from HDF5).
+    // Wind is accessed separately via GetWindValue.
 
     return {vx, vy};
 }
 
 std::pair<double, double> WindAndCurrentInterpolator::GetWindValue(int i, int j) const
 {
+    if (!prms.UseWindData) return {0.0, 0.0};
     if (wind_vx_frame_buffer[0].empty() || wind_vx_frame_buffer[1].empty()) return {0.0, 0.0};
 
     // Index in the grid buffer
@@ -570,5 +559,23 @@ std::pair<double, double> WindAndCurrentInterpolator::GetWindValue(int i, int j)
     double vy = vy0 * (1.0 - current_wind_alpha) + vy1 * current_wind_alpha;
 
     return {vx, vy};
+}
+
+std::pair<double, double> WindAndCurrentInterpolator::GetLatLon(int i, int j) const
+{
+    // Global pixel coordinates
+    int global_x = i + prms.ModeledRegionOffsetX;
+    
+    // Invert Y because PROJ coeffs are based on top-left origin image, 
+    // while grid is bottom-left origin.
+    int global_y_grid = j + prms.ModeledRegionOffsetY;
+    int global_y = prms.InitializationImageSizeY - 1 - global_y_grid;
+
+    LatLon ll = ProjectPixel(global_x, global_y);
+    
+    if (!ll.valid) {
+        return {0.0, 0.0};
+    }
+    return {ll.lat_deg, ll.lon_deg};
 }
 

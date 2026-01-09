@@ -23,6 +23,9 @@ public:
     // Generate FLUENT flow field from CAS/DAT files
     void GenerateFluentFlow(const ParameterParser& params);
 
+    // Generate transient FLUENT flow field from sequence of DAT files
+    void GenerateFluentTransient(const ParameterParser& params);
+
     // Add wind flow data to existing (or new) flow field HDF5
     // Reads `windFilePath`, extracts region, and appends to `outputFlowPath`
     void AddWindToFlowFieldHDF5(const std::string& windFilePath, const std::string& outputFlowPath, bool compressFlow);

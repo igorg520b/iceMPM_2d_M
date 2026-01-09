@@ -30,7 +30,8 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams);
 //   - current_alpha: temporal interpolation factor for wind/current data (0=frame1, 1=frame2)
 __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
                                               const double simulation_time,
-                                              const double current_alpha);
+                                              const double current_alpha,
+                                              const double current_alpha_wind);
 
 // Grid-to-Particle transfer: updates particle velocities and deformation gradients
 // from grid velocities; optionally records P (stress) and Q (second stress invariant)

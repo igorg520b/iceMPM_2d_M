@@ -162,11 +162,9 @@ public:
     int InitializationImageSizeX, InitializationImageSizeY;
     double DimensionHorizontal; // with respect to initialization image
 
-
-
     // wind and/or current data
-    double windDragCoeff_airDensity;
-    double waterDragEffectiveLinear, waterDragEffectiveQuadratic;
+    double waterDragEffectiveQuadratic;
+    double windDragEffectiveQuadratic;
 
     // Wind and ERA5 Data
     bool UseWindData;

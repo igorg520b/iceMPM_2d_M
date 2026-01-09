@@ -226,10 +226,11 @@ void GPU_Implementation5::p2g()
 void GPU_Implementation5::update_nodes(float simulation_time, float windSpeed, float windAngle)
 {
     double current_alpha = hsd.waci.current_alpha;
+    double current_alpha_wind = hsd.waci.current_wind_alpha;
 
     for(GPU_Partition &p : partitions)
     {
-        p.update_nodes(simulation_time, current_alpha);
+        p.update_nodes(simulation_time, current_alpha, current_alpha_wind);
         CUDA_CHECK(cudaEventRecord(p.event_40_grid_updated, p.streamCompute));
     }
 }

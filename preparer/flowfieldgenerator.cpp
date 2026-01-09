@@ -40,6 +40,9 @@ void FlowFieldGenerator::GenerateFlow(const ParameterParser& params,
     if (params.FlowType == "FLUENT-static") {
         GenerateFluentFlow(params);
     }
+    else if (params.FlowType == "FLUENT-transient") {
+        GenerateFluentTransient(params);
+    }
     else if (params.FlowType.empty()) {
         spdlog::info("No primary flow field requested (FlowType is empty)");
     }
@@ -49,9 +52,7 @@ void FlowFieldGenerator::GenerateFlow(const ParameterParser& params,
 
     // Process optional Wind Data
     if (!params.WindData.empty()) {
-        std::string windInputPath = params.ConfigFileDirectory + "/" + params.WindData;
-        std::string outputFlowPath = projectDirectory + "/grid_flow.h5";
-        AddWindToFlowFieldHDF5(windInputPath, outputFlowPath, params.CompressFlow);
+        spdlog::info("FlowFieldGenerator: WindData provided (assumed ERA5). Skipping static bake-in to grid_flow.h5 - will be handled by runtime interpolator.");
     }
 
     spdlog::info("FlowFieldGenerator::GenerateFlow completed");
@@ -295,6 +296,85 @@ void FlowFieldGenerator::GenerateFluentFlow(const ParameterParser& params)
                         vx_frames, vy_frames);
 
     spdlog::info("GenerateFluentFlow completed");
+}
+
+void FlowFieldGenerator::GenerateFluentTransient(const ParameterParser& params)
+{
+    spdlog::info("FlowFieldGenerator::GenerateFluentTransient starting");
+    spdlog::info("  Range: Frame {} to {}", params.FLUENTFirstFrame, params.FLUENTLastFrame);
+    spdlog::info("  Time Interval: {}", params.FLUENTTimeInterval);
+    spdlog::info("  DAT Prefix: {}", params.InputFluentDAT);
+
+    int startFrame = params.FLUENTFirstFrame;
+    int endFrame = params.FLUENTLastFrame;
+    int num_frames = endFrame - startFrame + 1;
+
+    if (num_frames <= 0) {
+        throw std::runtime_error("Invalid FLUENT frame range: FirstFrame > LastFrame");
+    }
+
+    // Initialize HDF5 file structure
+    // loop_mode = 0 (periodic) for transient
+    CreateFlowFieldHDF5(params.FlowType, num_frames, params.FLUENTTimeInterval, 0, params.CompressFlow);
+
+    // Loop over frames
+    FluentFlowImporter importer; // Re-use importer instance (though Import() might be stateless)
+
+    for (int i = 0; i < num_frames; ++i) {
+        int frameID = startFrame + i;
+        
+        // Construct DAT filename
+        // Assumes Prefix ends with '-' or correct base, appends 00575.dat.h5
+        std::string datFile = fmt::format("{}{:05d}.dat.h5", params.InputFluentDAT, frameID);
+        
+        spdlog::info("Processing frame {}/{}: {}", i + 1, num_frames, datFile);
+
+        if (!std::filesystem::exists(datFile)) {
+             throw std::runtime_error("FLUENT DAT file not found: " + datFile);
+        }
+
+        // Import
+        // Note: This re-parses CAS and SVG every time. 
+        // Optimization possible but keeping it simple as requested.
+        importer.Import(params.ConfigFileDirectory,
+                        params.InputFluentCAS,
+                        datFile,
+                        params.SVG,
+                        params.RectanglePathID,
+                        params.FluentPathID,
+                        imageWidth, imageHeight,
+                        params.VelocityMultiplier);
+
+        // Verify dimensions (paranoid check)
+        if (importer.image_width != imageWidth || importer.image_height != imageHeight) {
+            throw std::runtime_error("Imported dimensions mismatch initialization image");
+        }
+
+        // Extract Region and Populate buffers
+        #pragma omp parallel for
+        for (int gy_idx = 0; gy_idx < gy; ++gy_idx) {
+            for (int gx_idx = 0; gx_idx < gx; ++gx_idx) {
+                 int src_i = gx_idx + ox;
+                 int src_j = gy_idx + oy;
+                 size_t dst_idx = gy_idx + (size_t)gx_idx * gy;
+                 
+                 // Valid check - import should ensure correct size, but boundary check is safe
+                 if (src_i >= 0 && src_i < imageWidth && src_j >= 0 && src_j < imageHeight) {
+                     size_t src_idx = src_i + imageWidth * src_j;
+                     vx_frame[dst_idx] = importer.vx_data[src_idx];
+                     vy_frame[dst_idx] = importer.vy_data[src_idx];
+                 } else {
+                     vx_frame[dst_idx] = 0.0;
+                     vy_frame[dst_idx] = 0.0;
+                 }
+            }
+        }
+
+        // Write Frame
+        WriteFrameToHDF5(i);
+    }
+
+    spdlog::info("GenerateFluentTransient completed");
 }
 
 

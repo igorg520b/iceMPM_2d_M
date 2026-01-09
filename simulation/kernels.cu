@@ -134,7 +134,7 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
 
 
 __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
-                                              const double simulation_time, const double current_alpha)
+                                              const double simulation_time, const double current_alpha, const double current_alpha_wind)
 {
     const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
     const size_t nNodes = (pparams.partition_gridX + 2*gprms.GridHaloSize) * gprms.GridYTotal;
@@ -180,18 +180,33 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
 
         Eigen::Vector2d v_w = (1.0 - current_alpha) * v_frame0 + current_alpha * v_frame1;
 
+        // obtain wind velocity from GPU global memory
+        Eigen::Vector2d v_frame0_wind(bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame0*pitch_grid_forcing + idx],
+                                      bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame0*pitch_grid_forcing + idx]);
+
+        Eigen::Vector2d v_frame1_wind(bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame1*pitch_grid_forcing + idx],
+                                      bgrid_forcing[SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame1*pitch_grid_forcing + idx]);
+
+        Eigen::Vector2d v_wind = (1.0 - current_alpha_wind) * v_frame0_wind + current_alpha_wind * v_frame1_wind;
+
 
         // effect of the water drag on horizontal velocity
-        const double kL = gprms.waterDragEffectiveLinear * dt; // linear param
+        // const double kL = gprms.waterDragEffectiveLinear * dt; // linear param REMOVED
         const double kQp = gprms.waterDragEffectiveQuadratic * dt; // quadratic
 
         Eigen::Vector2d U_rel = (v_w - velocity);  // relative velocity
         const double U_rel_mag = U_rel.norm();  // magnitude
 
-        double k = kL + kQp*U_rel_mag;
+        double k = kQp*U_rel_mag;
         k = min(k, 0.1);   // k cannot exceed 0.1
 
-        velocity += k*U_rel;
+        // effect of the wind drag
+        Eigen::Vector2d U_rel_wind = (v_wind - velocity);  // relative velocity
+        const double U_rel_mag_wind = U_rel_wind.norm();  // magnitude
+        double k_wind = gprms.windDragEffectiveQuadratic * dt*U_rel_mag_wind;
+        k_wind = min(k_wind, 0.1);   // k cannot exceed 0.1
+
+        velocity += (k*U_rel + k_wind*U_rel_wind);
     }
 
     // write the updated grid velocity back to memory

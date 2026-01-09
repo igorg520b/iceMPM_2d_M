@@ -58,12 +58,28 @@ void FluentFlowImporter::Import(const std::string& configDirectory,
     velocity_multiplier = velocityMultiplier;
 
     // Step 1: Extract SVG geometry (bounding boxes in SVG space)
-    std::string fullSvgPath = configDirectory + "/" + svgFile;
+    std::string fullSvgPath;
+    if (std::filesystem::path(svgFile).is_absolute()) {
+        fullSvgPath = svgFile;
+    } else {
+        fullSvgPath = configDirectory + "/" + svgFile;
+    }
     LoadSVGGeometry(fullSvgPath, rectanglePathID, fluentPathID);
 
     // Step 2: Load FLUENT CAS/DAT files into VTK grid
-    std::string fullCasPath = configDirectory + "/" + casFile;
-    std::string fullDatPath = configDirectory + "/" + datFile;
+    std::string fullCasPath;
+    if (std::filesystem::path(casFile).is_absolute()) {
+        fullCasPath = casFile;
+    } else {
+        fullCasPath = configDirectory + "/" + casFile;
+    }
+
+    std::string fullDatPath;
+    if (std::filesystem::path(datFile).is_absolute()) {
+        fullDatPath = datFile;
+    } else {
+        fullDatPath = configDirectory + "/" + datFile;
+    }
     LoadFluentGrid(fullCasPath, fullDatPath);
 
     // Step 3: Transform FLUENT grid using extents_fluent bounds

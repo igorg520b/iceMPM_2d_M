@@ -456,14 +456,14 @@ void GPU_Partition::p2g()
 //    check_error_code();
 }
 
-void GPU_Partition::update_nodes(float simulation_time, const double current_alpha)
+void GPU_Partition::update_nodes(float simulation_time, const double current_alpha, const double current_alpha_wind)
 {
     CUDA_CHECK(cudaSetDevice(Device));
     const size_t nGridNodes = prms.GridYTotal * (pparams.partition_gridX + 2*prms.GridHaloSize);
     const int &tpb = prms.tpb_Upd;
     int nBlocks = (nGridNodes + tpb - 1) / tpb;
 
-    partition_kernel_update_nodes<<<nBlocks, tpb, 0, streamCompute>>>(pparams, simulation_time, current_alpha);
+    partition_kernel_update_nodes<<<nBlocks, tpb, 0, streamCompute>>>(pparams, simulation_time, current_alpha, current_alpha_wind);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("update_nodes");
 //    check_error_code();
 }

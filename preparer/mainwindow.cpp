@@ -218,6 +218,7 @@ void MainWindow::LoadParameterFile(QString fileName)
             std::map<std::string, std::string> simParseResult = hsd.prms.ParseFile(simJsonPath.string());
             
             // If simulation.json had ERA5Data, initialize WACI with it
+            // NOTE: This might enable UseWindData, but we will override it below based on prepare.json
             if (simParseResult.count("ERA5Data")) {
                  std::string era5File = simParseResult["ERA5Data"];
                  // Check if path is absolute or relative
@@ -235,6 +236,18 @@ void MainWindow::LoadParameterFile(QString fileName)
             }
         } else {
             spdlog::info("simulation.json not found in project directory - wind visualization may not work correctly.");
+        }
+
+        // --- Initialize Wind Data (from prepare.json) overrides selection ---
+        // If WindData is explicitly provided in prepare.json, use it.
+        // If NOT provided, DISABLE wind, even if simulation.json populated it.
+        if (!params.WindData.empty()) {
+             std::string windPath = params.ConfigFileDirectory + "/" + params.WindData;
+             hsd.prms.UseWindData = true;
+             hsd.waci.SetEra5Path(windPath);
+             spdlog::info("Preparer: Loaded ERA5 Wind Data from {}", windPath);
+        } else {
+            hsd.prms.UseWindData = false;
         }
 
         // Generate flow field if specified in JSON

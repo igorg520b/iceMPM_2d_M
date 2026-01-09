@@ -70,6 +70,10 @@ void ParameterParser::LoadParamsFile(std::string fileName)
     if(doc.HasMember("FluentPathID")) FluentPathID = doc["FluentPathID"].GetString();
     if(doc.HasMember("VelocityMultiplier")) VelocityMultiplier = doc["VelocityMultiplier"].GetDouble();
 
+    if(doc.HasMember("FLUENTFirstFrame")) FLUENTFirstFrame = doc["FLUENTFirstFrame"].GetInt();
+    if(doc.HasMember("FLUENTLastFrame")) FLUENTLastFrame = doc["FLUENTLastFrame"].GetInt();
+    if(doc.HasMember("FLUENTTimeInterval")) FLUENTTimeInterval = doc["FLUENTTimeInterval"].GetDouble();
+
     if(doc.HasMember("WindData")) WindData = doc["WindData"].GetString();
 
     spdlog::info("parameter file loaded\n");

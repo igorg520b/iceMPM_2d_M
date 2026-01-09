@@ -34,12 +34,16 @@ public:
     // Get interpolated velocity at grid cell (i,j)
     // Assumes SetTime(t) has been called beforehand to set up frame buffers
     // Returns (vx, vy) pair using current_alpha for interpolation
-    std::pair<double, double> GetInterpolatedValue(int i, int j) const;
+    std::pair<double, double> GetOceanValue(int i, int j) const;
 
     // Get interpolated wind velocity at grid cell (i,j)
     // Assumes SetTime(t) has been called beforehand
     // Returns (vx, vy) pair using current_wind_alpha for interpolation
     std::pair<double, double> GetWindValue(int i, int j) const;
+
+    // Get Latitude and Longitude at grid cell (i,j)
+    // Returns (lat, lon) pair in degrees
+    std::pair<double, double> GetLatLon(int i, int j) const;
 
 
 

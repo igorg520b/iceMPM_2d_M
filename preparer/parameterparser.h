@@ -35,6 +35,11 @@ struct ParameterParser
     std::string FluentPathID = "";          // SVG path ID: FLUENT grid bounds
     double VelocityMultiplier = 1.0;        // Multiplier for FLUENT velocity field (default: 1.0)
     
+    // FLUENT-transient parameters
+    int FLUENTFirstFrame = 0;
+    int FLUENTLastFrame = 0;
+    double FLUENTTimeInterval = 0.0;
+    
     // Optional wind data input
     std::string WindData = "";
 

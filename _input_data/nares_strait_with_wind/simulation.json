@@ -1,5 +1,5 @@
 {
-"SimulationTitle":"nares_strait_2k",
+"SimulationTitle":"nares_strait_with_wind",
 
 "GridData":"grid.h5",
 "CurrentVelocityData":"grid_flow.h5",
@@ -17,7 +17,7 @@
 "SimulationEndTime":1036800,
 "AnimationFramePeriod":300,
 
-"InitialTimeStep":0.17,
+"InitialTimeStep":0.942158,
 "ParticleViewSize":2.0,
 
 "YoungsModulus":5.0e8,
@@ -32,8 +32,8 @@
 "DP_threshold_p":-1e4,
 "RidgeFormationCoeff":0.1,
 
-"waterDragEffectiveLinear":0.00,
-"waterDragEffectiveQuadratic":0.25,
+"waterDragEffectiveQuadratic":0.10,
+"windDragEffectiveQuadratic":0.005,
 
 "tpb_P2G":256,
 "tpb_Upd":512,
