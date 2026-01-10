@@ -342,6 +342,18 @@ void PPMainWindow::LoadParametersFile(QString fileName)
         LOGR("Flow field loaded successfully");
     }
 
+    // Load wind data if available (for wind visualization)
+    if (parseResult.count("ERA5Data") && !parseResult["ERA5Data"].empty()) {
+        fs::path windPath = jsonFileDir / parseResult["ERA5Data"];
+        LOGR("Loading wind data: {}", windPath.string());
+        if (fs::exists(windPath)) {
+            hsd.waci.SetEra5Path(windPath.string());
+            LOGR("Wind data loaded successfully");
+        } else {
+            LOGR("Warning: Wind data file not found: {}", windPath.string());
+        }
+    }
+
     // Note: We only visualize grid data, not particle data, so we skip loading snapshots
 
     // Set up the output directory where simulation frames are saved
