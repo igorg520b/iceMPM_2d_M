@@ -353,8 +353,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
 
     // distribute the values of p back into GPU memory
-    bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_glen_flow] += glen_flow_change;
-
+    if(perform_glen_step) bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_glen_flow] += glen_flow_change;
 
     for(int i=0; i<SimParams::dim; i++)
     {
