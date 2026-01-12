@@ -48,12 +48,12 @@ public:
 
 
     // GPU-accessible buffers (only 2 frames in RAM at a time)
-    std::vector<double> vx_frame_buffer[2];  // frame data for GPU upload
-    std::vector<double> vy_frame_buffer[2];
+    std::vector<float> vx_frame_buffer[2];  // frame data for GPU upload
+    std::vector<float> vy_frame_buffer[2];
     
     // Wind buffers
-    std::vector<double> wind_vx_frame_buffer[2];
-    std::vector<double> wind_vy_frame_buffer[2];
+    std::vector<float> wind_vx_frame_buffer[2];
+    std::vector<float> wind_vy_frame_buffer[2];
 
 
     // Interpolation parameter for temporal interpolation between frame buffers

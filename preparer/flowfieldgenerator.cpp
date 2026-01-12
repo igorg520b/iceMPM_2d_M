@@ -116,8 +116,8 @@ void FlowFieldGenerator::AddWindToFlowFieldHDF5(const std::string& windFilePath,
         // Let's assume we are adding new data.
         H5::DataSet out_vx, out_vy;
         try {
-             out_vx = outFile.createDataSet("wind_current_vx", H5::PredType::NATIVE_DOUBLE, outSpace, props);
-             out_vy = outFile.createDataSet("wind_current_vy", H5::PredType::NATIVE_DOUBLE, outSpace, props);
+             out_vx = outFile.createDataSet("wind_current_vx", H5::PredType::NATIVE_FLOAT, outSpace, props);
+             out_vy = outFile.createDataSet("wind_current_vy", H5::PredType::NATIVE_FLOAT, outSpace, props);
         } catch (...) {
              // If datasets exist (e.g. re-running preparer), try opening them
              out_vx = outFile.openDataSet("wind_current_vx");
@@ -135,9 +135,9 @@ void FlowFieldGenerator::AddWindToFlowFieldHDF5(const std::string& windFilePath,
         try { out_vx.createAttribute("num_frames", H5::PredType::NATIVE_INT, att_space).write(H5::PredType::NATIVE_INT, &num_frames); } catch(...) {}
         try { out_vx.createAttribute("loop_mode", H5::PredType::NATIVE_INT, att_space).write(H5::PredType::NATIVE_INT, &loop_mode); } catch(...) {}
 
-        // Process Data 
+         // Process Data 
         std::vector<double> frame_in(widthIn * heightIn); // Re-use for vx and vy to save memory
-        std::vector<double> frame_out(gx * gy);
+        std::vector<float> frame_out(gx * gy);
 
         for (int f = 0; f < num_frames; f++) {
             hsize_t inOffset[3] = {static_cast<hsize_t>(f), 0, 0};
@@ -174,7 +174,7 @@ void FlowFieldGenerator::AddWindToFlowFieldHDF5(const std::string& windFilePath,
                     }
                 }
             }
-            out_vx.write(frame_out.data(), H5::PredType::NATIVE_DOUBLE, memSpaceOut, outSpace);
+            out_vx.write(frame_out.data(), H5::PredType::NATIVE_FLOAT, memSpaceOut, outSpace);
 
             // Read/Write VY
             ds_in_vy.read(frame_in.data(), H5::PredType::NATIVE_DOUBLE, memSpaceIn, inSpace);
@@ -191,7 +191,7 @@ void FlowFieldGenerator::AddWindToFlowFieldHDF5(const std::string& windFilePath,
                     }
                 }
             }
-            out_vy.write(frame_out.data(), H5::PredType::NATIVE_DOUBLE, memSpaceOut, outSpace);
+            out_vy.write(frame_out.data(), H5::PredType::NATIVE_FLOAT, memSpaceOut, outSpace);
         }
 
         inFile.close();
@@ -361,11 +361,11 @@ void FlowFieldGenerator::GenerateFluentTransient(const ParameterParser& params)
                  // Valid check - import should ensure correct size, but boundary check is safe
                  if (src_i >= 0 && src_i < imageWidth && src_j >= 0 && src_j < imageHeight) {
                      size_t src_idx = src_i + imageWidth * src_j;
-                     vx_frame[dst_idx] = importer.vx_data[src_idx];
-                     vy_frame[dst_idx] = importer.vy_data[src_idx];
+                     vx_frame[dst_idx] = (float)importer.vx_data[src_idx];
+                     vy_frame[dst_idx] = (float)importer.vy_data[src_idx];
                  } else {
-                     vx_frame[dst_idx] = 0.0;
-                     vy_frame[dst_idx] = 0.0;
+                     vx_frame[dst_idx] = 0.0f;
+                     vy_frame[dst_idx] = 0.0f;
                  }
             }
         }
@@ -399,8 +399,8 @@ void FlowFieldGenerator::CreateFlowFieldHDF5(const std::string& flowType, int nu
         props.setDeflate(6);
     }
 
-    H5::DataSet ds_vx = file.createDataSet("water_current_vx", H5::PredType::NATIVE_DOUBLE, dataspace, props);
-    H5::DataSet ds_vy = file.createDataSet("water_current_vy", H5::PredType::NATIVE_DOUBLE, dataspace, props);
+    H5::DataSet ds_vx = file.createDataSet("water_current_vx", H5::PredType::NATIVE_FLOAT, dataspace, props);
+    H5::DataSet ds_vy = file.createDataSet("water_current_vy", H5::PredType::NATIVE_FLOAT, dataspace, props);
 
     H5::DataSpace att_space(H5S_SCALAR);
 
@@ -440,8 +440,8 @@ void FlowFieldGenerator::WriteFrameToHDF5(int frame_index)
     H5::DataSpace frame_space(3, frame_dims);
 
     // Write vx, vy data for this frame
-    ds_vx.write(vx_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
-    ds_vy.write(vy_frame.data(), H5::PredType::NATIVE_DOUBLE, frame_space, dataspace);
+    ds_vx.write(vx_frame.data(), H5::PredType::NATIVE_FLOAT, frame_space, dataspace);
+    ds_vy.write(vy_frame.data(), H5::PredType::NATIVE_FLOAT, frame_space, dataspace);
 
     file.close();
 }
@@ -457,8 +457,12 @@ void FlowFieldGenerator::WriteFlowFieldToHDF5(const std::string& flowType, int n
 
     for (int frame = 0; frame < num_frames; frame++) {
         // Copy data to member buffers
-        vx_frame = vx_frames[frame];
-        vy_frame = vy_frames[frame];
+        vx_frame.resize(gx * gy);
+        vy_frame.resize(gx * gy);
+        for(size_t i=0; i < vx_frames[frame].size(); ++i) {
+            vx_frame[i] = (float)vx_frames[frame][i];
+            vy_frame[i] = (float)vy_frames[frame][i];
+        }
         WriteFrameToHDF5(frame);
     }
 

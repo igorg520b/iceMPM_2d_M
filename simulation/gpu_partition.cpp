@@ -99,11 +99,12 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     pparams.gridX_alloc_capacity = gx_requested;
 
     // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
-    const size_t grid_forcing_requested = sizeof(double) * gy * (gx_requested + 2*halo);
+    // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
+    const size_t grid_forcing_requested = sizeof(float) * gy * (gx_requested + 2*halo);
     CUDA_CHECK(cudaMallocPitch(&pparams.buffer_grid_forcing, &pparams.pitch_grid_forcing, grid_forcing_requested, SimParams::nGridForcingArrays));
-    total_allocated += pparams.pitch_grid_forcing * SimParams::nGridForcingArrays;
-    if(pparams.pitch_grid_forcing % sizeof(double) != 0) throw std::runtime_error("pparams.pitch_grid_forcing % sizeof(double) != 0");
-    pparams.pitch_grid_forcing /= sizeof(double); // convert from bytes to elements
+    total_allocated += pparams.pitch_grid_forcing * SimParams::nGridForcingArrays * sizeof(float); // fix tracking
+    if(pparams.pitch_grid_forcing % sizeof(float) != 0) throw std::runtime_error("pparams.pitch_grid_forcing % sizeof(float) != 0");
+    pparams.pitch_grid_forcing /= sizeof(float); // convert from bytes to elements
 
     // grid regions identifiers/indices
     const size_t grid_regions_size = sizeof(uint8_t) * gy * (gx_requested + 2*halo);
@@ -296,13 +297,13 @@ void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator 
     int offset_gpu = gpuInWAC.offset_within(gpuBufferInterval);
     int offset_wac = gpuInWAC.offset_within(wacInterval);
 
-    const size_t transfer_size = transfer_width * gy * sizeof(double);
+    const size_t transfer_size = transfer_width * gy * sizeof(float);
 
     // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
     {
-        const double* src_vx = wac.vx_frame_buffer[frame].data() + gy * offset_wac;
-        const double* src_vy = wac.vy_frame_buffer[frame].data() + gy * offset_wac;
+        const float* src_vx = wac.vx_frame_buffer[frame].data() + gy * offset_wac;
+        const float* src_vy = wac.vy_frame_buffer[frame].data() + gy * offset_wac;
 
         // Determine destination indices based on frame using GridForcingFramesIndex
         size_t idx_vx = SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame0;
@@ -313,8 +314,8 @@ void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator 
             idx_vy = SimParams::GridForcingFramesIndex::grid_idx_current_vy_frame1;
         }
 
-        double* dst_vx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vx + gy * offset_gpu;
-        double* dst_vy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vy + gy * offset_gpu;
+        float* dst_vx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vx + gy * offset_gpu;
+        float* dst_vy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vy + gy * offset_gpu;
 
         CUDA_CHECK(cudaMemcpyAsync(dst_vx, src_vx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
         CUDA_CHECK(cudaMemcpyAsync(dst_vy, src_vy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
@@ -347,15 +348,15 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
     int offset_gpu = gpuInWAC.offset_within(gpuBufferInterval);
     int offset_wac = gpuInWAC.offset_within(wacInterval);
 
-    const size_t transfer_size = transfer_width * gy * sizeof(double);
+    const size_t transfer_size = transfer_width * gy * sizeof(float);
 
     // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
     {
         // Need to check if wind buffers are allocated
         if (!wac.wind_vx_frame_buffer[frame].empty()) {
-            const double* src_wvx = wac.wind_vx_frame_buffer[frame].data() + gy * offset_wac;
-            const double* src_wvy = wac.wind_vy_frame_buffer[frame].data() + gy * offset_wac;
+            const float* src_wvx = wac.wind_vx_frame_buffer[frame].data() + gy * offset_wac;
+            const float* src_wvy = wac.wind_vy_frame_buffer[frame].data() + gy * offset_wac;
 
             size_t idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame0;
             size_t idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame0;
@@ -365,8 +366,8 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
                 idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame1;
             }
 
-            double* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + gy * offset_gpu;
-            double* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + gy * offset_gpu;
+            float* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + gy * offset_gpu;
+            float* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + gy * offset_gpu;
 
             CUDA_CHECK(cudaMemcpyAsync(dst_wvx, src_wvx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
             CUDA_CHECK(cudaMemcpyAsync(dst_wvy, src_wvy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
@@ -468,7 +469,7 @@ void GPU_Partition::update_nodes(float simulation_time, const double current_alp
 //    check_error_code();
 }
 
-void GPU_Partition::g2p(const bool recordPQ)
+void GPU_Partition::g2p(const bool recordPQ, const int step)
 {
     CUDA_CHECK(cudaSetDevice(Device));
 
@@ -476,7 +477,7 @@ void GPU_Partition::g2p(const bool recordPQ)
     const int &tpb = prms.tpb_G2P;
     const int nBlocks = (n + tpb - 1) / tpb;
 
-    partition_kernel_g2p<<<nBlocks, tpb, 0, streamCompute>>>(pparams, recordPQ);
+    partition_kernel_g2p<<<nBlocks, tpb, 0, streamCompute>>>(pparams, recordPQ, step);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("g2p kernel");
 
 //    check_error_code();

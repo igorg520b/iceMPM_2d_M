@@ -37,7 +37,7 @@ bool Model::Step()
 
         gpu.update_nodes(simulation_time, 0, 0);
         const bool isCycleEnd = (step + 1) % sim_data.prms.UpdateEveryNthStep == 0;
-        gpu.g2p(isCycleEnd);
+        gpu.g2p(isCycleEnd, step);
 
         bool attempt_point_transfer = (step) % sim_data.prms.PointTransferPeriod == 0;
         if(attempt_point_transfer) gpu.point_transfer();

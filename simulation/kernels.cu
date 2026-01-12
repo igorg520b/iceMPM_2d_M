@@ -144,7 +144,7 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
     const size_t &pitch_grid = pparams.pitch_grid;
     double* const &bgrid = pparams.buffer_grid;
     const size_t &pitch_grid_forcing = pparams.pitch_grid_forcing;
-    double* const &bgrid_forcing = pparams.buffer_grid_forcing;
+    float* const &bgrid_forcing = pparams.buffer_grid_forcing;
 
     //const double &cellsize = gprms.cellsize;
     const double &dt = gprms.InitialTimeStep;               // time step
@@ -220,7 +220,7 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
 
 }
 
-__global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ)
+__global__ void partition_kernel_g2p(const PartitionParams pparams, const bool recordPQ, const int step)
 {
     const size_t pt_idx = (size_t) blockIdx.x * blockDim.x + threadIdx.x;
     if(pt_idx >= pparams.count_pts) return;
@@ -293,7 +293,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         }
 
     // Advection and update of the deformation gradient
-    bool cell_updated = false;
+    bool cell_updated = false; // record if the point moved into another cell
 
     pos += p_velocity * (dt*h_inv); // position is in local cell coordinates [-0.5 to 0.5]
 
@@ -327,20 +327,35 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
     ComputePQ(Je_tr, p_tr, q_tr, kappa, mu, Fe);    // computes P, Q, J
 
-    Eigen::Matrix2d U, V;
-    Eigen::Vector2d vSigma, vSigmaSquared, v_s_hat_tr;
-    ComputeSVD(Fe, U, vSigma, V, vSigmaSquared, v_s_hat_tr, kappa, mu, Je_tr);
     if(!(utility_data & SimParams::status_crushed))
     {
         CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr, initial_thickness);
     }
 
-    if((utility_data & SimParams::status_crushed) || (utility_data & SimParams::status_cracked))
+    Eigen::Matrix2d U, V;
+    Eigen::Vector2d vSigma, vSigmaSquared, v_s_hat_tr;
+
+    constexpr int glen_step = 100;
+    const bool perform_glen_step = (step % glen_step == 0) && (gprms.GlenA != 0);
+    const bool perform_plastic_flow = ((utility_data & SimParams::status_crushed) || (utility_data & SimParams::status_cracked));
+    if(perform_glen_step || perform_plastic_flow)
+        ComputeSVD(Fe, U, vSigma, V, vSigmaSquared, v_s_hat_tr, kappa, mu, Je_tr);
+
+    // Glen's Flow Rule
+    double glen_flow_change = 0;
+    if(perform_glen_step) Glen_Nye_flow_law(dt*glen_step, q_tr, vSigmaSquared, U, V, v_s_hat_tr, Fe, glen_flow_change);
+
+    if(perform_plastic_flow)
     {
         Wolper_Drucker_Prager(utility_data, initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
     }
 
+
+
     // distribute the values of p back into GPU memory
+    bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_glen_flow] += glen_flow_change;
+
+
     for(int i=0; i<SimParams::dim; i++)
     {
         bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::posx+i)] = pos[i];
@@ -372,6 +387,43 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data] = __longlong_as_double(utility_data);
 }
 
+
+
+__device__ void Glen_Nye_flow_law(const double dt, double &q_tr,
+Eigen::Vector2d &vSigmaSquared,
+const Eigen::Matrix2d &U,
+const Eigen::Matrix2d &V,
+Eigen::Vector2d &v_s_hat_tr,
+Eigen::Matrix2d &Fe, double &track_change)
+{
+    const double &mu = gprms.mu;
+    const double &A = gprms.GlenA;
+
+
+    const double Je_tr = Fe.determinant();
+    double epsilon_dot_dt = A * dt * pow(q_tr,3);      // Glen's Law
+
+
+    double q_n_1 = max(q_tr - mu*epsilon_dot_dt, 0.0);
+
+
+    double s_hat_n_1_norm = q_n_1*coeff1_inv;
+    Eigen::Vector2d vB_hat_E_new = s_hat_n_1_norm*(Je_tr/mu)*v_s_hat_tr.normalized() +
+                                   Eigen::Vector2d::Constant(1)*(vSigmaSquared.sum()/SimParams::dim);
+    Eigen::Vector2d vSigma_new = vB_hat_E_new.array().sqrt().matrix();
+    Fe = U*vSigma_new.asDiagonal()*V.transpose();
+
+    // Update state variables for consistency with new Fe
+    double ratio = (q_tr > 1e-12) ? (q_n_1 / q_tr) : 0.0;
+    q_tr = q_n_1;
+    v_s_hat_tr *= ratio; // deviatoric stress vector scales linearly with q
+    vSigmaSquared = vB_hat_E_new; // vB_hat_E_new holds the new squared eigenvalues
+
+    track_change = epsilon_dot_dt;
+}
+
+
+// ======================================== END OF P2G/UDPATE/G2P KERNELS
 
 __global__ void partition_kernel_render_results(const PartitionParams pparams, int group)
 {
@@ -879,34 +931,7 @@ __device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F)
 
 
 
-/*
-__device__ void Glen_Nye_flow_law(const double dt, const double &q_tr,
-const Eigen::Vector2d &vSigmaSquared,
-const Eigen::Matrix2d &U,
-const Eigen::Matrix2d &V,
-const Eigen::Vector2d &v_s_hat_tr,
-                                  Eigen::Matrix2d &Fe, double &qp)
 
-{
-    const double &mu = gprms.mu;
-    const double &A = gprms.GlenA;
-
-
-    const double Je_tr = Fe.determinant();
-    double epsilon_dot_dt = A * q_tr*q_tr*q_tr * dt;      // Glen's Law
-
-
-    double q_n_1 = max(q_tr - mu*epsilon_dot_dt, 0.);
-
-
-    double s_hat_n_1_norm = q_n_1*coeff1_inv;
-    Eigen::Vector2d vB_hat_E_new = s_hat_n_1_norm*(Je_tr/mu)*v_s_hat_tr.normalized() +
-                                 Eigen::Vector2d::Constant(1)*(vSigmaSquared.sum()/d);
-    Eigen::Vector2d vSigma_new = vB_hat_E_new.array().sqrt().matrix();
-    Fe = U*vSigma_new.asDiagonal()*V.transpose();
-    qp *= (q_n_1/q_tr);
-}
-*/
 
 
 // ============================================================================

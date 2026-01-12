@@ -13,7 +13,7 @@ struct PartitionParams
     // device-side arrays
     double *buffer_pts;  // *pts_array
     double *buffer_grid;  // *grid_array (simulation grid)
-    double *buffer_grid_forcing;  // *grid_forcing_array (forcing frames: vx, vy, eta for 2 frames)
+    float *buffer_grid_forcing;  // *grid_forcing_array (forcing frames: vx, vy, eta for 2 frames)
     uint8_t *buffer_grid_regions;     // grid_status_array
 
     double *point_transfer_buffer[4]; // GPU-side buffers to send/receive points between adj. partitions

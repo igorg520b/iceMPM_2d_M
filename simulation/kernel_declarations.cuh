@@ -38,7 +38,7 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
 // Parameters:
 //   - recordPQ: if true, compute and record stress values for visualization
 __global__ void partition_kernel_g2p(const PartitionParams pparams,
-                                     const bool recordPQ);
+                                     const bool recordPQ, const int step);
 
 // ============================================================================
 // RENDERING KERNELS - Visualization Data Preparation
@@ -120,13 +120,13 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data,
                                       Eigen::Matrix2d &Fe, double &Jp_inv);
 
 // Glen-Nye flow law for ice rheology: time-dependent plastic strain accumulation
-// Updates Fe and qp based on stress invariant q
-__device__ void Glen_Nye_flow_law(const double dt, const double &q_tr,
-                                  const Eigen::Vector2d &vSigmaSquared,
-                                  const Eigen::Matrix2d &U,
-                                  const Eigen::Matrix2d &V,
-                                  const Eigen::Vector2d &v_s_hat_tr,
-                                  Eigen::Matrix2d &Fe, double &qp);
+// Updates Fe
+__device__ void Glen_Nye_flow_law(const double dt, double &q_tr,
+    Eigen::Vector2d &vSigmaSquared,
+    const Eigen::Matrix2d &U,
+    const Eigen::Matrix2d &V,
+    Eigen::Vector2d &v_s_hat_tr,
+    Eigen::Matrix2d &Fe, double &track_change);
 
 // Checks if a material point has exceeded the failure surface (yield criterion)
 // Sets status flags if failure has occurred

@@ -544,6 +544,27 @@ void VisualRepresentation::SynchronizeValues()
             std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
             pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
+    } else if (VisualizingVariable == VisOpt::pt_glen_flow) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa.begin() + i;
+            // Use idx_glen_flow (18)
+            double val = s->getValue(SimParams::PtArrIdx::idx_glen_flow);
+            double value = val / range;
+            
+            const double base_alpha = std::min(1.0, std::abs(val) / range);
+            double alpha = (1.0 - transparency) * 1.0 + transparency * base_alpha;
+            
+            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            uint8_t r = (utility >> 24) & 0xFF;
+            uint8_t g = (utility >> 32) & 0xFF;
+            uint8_t b = (utility >> 40) & 0xFF;
+            
+            std::array<uint8_t, 3> original_color = {r, g, b};
+            // Use ANSYS palette (same as Q)
+            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, value);
+            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
+        }
     } else if (VisualizingVariable == VisOpt::pt_thickness) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
@@ -610,6 +631,7 @@ void VisualRepresentation::ConfigureScalarBar()
         break;
 
     case VisOpt::pt_Q:
+    case VisOpt::pt_glen_flow:
         lut_ANSYS->SetTableRange(-range, range);
         scalarBar->SetLookupTable(lut_ANSYS);
         scalarBar->SetLabelFormat("%.1e");

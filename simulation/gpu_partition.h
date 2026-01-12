@@ -69,7 +69,7 @@ struct GPU_Partition
     void clear_force_accumulator();
     void p2g();
     void update_nodes(float simulation_time, const double current_alpha, const double current_alpha_wind);
-    void g2p(const bool recordPQ);
+    void g2p(const bool recordPQ, const int step);
 
     // specific to multi-gpu
     void receive_halos();

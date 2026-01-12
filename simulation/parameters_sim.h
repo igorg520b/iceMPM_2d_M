@@ -138,7 +138,8 @@ public:
         Bp00 = 13,      // size 4: grad of v with respect to x,y (13,14,15,16)
         
         idx_thickness = 17,
-        nPtsArrays = 18,
+        idx_glen_flow = 18,
+        nPtsArrays = 19,
     };
 
     // GPU and multi-GPU-related params
@@ -182,6 +183,7 @@ public:
     double IceCompressiveThreshold;     // exceding this causes the material to crush
 
     double RidgeFormationCoeff;
+    double GlenA; // Glen's flow law parameter (A) for ice rheology
 
 
     double DP_phi, DP_threshold_p;

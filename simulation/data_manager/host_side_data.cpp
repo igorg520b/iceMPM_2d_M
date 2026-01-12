@@ -765,7 +765,7 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
             // If both masks are present, the crushed mask is purely for the crushed flag
             if (!crushed.empty()) {
                 uint8_t crushed_pixel = crushed[(i + ox) + (j + oy) * width];
-                is_crushed = (crushed_pixel < 255);
+                is_crushed = (crushed_pixel < 128);
             }
         } else {
             // Use crushed mask (fallback when no thickness mask provided)
@@ -803,9 +803,9 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
         // Determine cracked status
         if (!cracked.empty()) {
             // White (255) = Not cracked
-            // Anything else = Cracked
+            // Black = Cracked
             uint8_t cracked_pixel = cracked[(i + ox) + (j + oy) * width];
-            if (cracked_pixel < 255) {
+            if (cracked_pixel < 128) {
                 utility_data |= SimParams::status_cracked;
             }
         }

@@ -45,6 +45,11 @@ void SimParams::Reset()
     IceTensileStrength2 = 10e6;
     RidgeFormationCoeff = 30;
 
+    // Glen's Flow Law Parameter A (Pa^-3 s^-1)
+    // Default for temperate ice (0C): ~2.4e-24
+    // Cold ice (-10C): ~3.5e-25
+    GlenA = 2.4e-24;
+
     DP_phi = 62;
     DP_threshold_p = 1e4;
 
@@ -130,6 +135,7 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("DP_phi")) DP_phi = doc["DP_phi"].GetDouble();
     if(doc.HasMember("DP_threshold_p")) DP_threshold_p = doc["DP_threshold_p"].GetDouble();
     if(doc.HasMember("RidgeFormationCoeff")) RidgeFormationCoeff = doc["RidgeFormationCoeff"].GetDouble();
+    if(doc.HasMember("GlenA")) GlenA = doc["GlenA"].GetDouble();
 
     if(doc.HasMember("waterDragEffectiveQuadratic")) waterDragEffectiveQuadratic = doc["waterDragEffectiveQuadratic"].GetDouble();
     if(doc.HasMember("windDragEffectiveQuadratic")) windDragEffectiveQuadratic = doc["windDragEffectiveQuadratic"].GetDouble();

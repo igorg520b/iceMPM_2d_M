@@ -57,6 +57,7 @@ public:
         pt_Jp_inv, pt_ridges,
         pt_P, pt_Q, pt_thickness,
         pt_partitions, // 10
+        pt_glen_flow,
         // grid-based visualizations
         grid_mass, grid_pt_count, grid_Jpinv,  grid_ridges, grid_P, grid_Q,
         grid_colors, grid_vnorm, grid_cracked, grid_thickness,
@@ -69,10 +70,10 @@ public:
     };
     Q_ENUM(VisOpt)
 
-    inline static constexpr std::array<std::string_view, 26> visOptDescriptions = {
+    inline static constexpr std::array<std::string_view, 27> visOptDescriptions = {
         "", "Regions", "Status", "Color",
         "Change in Surf. Density", "Ridges",
-        "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions",
+        "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions", "Glen Flow",
         "Mass", "Point count", "Jp_inv", "Ridges",
 
         "In-plane Pressure P", "Deviatoric Stress Q",

@@ -235,11 +235,11 @@ void GPU_Implementation5::update_nodes(float simulation_time, float windSpeed, f
     }
 }
 
-void GPU_Implementation5::g2p(const bool recordPQ)
+void GPU_Implementation5::g2p(const bool recordPQ, const int step)
 {
     for(GPU_Partition &p : partitions)
     {
-        p.g2p(recordPQ);
+        p.g2p(recordPQ, step);
         CUDA_CHECK(cudaEventRecord(p.event_50_g2p_completed, p.streamCompute));
     }
 }

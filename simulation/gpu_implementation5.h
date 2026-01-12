@@ -53,7 +53,7 @@ public:
 
     void p2g();
     void update_nodes(float simulation_time, float windSpeed, float windAngle);
-    void g2p(const bool recordPQ);
+    void g2p(const bool recordPQ, const int step);
     void record_timings();
 
     // specific to multi-gpu implementation

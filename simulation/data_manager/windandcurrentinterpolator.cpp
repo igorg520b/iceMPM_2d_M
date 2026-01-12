@@ -159,8 +159,9 @@ void WindAndCurrentInterpolator::LoadFrame(int frameIdx, int bufferSlot)
         space_vx.selectHyperslab(H5S_SELECT_SET, dims, offset);
         H5::DataSpace mem_space(3, dims);
 
-        ds_vx.read(vx_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_DOUBLE, mem_space, space_vx);
-        ds_vy.read(vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_DOUBLE, mem_space, space_vx);
+        // Read directly as float
+        ds_vx.read(vx_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
+        ds_vy.read(vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
 
     } catch (const H5::Exception& e) {
         spdlog::error("HDF5 Error loading flow frame: {}", e.getDetailMsg());
@@ -334,8 +335,8 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
             // 1. Project
             LatLon ll = ProjectPixel(global_x, global_y);
             if (!ll.valid) {
-                 wind_vx_frame_buffer[bufferSlot][grid_idx] = 0;
-                 wind_vy_frame_buffer[bufferSlot][grid_idx] = 0;
+                 wind_vx_frame_buffer[bufferSlot][grid_idx] = 0.0f;
+                 wind_vy_frame_buffer[bufferSlot][grid_idx] = 0.0f;
                  continue;
             }
             
@@ -407,8 +408,8 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
             double vx_grid = u_val * rot.ex + v_val * rot.nx;
             double vy_grid = u_val * rot.ey + v_val * rot.ny;
             
-            wind_vx_frame_buffer[bufferSlot][grid_idx] = vx_grid;
-            wind_vy_frame_buffer[bufferSlot][grid_idx] = vy_grid;
+            wind_vx_frame_buffer[bufferSlot][grid_idx] = (float)vx_grid;
+            wind_vy_frame_buffer[bufferSlot][grid_idx] = (float)vy_grid;
         }
     }
 }
@@ -521,7 +522,7 @@ std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j
 
     if (num_frames == 1) {
         // Special case: constant flow, no interpolation
-        return {vx_frame_buffer[0][idx], vy_frame_buffer[0][idx]};
+        return {(double)vx_frame_buffer[0][idx], (double)vy_frame_buffer[0][idx]};
     }
 
     // General case: linear temporal interpolation using current_alpha

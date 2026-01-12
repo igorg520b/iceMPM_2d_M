@@ -42,8 +42,8 @@ private:
     std::string projectDirectory;
 
     // Reusable buffers for frame generation
-    std::vector<double> vx_frame;
-    std::vector<double> vy_frame;
+    std::vector<float> vx_frame;
+    std::vector<float> vy_frame;
 
     // Helper method to create HDF5 file structure (called once at start)
     void CreateFlowFieldHDF5(const std::string& flowType, int num_frames, double time_interval,
