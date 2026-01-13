@@ -86,7 +86,6 @@ private Q_SLOTS:
     void spinbox_slowdown_value_changed(int val);
 
     void parameters_updated();
-    void print_camera_params();
     void toggle_scalarbar(bool checked);
 
 private:

@@ -38,7 +38,6 @@
      <string>Tools</string>
     </property>
     <addaction name="action_camera_reset"/>
-    <addaction name="actionPrint_Camera_Params"/>
     <addaction name="actionView_ScalarBar"/>
    </widget>
    <widget class="QMenu" name="menuSimulation">
@@ -120,11 +119,6 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+L</string>
-   </property>
-  </action>
-  <action name="actionPrint_Camera_Params">
-   <property name="text">
-    <string>Print Camera Params</string>
    </property>
   </action>
   <action name="actionView_ScalarBar">

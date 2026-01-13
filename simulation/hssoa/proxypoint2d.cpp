@@ -143,6 +143,24 @@ uint16_t ProxyPoint::getGrain()
     return (val & 0xffff);
 }
 
+bool ProxyPoint::getFractureTension()
+{
+    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    return (val & SimParams::fracture_tension);
+}
+
+bool ProxyPoint::getFractureCompressionShear()
+{
+    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    return (val & SimParams::fracture_compression_shear);
+}
+
+bool ProxyPoint::getFractureCrush()
+{
+    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    return (val & SimParams::fracture_crush);
+}
+
 int ProxyPoint::getCellIndex(int GridY)
 {
     uint32_t cell = getValueInt(SimParams::PtArrIdx::integer_cell_idx);

@@ -346,7 +346,7 @@ PartitionParams pparams;   // Partition metadata
 
 **Location:** `simulation/data_manager/windandcurrentinterpolator.h/cpp`
 
-**Responsibility:** Load and interpolate ocean current velocity field.
+**Responsibility:** Load, manage, and interpolate ocean current and wind velocity fields. Uses a 3-frame ring buffer with asynchronous preloading for performance.
 
 ### Public Methods
 
@@ -355,16 +355,33 @@ PartitionParams pparams;   // Partition metadata
 - Read dimensions: (num_frames, gx, gy)
 - **Called by:** Model::LoadParameterFile
 
-**`bool SetTime(double time)`**
+**`std::pair<bool, bool> SetTime(double time)`**
 - Load frames needed for given simulation time
 - Performs temporal interpolation between frames
-- **Returns:** true if new frames loaded (data changed)
+- Manages 3-slot ring buffer to minimize reloads
+- Asynchronously preloads the next frame (n+2) if sequential access detected
+- **Returns:** `{ocean_changed, wind_changed}` pair
 - **Called by:** Model::Prepare, Model::Step
 
 **`void GetInterpolatedValue(int i, int j, double time, double &vx, double &vy)`**
 - Get interpolated velocity at grid cell (i,j)
 - Linear interpolation between frames
-- Called by GPU kernels
+- Called by GPU kernels (via host wrapping if needed, though usually GPU accesses directly)
+
+**`float* GetOceanDataPointer(int frameIdx, int component)`**
+- Direct access to internal frame buffers for GPU transfer
+- `component`: 0 for U (vx), 1 for V (vy)
+- Returns pointer to the requested frame's data in the ring buffer
+
+**`float* GetWindDataPointer(int frameIdx, int component)`**
+- Direct access to internal wind frame buffers
+- `component`: 0 for U (vx), 1 for V (vy)
+
+### features
+
+- **3-Frame Ring Buffer:** Keeps frames n, n+1, and n+2 resident when possible.
+- **Async Preloading:** Uses `std::async` and `std::future` to load upcoming frames in the background during the current step's computation.
+- **Smart Reuse:** `SetTime` intelligently maps logical frames to physical slots to avoid unnecessary copying.
 
 ### HDF5 Format Expected
 

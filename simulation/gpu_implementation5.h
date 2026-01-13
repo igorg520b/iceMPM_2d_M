@@ -52,7 +52,7 @@ public:
     void clear_force_accumulator();
 
     void p2g();
-    void update_nodes(float simulation_time, float windSpeed, float windAngle);
+    void update_nodes(float simulation_time);
     void g2p(const bool recordPQ, const int step);
     void record_timings();
 

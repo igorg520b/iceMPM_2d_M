@@ -834,7 +834,7 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
 
     // (10) Save point snapshot
     prms.nPtsInitial = pt_buffer.size();  // Update in case it changed
-    SaveSnapshot(0, 0.0, false, data_directory);  // Save to same directory as grid.h5 and grid_flow.h5
+    SaveSnapshot(0, 0.0, true, data_directory);  // Save to same directory as grid.h5 and grid_flow.h5
 
     LOGR("PopulatePoints completed");
 

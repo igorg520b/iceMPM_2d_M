@@ -372,6 +372,22 @@ enum PtArrIdx {
 | 19 | thickness | double | 0 to 1 | 1 | Damage/integrity: 1=healthy, 0=crushed |
 | 20-22 | color | uint8→double | 0 to 255 | RGB | Original satellite image color |
 
+### 2.2 utility_data Bitmask Layout
+
+The `idx_utility_data` array (stored as double, cast to uint64_t) packs multiple flags and color data:
+
+| Bits | Use | Details |
+| :--- | :--- | :--- |
+| **0 - 15** | **UNUSED / Partition Idx** | Available for use (sometimes used for temp partition idx) |
+| **16** | `status_crushed` | Failure state (crushed) |
+| **17** | `status_cracked` | Failure state (cracked) |
+| **18** | `status_disabled` | Point disabled/removed |
+| **19 - 23** | **UNUSED** | Available for custom flags |
+| **24 - 31** | **Red** | Visualization Color (R) |
+| **32 - 39** | **Green** | Visualization Color (G) |
+| **40 - 47** | **Blue** | Visualization Color (B) |
+| **48 - 63** | **UNUSED** | Available |
+
 ---
 
 ### 2.2 Host Grid Buffer

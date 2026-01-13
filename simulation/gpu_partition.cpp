@@ -302,8 +302,8 @@ void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator 
     // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
     {
-        const float* src_vx = wac.vx_frame_buffer[frame].data() + gy * offset_wac;
-        const float* src_vy = wac.vy_frame_buffer[frame].data() + gy * offset_wac;
+        const float* src_vx = wac.GetOceanDataPointer(frame, 0) + gy * offset_wac;
+        const float* src_vy = wac.GetOceanDataPointer(frame, 1) + gy * offset_wac;
 
         // Determine destination indices based on frame using GridForcingFramesIndex
         size_t idx_vx = SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame0;
@@ -353,25 +353,32 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
     // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
     {
-        // Need to check if wind buffers are allocated
-        if (!wac.wind_vx_frame_buffer[frame].empty()) {
-            const float* src_wvx = wac.wind_vx_frame_buffer[frame].data() + gy * offset_wac;
-            const float* src_wvy = wac.wind_vy_frame_buffer[frame].data() + gy * offset_wac;
+        const float* src_wvx = wac.GetWindDataPointer(frame, 0);
+        const float* src_wvy = wac.GetWindDataPointer(frame, 1);
+        
+        // Safety check: ensure pointer is valid (buffer not empty)
+        // With current logic, if UseWindData is true, buffers should be loaded.
+        // But GetWindDataPointer could theoretically return null if logic fails.
+        // We assume valid if it returns non-valid, the pointer arithmetic might be invalid?
+        // Actually, src_wvx is just a pointer. Validation:
+        if (src_wvx == nullptr || src_wvy == nullptr) continue; 
+        
+        src_wvx += gy * offset_wac;
+        src_wvy += gy * offset_wac;
 
-            size_t idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame0;
-            size_t idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame0;
+        size_t idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame0;
+        size_t idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame0;
 
-            if (frame == 1) {
-                idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame1;
-                idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame1;
-            }
-
-            float* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + gy * offset_gpu;
-            float* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + gy * offset_gpu;
-
-            CUDA_CHECK(cudaMemcpyAsync(dst_wvx, src_wvx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
-            CUDA_CHECK(cudaMemcpyAsync(dst_wvy, src_wvy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+        if (frame == 1) {
+            idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame1;
+            idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame1;
         }
+
+        float* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + gy * offset_gpu;
+        float* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + gy * offset_gpu;
+
+        CUDA_CHECK(cudaMemcpyAsync(dst_wvx, src_wvx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+        CUDA_CHECK(cudaMemcpyAsync(dst_wvy, src_wvy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
     }
 
     CUDA_CHECK(cudaStreamSynchronize(streamCompute));

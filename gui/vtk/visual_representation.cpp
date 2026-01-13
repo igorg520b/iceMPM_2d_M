@@ -295,6 +295,40 @@ void VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, combined_color, alpha);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
                 }
+                else if (VisualizingVariable == VisOpt::grid_fracture_type) {
+                    float val_tension = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_fracture_tension];
+                    float val_shear = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_fracture_shear];
+                    float val_crush = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_fracture_crush];
+
+                    val_tension = std::clamp(val_tension, 0.0f, 1.0f);
+                    val_shear = std::clamp(val_shear, 0.0f, 1.0f);
+                    val_crush = std::clamp(val_crush, 0.0f, 1.0f);
+
+                    // Reconstruct color based on flag logic
+                    // Start as black (fractured base)
+                    std::array<float, 3> frac_rgb = {0.0f, 0.0f, 0.0f};
+
+                    // Tension -> Blue, Shear -> Green
+                    frac_rgb[2] = val_tension;
+                    frac_rgb[1] = val_shear;
+
+                    // Crush -> Red (Dominates/Overwrites)
+                    // Interpolate Current -> Red based on crush val
+                    for(int k=0; k<3; k++) {
+                        frac_rgb[k] = frac_rgb[k] * (1.0f - val_crush) + (k==0 ? 1.0f : 0.0f) * val_crush;
+                    }
+
+                    std::array<uint8_t, 3> c_frac;
+                    for(int k=0; k<3; k++) c_frac[k] = (uint8_t)(std::clamp(frac_rgb[k], 0.0f, 1.0f) * 255.0f);
+
+                    // Blend Intact Color (c) -> Fracture Color
+                    float fracture_intensity = std::max({val_tension, val_shear, val_crush});
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c_frac, fracture_intensity);
+
+                    // Blend with Water
+                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
+                }
                 else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange) {
                     float val = grid_buffer[grid_idx + gridSize * SimParams::grid_idx_vis_strain_EqvGreenLagrange];
                     const float mix = alpha * (std::abs(val / range) + (1. - transparency));
@@ -452,6 +486,38 @@ void VisualRepresentation::SynchronizeValues()
             }
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
+
+    } else if (VisualizingVariable == VisOpt::pt_fracture_type) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa.begin() + i;
+            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            
+            // Start with original color
+            uint8_t r = (utility >> 24) & 0xFF;
+            uint8_t g = (utility >> 32) & 0xFF;
+            uint8_t b = (utility >> 40) & 0xFF;
+
+            if (utility & (SimParams::fracture_tension | 
+                SimParams::fracture_compression_shear |
+                utility & SimParams::fracture_crush))
+            {
+                r = g = b = 0;
+            }
+            // Overwrite components based on fracture flags
+            if (utility & SimParams::fracture_tension) {
+                b = 255; // Blue
+            }
+            if (utility & SimParams::fracture_compression_shear) {
+                g = 255; // Green
+            }
+            if (utility & SimParams::fracture_crush) {
+                r = 255; // Red
+                g = 0;
+                b = 0;
+            }
+
+            pts_colors->SetTuple3((vtkIdType)i, r, g, b);
+        }
     } else if (VisualizingVariable == VisOpt::none) {
         for (int i = 0; i < nPts; i++) {
             pts_colors->SetTuple3((vtkIdType)i, 240, 122, 122);
@@ -585,6 +651,7 @@ void VisualRepresentation::SynchronizeValues()
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, partition_idx / 8.0);
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
+
 
 
     } else {

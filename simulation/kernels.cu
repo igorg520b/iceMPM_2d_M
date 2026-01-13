@@ -549,6 +549,26 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked*pitch_g + idx_gridnode], val_cracked*incM);
             }
     }
+    else if(group == 3)
+    {
+        // group 3: Fracture Types
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const double Wip = ww[i+1][0]*ww[j+1][1];
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+                const double incM = Wip*particle_mass;
+                
+                // Determine fracture status
+                double val_tension = (utility & SimParams::fracture_tension) ? 1.0 : 0.0;
+                double val_shear = (utility & SimParams::fracture_compression_shear) ? 1.0 : 0.0;
+                double val_crush = (utility & SimParams::fracture_crush) ? 1.0 : 0.0;
+
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension*pitch_g + idx_gridnode], val_tension*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_shear*pitch_g + idx_gridnode], val_shear*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush*pitch_g + idx_gridnode], val_crush*incM);
+            }
+    }
 }
 
 __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
@@ -740,6 +760,7 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
     {
         // cracked by exceeding tensile threshold
         utility_data |= SimParams::status_cracked;
+        utility_data |= SimParams::fracture_tension;
         return;
     }
     else if(p < 0)
@@ -748,7 +769,11 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
         double q0 = 2*sqrt(-pmax*pmin)*qmax/(pmax-pmin);
         double k = -q0/pmin2;
         double q_limit = k*(p-pmin2);
-        if(q > q_limit) utility_data |= SimParams::status_cracked;
+        if(q > q_limit)
+        {
+            utility_data |= SimParams::status_cracked;
+            utility_data |= SimParams::fracture_tension;
+        }
         return;
     }
     else
@@ -757,8 +782,16 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
         double y = (1.+2.*beta)*q*q + M_sq*(p+beta*pmax) * (p-pmax);
         if(y > 0)
         {
-            if(p <= gprms.IceCompressiveThreshold) utility_data |= SimParams::status_cracked;
-            else utility_data |= SimParams::status_crushed;
+            if(p <= gprms.IceCompressiveThreshold)
+            {
+                utility_data |= SimParams::status_cracked;
+                utility_data |= SimParams::fracture_compression_shear;
+            }
+            else
+            {
+                utility_data |= SimParams::status_crushed;
+                utility_data |= SimParams::fracture_crush;
+            }
         }
     }
 }
@@ -777,7 +810,7 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, co
     const double pmin = -gprms.IceTensileStrength;
 
     const double &pmax = gprms.IceCompressiveStrength;
-    const double &qmax = gprms.IceShearStrength;
+    const double &qmax = gprms.IceShearStrengthFractured;
 
     const double tan_phi = tan(gprms.DP_phi*SimParams::pi/180);
 

@@ -223,14 +223,11 @@ void GPU_Implementation5::p2g()
 
 
 
-void GPU_Implementation5::update_nodes(float simulation_time, float windSpeed, float windAngle)
+void GPU_Implementation5::update_nodes(float simulation_time)
 {
-    double current_alpha = hsd.waci.current_alpha;
-    double current_alpha_wind = hsd.waci.current_wind_alpha;
-
     for(GPU_Partition &p : partitions)
     {
-        p.update_nodes(simulation_time, current_alpha, current_alpha_wind);
+        p.update_nodes(simulation_time, hsd.waci.current_ocean_alpha, hsd.waci.current_wind_alpha);
         CUDA_CHECK(cudaEventRecord(p.event_40_grid_updated, p.streamCompute));
     }
 }
@@ -262,8 +259,8 @@ void GPU_Implementation5::render_visualized_data()
 
     // Phase 2: Render visualization data group-by-group and transfer to host
     // Each group reuses the same 10 GPU array slots, so we must transfer before the next group
-    // Groups 1 & 2 only now.
-    for (int group = 1; group <= 2; ++group)
+    // Groups 1, 2, & 3 now.
+    for (int group = 1; group <= 3; ++group)
     {
         // Clear GPU memory and render this group for all partitions
         for(GPU_Partition &p : partitions)
@@ -495,7 +492,12 @@ std::vector<std::pair<int, int>> GPU_Implementation5::getGroupSlotMapping(int gr
         {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_crushed}, SimParams::HostGridArrayIndex::grid_idx_vis_crushed},
 
         {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked}, SimParams::HostGridArrayIndex::grid_idx_vis_cracked},
-        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness}, SimParams::HostGridArrayIndex::grid_idx_vis_thickness}
+        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness}, SimParams::HostGridArrayIndex::grid_idx_vis_thickness},
+
+        // Group 3: Fracture types (reusing slots)
+        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension}, SimParams::HostGridArrayIndex::grid_idx_fracture_tension},
+        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_shear}, SimParams::HostGridArrayIndex::grid_idx_fracture_shear},
+        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush}, SimParams::HostGridArrayIndex::grid_idx_fracture_crush}
     };
 
     std::vector<std::pair<int, int>> result;
@@ -537,7 +539,10 @@ void GPU_Implementation5::normalize_grid_on_host()
         SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises,
         SimParams::HostGridArrayIndex::grid_idx_vis_crushed,
         SimParams::HostGridArrayIndex::grid_idx_vis_cracked,
-        SimParams::HostGridArrayIndex::grid_idx_vis_thickness
+        SimParams::HostGridArrayIndex::grid_idx_vis_thickness,
+        SimParams::HostGridArrayIndex::grid_idx_fracture_tension,
+        SimParams::HostGridArrayIndex::grid_idx_fracture_shear,
+        SimParams::HostGridArrayIndex::grid_idx_fracture_crush
     };
 
     const size_t mass_plane_offset = grid_plane_size * SimParams::HostGridArrayIndex::host_grid_idx_mass;

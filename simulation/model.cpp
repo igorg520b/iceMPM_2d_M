@@ -35,7 +35,7 @@ bool Model::Step()
             frames_changed = ocean_changed || wind_changed;
         }
 
-        gpu.update_nodes(simulation_time, 0, 0);
+        gpu.update_nodes(simulation_time);
         const bool isCycleEnd = (step + 1) % sim_data.prms.UpdateEveryNthStep == 0;
         gpu.g2p(isCycleEnd, step);
 

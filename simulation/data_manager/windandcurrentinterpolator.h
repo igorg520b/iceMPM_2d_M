@@ -7,6 +7,8 @@
 #include <vector>
 #include <Eigen/Core>
 #include <memory>
+#include <functional>
+#include <future>
 
 #include "parameters_sim.h"
 
@@ -41,25 +43,31 @@ public:
     // Returns (vx, vy) pair using current_wind_alpha for interpolation
     std::pair<double, double> GetWindValue(int i, int j) const;
 
+    // Get Data Pointer for GPU transfer logic
+    // logicalFrame: 0 for the "first" frame (t), 1 for the "second" frame (t+dt)
+    // component: 0 for X, 1 for Y
+    const float* GetOceanDataPointer(int logicalFrame, int component) const;
+    const float* GetWindDataPointer(int logicalFrame, int component) const;
+
     // Get Latitude and Longitude at grid cell (i,j)
     // Returns (lat, lon) pair in degrees
     std::pair<double, double> GetLatLon(int i, int j) const;
 
 
 
-    // GPU-accessible buffers (only 2 frames in RAM at a time)
-    std::vector<float> vx_frame_buffer[2];  // frame data for GPU upload
-    std::vector<float> vy_frame_buffer[2];
+    // GPU-accessible buffers (3 frames in RAM for ring buffering)
+    std::vector<float> ocean_vx_frame_buffer[3];
+    std::vector<float> ocean_vy_frame_buffer[3];
     
     // Wind buffers
-    std::vector<float> wind_vx_frame_buffer[2];
-    std::vector<float> wind_vy_frame_buffer[2];
+    std::vector<float> wind_vx_frame_buffer[3];
+    std::vector<float> wind_vy_frame_buffer[3];
 
 
     // Interpolation parameter for temporal interpolation between frame buffers
     // Range: [0.0, 1.0] where 0.0 = at first frame, 1.0 = at second frame
     // Computed during SetTime() to indicate position between current_first_idx and current_second_idx
-    double current_alpha = 0.0;
+    double current_ocean_alpha = 0.0;
     double current_wind_alpha = 0.0;
 
 private:
@@ -83,22 +91,44 @@ private:
     int era5_num_frames = 0;
 
     // Current state (Flow)
-    int current_first_idx = -1;         // index of first cached frame
-    int current_second_idx = -1;        // index of second cached frame
+    int current_ocean_first_idx = -1;         // index of first cached frame (logical)
+    int current_ocean_second_idx = -1;        // index of second cached frame (logical)
     
+    // Slot Management (Ocean)
+    static constexpr int NUM_SLOTS = 3;
+    int ocean_slot_frames[NUM_SLOTS] = {-1, -1, -1}; // Which source frame is in each physical slot?
+    int current_ocean_active_slots[2] = {0, 0};      // Which physical slot corresponds to logical frame 0 and 1?
+
     // Current state (Wind)
     int current_wind_first_idx = -1;
     int current_wind_second_idx = -1;
+    
+    // Slot Management (Wind)
+    int wind_slot_frames[NUM_SLOTS] = {-1, -1, -1};
+    int current_wind_active_slots[2] = {0, 0};
 
     // Flow descriptor (read from HDF5 "/" group)
     std::string flow_type_id = "";
 
     // Helper methods
     void LoadHDF5Metadata();
-    void LoadFrame(int frameIdx, int bufferSlot);
+    void LoadOceanFrame(int frameIdx, int bufferSlot);
 
     void LoadEra5Metadata();
     void LoadWindFrame(int frameIdx, int bufferSlot);
+
+    // Async preloading
+    std::future<void> ocean_preload_future;
+    std::future<void> wind_preload_future;
+
+    // Smart Ring Buffer Update Logic
+
+    // Smart Ring Buffer Update Logic
+    // needed_f0, needed_f1: the two logical frames required by the current time
+    // slot_frames: array of size NUM_SLOTS (3) tracking which source frame is in each physical slot
+    // active_slots: array of size 2, outputting which physical slot index corresponds to f0 and f1
+    // load_func: callback to load a specific frame into a specific physical slot
+    void UpdateRingBufferSlots(int needed_f0, int needed_f1, int* slot_frames, int* active_slots, const std::function<void(int frame, int slot)>& load_func);
     
     // Projection Helpers
     struct RotMat { double ex, ey, nx, ny; };

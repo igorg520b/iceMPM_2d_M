@@ -50,17 +50,19 @@ public:
     double simulationTime = 0;
 
     enum VisOpt {
-        none,
+        none,   // 0
         regions,    // only basic grid data is needed
         // points must be available
         pt_status, pt_color,
         pt_Jp_inv, pt_ridges,
         pt_P, pt_Q, pt_thickness,
-        pt_partitions, // 10
+        pt_partitions,
         pt_glen_flow,
+        pt_fracture_type,
         // grid-based visualizations
         grid_mass, grid_pt_count, grid_Jpinv,  grid_ridges, grid_P, grid_Q,
         grid_colors, grid_vnorm, grid_cracked, grid_thickness,
+        grid_fracture_type,
         str_EqvGreenLagrange, str_vonMises,
         // visualization of external currents/forces
         v_ocean_norm,
@@ -70,15 +72,17 @@ public:
     };
     Q_ENUM(VisOpt)
 
-    inline static constexpr std::array<std::string_view, 27> visOptDescriptions = {
+    inline static constexpr std::array<std::string_view, 29> visOptDescriptions = {
         "", "Regions", "Status", "Color",
         "Change in Surf. Density", "Ridges",
-        "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions", "Glen Flow",
+        "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions", "Glen Flow", 
+        "Fracture Type",
+
         "Mass", "Point count", "Jp_inv", "Ridges",
 
         "In-plane Pressure P", "Deviatoric Stress Q",
         "Colors", "Ice velocity norm", "Cracked/Crushed Material",
-        "Ice Thickness",
+        "Ice Thickness", "Fracture Type",
         "Green-Lagrange Strain", "von Mises Strain",
         "Ocean Current Velocity Norm", "Wind Velocity Norm", "Latitude", "Longitude"
     };

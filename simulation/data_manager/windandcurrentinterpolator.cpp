@@ -128,7 +128,7 @@ void WindAndCurrentInterpolator::LoadEra5Metadata()
 }
 
 
-void WindAndCurrentInterpolator::LoadFrame(int frameIdx, int bufferSlot)
+void WindAndCurrentInterpolator::LoadOceanFrame(int frameIdx, int bufferSlot)
 {
     if (!file_flow) return;
 
@@ -145,8 +145,8 @@ void WindAndCurrentInterpolator::LoadFrame(int frameIdx, int bufferSlot)
     }
 
     int gridSize = gx * gy;
-    vx_frame_buffer[bufferSlot].resize(gridSize);
-    vy_frame_buffer[bufferSlot].resize(gridSize);
+    ocean_vx_frame_buffer[bufferSlot].resize(gridSize);
+    ocean_vy_frame_buffer[bufferSlot].resize(gridSize);
 
     try {
         H5::DataSet ds_vx = file_flow->openDataSet("water_current_vx");
@@ -160,8 +160,8 @@ void WindAndCurrentInterpolator::LoadFrame(int frameIdx, int bufferSlot)
         H5::DataSpace mem_space(3, dims);
 
         // Read directly as float
-        ds_vx.read(vx_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
-        ds_vy.read(vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
+        ds_vx.read(ocean_vx_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
+        ds_vy.read(ocean_vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
 
     } catch (const H5::Exception& e) {
         spdlog::error("HDF5 Error loading flow frame: {}", e.getDetailMsg());
@@ -415,24 +415,116 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
 }
 
 
+// Helper for Smart Slot Management (Ring Buffer of 3 slots for 2 needed frames)
+void WindAndCurrentInterpolator::UpdateRingBufferSlots(int needed_f0, int needed_f1, int* slot_frames, int* active_slots, const std::function<void(int, int)>& load_func)
+{
+    // Goal: We need physical slots for 'needed_f0' and 'needed_f1'.
+    // We have 3 physical slots (NUM_SLOTS).
+    // We preserve existing data if possible (Reuse).
+    // If we must load, we pick an optimal slot to overwrite (Evict).
+
+    // --- 1. Resolve Slot for First Frame (needed_f0) ---
+    int s0 = -1;
+    
+    // Search: Is needed_f0 already in memory?
+    for(int k=0; k<NUM_SLOTS; ++k) { 
+        if(slot_frames[k] == needed_f0) { 
+            s0 = k; 
+            break; // Found! Reuse it.
+        } 
+    }
+    
+    // Not found? Need to load it. Find a victim slot to overwrite.
+    if (s0 == -1) {
+        // Eviction Policy:
+        // 1. Do NOT evict a slot that contains the *other* frame we need (needed_f1).
+        // 2. Prefer empty slots (-1).
+        // 3. Otherwise, pick any slot (e.g., k=0, or LRU if we tracked it, but simple round-robin or first-available is fine for 3-slot/2-active case).
+        
+        int best_cand = -1;
+        
+        for(int k=0; k<NUM_SLOTS; ++k) {
+            if (slot_frames[k] == needed_f1) continue; // CRITICAL: Protect the sibling frame!
+            
+            if (slot_frames[k] == -1) { 
+                best_cand = k; 
+                break; // Found an empty slot, perfect.
+            }
+            // If not empty but not protected, it's a valid candidate for overwrite.
+            best_cand = k; 
+        }
+        
+        if (best_cand == -1) {
+            // This theoretically shouldn't happen given NUM_SLOTS=3 and only 1 protected frame (needed_f1).
+            // But as a fallback, just overwrite slot 0.
+            best_cand = 0; 
+        }
+        s0 = best_cand;
+        
+        // Perform the Load
+        load_func(needed_f0, s0);
+        slot_frames[s0] = needed_f0; // Mark this slot as holding frame f0
+    }
+
+    // --- 2. Resolve Slot for Second Frame (needed_f1) ---
+    int s1 = -1;
+    
+    // Search: Is needed_f1 already in memory?
+    for(int k=0; k<NUM_SLOTS; ++k) { 
+        if(slot_frames[k] == needed_f1) { 
+            s1 = k; 
+            break; // Found! Reuse it.
+        } 
+    }
+    
+    // Not found? Load it.
+    if (s1 == -1) {
+        // Eviction Policy:
+        // 1. Do NOT evict the slot we just assigned to f0 (s0).
+        // 2. Prefer empty slots.
+        
+        int best_cand = -1;
+        for(int k=0; k<NUM_SLOTS; ++k) {
+            if (k == s0) continue; // CRITICAL: Protect the frame we just locked!
+            
+            if (slot_frames[k] == -1) { 
+                best_cand = k; 
+                break; 
+            }
+            best_cand = k;
+        }
+        
+        // Fallback (simple rotation) if loop didn't pick (unlikely)
+        if (best_cand == -1) best_cand = (s0 + 1) % NUM_SLOTS;
+        s1 = best_cand;
+
+        load_func(needed_f1, s1);
+        slot_frames[s1] = needed_f1;
+    }
+    
+    // Output the mapping: Logical 0 -> s0, Logical 1 -> s1
+    active_slots[0] = s0;
+    active_slots[1] = s1;
+}
+
+
 std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
 {
+    // --- 0. Wait for any pending async preloads ---
+    if (ocean_preload_future.valid()) ocean_preload_future.wait();
+    if (wind_preload_future.valid()) wind_preload_future.wait();
+    
     // --- 1. OCEAN CURRENT (Standard) ---
     bool ocean_frames_changed = false;
     if (num_frames > 0) {
-        // Calculate frame index from time
-        double frame_idx_f;
-        if (time_interval > 0.0) {
-            frame_idx_f = t / time_interval;
-        } else {
-            frame_idx_f = 0.0;
-        }
+        // Calculate logical frames based on Time 't'
+        double frame_idx_f = (time_interval > 0.0) ? (t / time_interval) : 0.0;
 
-        // Handle frame index based on loop mode
-        if (loop_mode == 0) {
+        // Apply Loop Mode (Periodic vs Hold)
+        if (loop_mode == 0) { // Periodic
             frame_idx_f = std::fmod(frame_idx_f, static_cast<double>(num_frames));
             if (frame_idx_f < 0.0) frame_idx_f += num_frames;
-        } else {
+        } else { // Hold Last
             if (frame_idx_f > num_frames - 1) frame_idx_f = num_frames - 1;
             if (frame_idx_f < 0.0) frame_idx_f = 0.0;
         }
@@ -444,60 +536,135 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
         if (loop_mode == 0) second_idx = (first_idx + 1) % num_frames;
         else second_idx = std::min(first_idx + 1, num_frames - 1);
 
-        bool local_changed = (first_idx != current_first_idx || second_idx != current_second_idx);
-        if (local_changed) {
-            LoadFrame(first_idx, 0);
-            LoadFrame(second_idx, 1);
-            current_first_idx = first_idx;
-            current_second_idx = second_idx;
-            ocean_frames_changed = true;
+        // Check if our interpolation window has shifted
+        bool time_window_changed = (first_idx != current_ocean_first_idx || second_idx != current_ocean_second_idx);
+        bool sequential_flow = false;
+        
+        // Check for sequential flow: Did we move from [n, n+1] to [n+1, n+2]?
+        // Basically, if the new first_idx is exactly the old second_idx (or old first_idx + 1)
+        if (current_ocean_first_idx != -1) {
+             int expected_next = (current_ocean_first_idx + 1);
+             if (loop_mode == 0) expected_next %= num_frames;
+             else expected_next = std::min(expected_next, num_frames - 1);
+             
+             if (first_idx == expected_next) sequential_flow = true;
         }
-        current_alpha = alpha;
+        
+        if (time_window_changed) {
+            ocean_frames_changed = true;
+            current_ocean_first_idx = first_idx;
+            current_ocean_second_idx = second_idx;
+            
+            // Delegate buffer management to helper (Synchronous for current frames)
+            UpdateRingBufferSlots(first_idx, second_idx, ocean_slot_frames, current_ocean_active_slots, 
+                [&](int f, int s){ LoadOceanFrame(f, s); });
+            
+            // ASYNC PRELOAD LOGIC
+            // If we are moving sequentially, try to preload the NEXT frame (n+2)
+            if (sequential_flow) {
+                int next_preload_idx = -1;
+                
+                if (loop_mode == 0) { // Periodic
+                    next_preload_idx = (second_idx + 1) % num_frames;
+                } else { // Hold Last
+                    if (second_idx < num_frames - 1) next_preload_idx = second_idx + 1;
+                }
+                
+                // Only preload if valid frame and not already loaded
+                if (next_preload_idx != -1) {
+                    // Check if already in slot
+                    bool already_loaded = false;
+                    for(int k=0; k<NUM_SLOTS; ++k) if(ocean_slot_frames[k] == next_preload_idx) already_loaded = true;
+                    
+                    if (!already_loaded) {
+                        // Find the spare slot (not used by first_idx or second_idx)
+                        int spare_slot = -1;
+                        for(int k=0; k<NUM_SLOTS; ++k) {
+                            if (k != current_ocean_active_slots[0] && k != current_ocean_active_slots[1]) {
+                                spare_slot = k;
+                                break;
+                            }
+                        }
+                        
+                        // Launch Async Load
+                        if (spare_slot != -1) {
+                            // Mark slot as occupied by this frame (so future SetTime calls see it)
+                            ocean_slot_frames[spare_slot] = next_preload_idx;
+                            
+                            // Capture by value carefully
+                            ocean_preload_future = std::async(std::launch::async, [this, next_preload_idx, spare_slot]() {
+                                LoadOceanFrame(next_preload_idx, spare_slot);
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        current_ocean_alpha = alpha;
     }
     
     // --- 2. WIND (ERA5) ---
     bool wind_frames_changed = false;
     if (prms.UseWindData && era5_num_frames > 0) {
-         // Target Linux Timestamp
          long long target_ts = era5_start_time + (long long)t;
-         
-         // Find index i such that era5_times[i] <= target_ts < era5_times[i+1]
          auto it = std::upper_bound(era5_times.begin(), era5_times.end(), target_ts);
-         int idx = 0;
-         if (it == era5_times.begin()) {
-             idx = 0; // before start
-         } else {
-             idx = std::distance(era5_times.begin(), it) - 1;
-         }
+         int idx = (it == era5_times.begin()) ? 0 : std::distance(era5_times.begin(), it) - 1;
          
-         // Clamp
          if (idx >= era5_num_frames - 1) idx = era5_num_frames - 2;
          if (idx < 0) idx = 0;
          
          int w_first = idx;
          int w_second = idx + 1;
          
-         // Alpha
          long long t0 = era5_times[w_first];
          long long t1 = era5_times[w_second];
          double dt = (double)(t1 - t0);
-         double w_alpha = 0.0;
-         if (dt > 1e-3) {
-             w_alpha = (double)(target_ts - t0) / dt;
+         double w_alpha = (dt > 1e-3) ? (double)(target_ts - t0) / dt : 0.0;
+         if (w_alpha < 0) w_alpha = 0; if (w_alpha > 1) w_alpha = 1;
+
+         bool w_sequential = false;
+         if (current_wind_first_idx != -1) {
+             if (w_first == current_wind_first_idx + 1) w_sequential = true;
          }
-         if (w_alpha < 0) w_alpha = 0;
-         if (w_alpha > 1) w_alpha = 1;
          
-         bool wind_changed = (w_first != current_wind_first_idx || w_second != current_wind_second_idx);
-         
-         if (wind_changed) {
-             spdlog::info("Loading Wind Frames {} and {}", w_first, w_second);
-             LoadWindFrame(w_first, 0);
-             LoadWindFrame(w_second, 1);
-             
+         if (w_first != current_wind_first_idx || w_second != current_wind_second_idx) {
+             wind_frames_changed = true;
              current_wind_first_idx = w_first;
              current_wind_second_idx = w_second;
-             wind_frames_changed = true;
+             
+             spdlog::info("Loading Wind Frames {} and {}; using Ring Buffer logic", w_first, w_second);
+             
+             UpdateRingBufferSlots(w_first, w_second, wind_slot_frames, current_wind_active_slots,
+                [&](int f, int s){ LoadWindFrame(f, s); });
+                
+             // Async Preload for Wind
+             if (w_sequential) {
+                 int next_preload_idx = -1;
+                 // ERA5 is typically non-periodic in this context (linear time series)
+                 if (w_second < era5_num_frames - 1) next_preload_idx = w_second + 1;
+                 
+                 if (next_preload_idx != -1) {
+                     bool already_loaded = false;
+                     for(int k=0; k<NUM_SLOTS; ++k) if(wind_slot_frames[k] == next_preload_idx) already_loaded = true;
+                     
+                     if (!already_loaded) {
+                         int spare_slot = -1;
+                         for(int k=0; k<NUM_SLOTS; ++k) {
+                             if (k != current_wind_active_slots[0] && k != current_wind_active_slots[1]) {
+                                 spare_slot = k;
+                                 break;
+                             }
+                         }
+                         
+                         if (spare_slot != -1) {
+                             wind_slot_frames[spare_slot] = next_preload_idx;
+                             wind_preload_future = std::async(std::launch::async, [this, next_preload_idx, spare_slot]() {
+                                 LoadWindFrame(next_preload_idx, spare_slot);
+                             });
+                         }
+                     }
+                 }
+             }
          }
          current_wind_alpha = w_alpha;
     }
@@ -508,58 +675,72 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
 
 std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j) const
 {
-    if (hdf5_path.empty() || num_frames == 0) {
-        // No flow field, return zero velocity
-        return {0.0, 0.0};
-    }
-
-    if (i < 0 || i >= gx || j < 0 || j >= gy) {
-        // Out of bounds
-        return {0.0, 0.0};
-    }
+    if (hdf5_path.empty() || num_frames == 0) return {0.0, 0.0};
+    if (i < 0 || i >= gx || j < 0 || j >= gy) return {0.0, 0.0};
 
     size_t idx = j + static_cast<size_t>(i) * gy;
 
+    // Use current active slots
+    int s0 = current_ocean_active_slots[0];
+    int s1 = current_ocean_active_slots[1];
+
     if (num_frames == 1) {
-        // Special case: constant flow, no interpolation
-        return {(double)vx_frame_buffer[0][idx], (double)vy_frame_buffer[0][idx]};
+        return {(double)ocean_vx_frame_buffer[s0][idx], (double)ocean_vy_frame_buffer[s0][idx]};
     }
 
-    // General case: linear temporal interpolation using current_alpha
-    double vx_first = vx_frame_buffer[0][idx];
-    double vx_second = vx_frame_buffer[1][idx];
-    double vy_first = vy_frame_buffer[0][idx];
-    double vy_second = vy_frame_buffer[1][idx];
+    double vx_first = ocean_vx_frame_buffer[s0][idx];
+    double vx_second = ocean_vx_frame_buffer[s1][idx];
+    double vy_first = ocean_vy_frame_buffer[s0][idx];
+    double vy_second = ocean_vy_frame_buffer[s1][idx];
 
-    double vx = (1.0 - current_alpha) * vx_first + current_alpha * vx_second;
-    double vy = (1.0 - current_alpha) * vy_first + current_alpha * vy_second;
+    double vx = (1.0 - current_ocean_alpha) * vx_first + current_ocean_alpha * vx_second;
+    double vy = (1.0 - current_ocean_alpha) * vy_first + current_ocean_alpha * vy_second;
     
-    // GetInterpolatedValue returns pure Ocean Current (from HDF5).
-    // Wind is accessed separately via GetWindValue.
-
     return {vx, vy};
 }
 
 std::pair<double, double> WindAndCurrentInterpolator::GetWindValue(int i, int j) const
 {
     if (!prms.UseWindData) return {0.0, 0.0};
-    if (wind_vx_frame_buffer[0].empty() || wind_vx_frame_buffer[1].empty()) return {0.0, 0.0};
+    // Ensure we have loaded data (check active slots - although SetTime ensures they are set)
+    // Note: Checking empty() on slot 0 is not enough as active slot might vary.
+    // Just check the active slots.
+    int s0 = current_wind_active_slots[0];
+    int s1 = current_wind_active_slots[1];
+    
+    if (wind_vx_frame_buffer[s0].empty()) return {0.0, 0.0};
 
-    // Index in the grid buffer
     size_t idx = (size_t)i * gy + j;
+    if (idx >= wind_vx_frame_buffer[s0].size()) return {0.0, 0.0};
 
-    if (idx >= wind_vx_frame_buffer[0].size()) return {0.0, 0.0};
+    double vx0 = wind_vx_frame_buffer[s0][idx];
+    double vx1 = wind_vx_frame_buffer[s1][idx];
+    double vy0 = wind_vy_frame_buffer[s0][idx];
+    double vy1 = wind_vy_frame_buffer[s1][idx];
 
-    double vx0 = wind_vx_frame_buffer[0][idx];
-    double vx1 = wind_vx_frame_buffer[1][idx];
-    double vy0 = wind_vy_frame_buffer[0][idx];
-    double vy1 = wind_vy_frame_buffer[1][idx];
-
-    // Linear interpolation
     double vx = vx0 * (1.0 - current_wind_alpha) + vx1 * current_wind_alpha;
     double vy = vy0 * (1.0 - current_wind_alpha) + vy1 * current_wind_alpha;
 
     return {vx, vy};
+}
+
+const float* WindAndCurrentInterpolator::GetOceanDataPointer(int logicalFrame, int component) const
+{
+    // logicalFrame: 0 or 1
+    if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
+    int slot = current_ocean_active_slots[logicalFrame];
+    
+    if (component == 0) return ocean_vx_frame_buffer[slot].data();
+    else return ocean_vy_frame_buffer[slot].data();
+}
+
+const float* WindAndCurrentInterpolator::GetWindDataPointer(int logicalFrame, int component) const
+{
+    if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
+    int slot = current_wind_active_slots[logicalFrame];
+    
+    if (component == 0) return wind_vx_frame_buffer[slot].data();
+    else return wind_vy_frame_buffer[slot].data();
 }
 
 std::pair<double, double> WindAndCurrentInterpolator::GetLatLon(int i, int j) const

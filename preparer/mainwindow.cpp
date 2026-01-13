@@ -13,6 +13,7 @@
 #include <QSettings>
 #include <QDir>
 #include <QFileInfo>
+#include <QDebug>
 #include <spdlog/spdlog.h>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -162,14 +163,19 @@ void MainWindow::openJsonFile_triggered()
 
 void MainWindow::resetCamera_triggered()
 {
-    spdlog::debug("MainWindow::resetCamera_triggered()");
-    vtkCamera *camera = renderer->GetActiveCamera();
+    qDebug() << "MainWindow::on_action_camera_reset_triggered()";
+    vtkCamera* camera = renderer->GetActiveCamera();
     renderer->ResetCamera();
     camera->ParallelProjectionOn();
-    camera->SetClippingRange(1e-1, 1e3);
-    camera->SetFocalPoint(0, 0., 0.);
-    camera->SetPosition(0.0, 0.0, 50.0);
+    camera->SetClippingRange(1e-1,1e3);
+
+    const double dx = hsd.prms.cellsize * hsd.prms.InitializationImageSizeX/2;
+    const double dy = hsd.prms.cellsize * hsd.prms.InitializationImageSizeY/2;
+
+    camera->SetPosition(dx, dy, 50.);
+    camera->SetFocalPoint(dx, dy, 0.);
     camera->SetViewUp(0.0, 1.0, 0.0);
+    camera->SetParallelScale(std::min(dx,dy)*1.1);
 
     camera->Modified();
     renderWindow->Render();

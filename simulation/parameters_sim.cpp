@@ -42,6 +42,7 @@ void SimParams::Reset()
     IceCompressiveThreshold = 3e6;
 
     IceShearStrength = 1e6;
+    IceShearStrengthFractured = 1e6;
     IceTensileStrength2 = 10e6;
     RidgeFormationCoeff = 30;
 
@@ -129,6 +130,7 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("IceTensileStrength")) IceTensileStrength = doc["IceTensileStrength"].GetDouble();
     if(doc.HasMember("IceTensileStrength2")) IceTensileStrength2 = doc["IceTensileStrength2"].GetDouble();
     if(doc.HasMember("IceShearStrength")) IceShearStrength = doc["IceShearStrength"].GetDouble();
+    if(doc.HasMember("IceShearStrengthFractured")) IceShearStrengthFractured = doc["IceShearStrengthFractured"].GetDouble();
 
 
     if(doc.HasMember("IceCompressiveThreshold")) IceCompressiveThreshold = doc["IceCompressiveThreshold"].GetDouble();
@@ -203,8 +205,8 @@ void SimParams::Printout()
     spdlog::info(fmt::format(fmt::runtime("DP_phi: {}, DP_threshold_p: {}"), DP_phi, DP_threshold_p));
     spdlog::info(fmt::format(fmt::runtime("PoissonsRatio: {}, YoungsModulus: {}"),
                              PoissonsRatio, YoungsModulus));
-    spdlog::info(fmt::format(fmt::runtime("IceCompressiveStrength: {}, IceTensileStrength: {}, IceShearStrength: {}, IceTensileStrength2: {}"),
-                             IceCompressiveStrength, IceTensileStrength, IceShearStrength, IceTensileStrength2));
+    spdlog::info(fmt::format(fmt::runtime("IceCompressiveStrength: {}, IceTensileStrength: {}, IceShearStrength: {}, IceTensileStrength2: {}, IceShearStrengthFractured: {}"),
+                             IceCompressiveStrength, IceTensileStrength, IceShearStrength, IceTensileStrength2, IceShearStrengthFractured));
     spdlog::info(fmt::format(fmt::runtime("RidgeFormationCoeff: {}"),
                              RidgeFormationCoeff));
     // points

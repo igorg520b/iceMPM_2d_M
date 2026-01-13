@@ -35,6 +35,10 @@ struct ProxyPoint
     bool getDisabledStatus();
     uint16_t getGrain();
 
+    bool getFractureTension();
+    bool getFractureCompressionShear();
+    bool getFractureCrush();
+
     int getCellIndex(int GridY);  // index of the grid cell at the point's location
     unsigned getCellX();
 

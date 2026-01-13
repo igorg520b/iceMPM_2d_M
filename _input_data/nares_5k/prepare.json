@@ -2,7 +2,7 @@
 "ProjectName":"nares_5k",
 
 "ImageColor":"color_5k.png",
-"ImageIceMask":"ice_5k.png",
+"ImageIceMask":"ice_optimized_5k.png",
 "ImageLandMask":"land_5k.png",
 "ImageThicknessMask":"thickness_5k.png",
 "ImageCrackedMask":"cracked_5k.png",
@@ -23,6 +23,7 @@
 "RectanglePathID":"rect1",
 "FluentPathID":"path1",
 "VelocityMultiplier":1.0,
+"CompressFlow":true,
 
 "WindData":"data.nc",
 "TimeScale":1119600

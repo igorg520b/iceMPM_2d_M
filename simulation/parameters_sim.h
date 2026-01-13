@@ -40,6 +40,11 @@ public:
     constexpr static uint32_t status_cracked = 0x20000;
     constexpr static uint32_t status_disabled = 0x40000;
 
+    // status flags for types of fracture (recorded for visualization)
+    constexpr static uint32_t fracture_tension = 0x80000; // bit 19
+    constexpr static uint32_t fracture_compression_shear = 0x100000; // bit 20
+    constexpr static uint32_t fracture_crush = 0x200000; // bit 21 (22 and 23 are free)
+
     // GPU allocation
     constexpr static double extra_space_pts = 0.15;               // reserved additional space on devices for points
     constexpr static double points_transfer_buffer_fraction = 0.07;  // % of points that could "fly over" during a given cycle
@@ -73,6 +78,12 @@ public:
         gpu_grid_idx_vis_strain_EqvGreenLagrange = 6, // Reuses slot 6
         gpu_grid_idx_vis_strain_vonMises = 7, // Reuses slot 7
 
+        // --- Visualization Group 3 (Fracture Type) ---
+        // Overwrites slots 3-5
+        gpu_grid_idx_fracture_tension = 3,
+        gpu_grid_idx_fracture_shear = 4,
+        gpu_grid_idx_fracture_crush = 5,
+
         // total count (allocation size)
         nGridArraysGPU = 10
     };
@@ -96,8 +107,12 @@ public:
         grid_idx_vis_crushed = 12,
         grid_idx_vis_cracked = 13,
         grid_idx_vis_thickness = 14,
+        
+        grid_idx_fracture_tension = 15,
+        grid_idx_fracture_shear = 16,
+        grid_idx_fracture_crush = 17,
 
-        nGridArraysHost = 15
+        nGridArraysHost = 18
     };
 
     static bool IsPersistentGridArray(int idx);
@@ -180,6 +195,7 @@ public:
     // material properties
     double IceDensity, PoissonsRatio, YoungsModulus;
     double IceCompressiveStrength, IceTensileStrength, IceShearStrength, IceTensileStrength2;
+    double IceShearStrengthFractured;
     double IceCompressiveThreshold;     // exceding this causes the material to crush
 
     double RidgeFormationCoeff;

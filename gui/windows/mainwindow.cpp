@@ -176,7 +176,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->action_camera_reset, &QAction::triggered, this, &MainWindow::cameraReset_triggered);
     connect(ui->actionStart_Pause, &QAction::triggered, this, &MainWindow::simulation_start_pause);
     connect(ui->actionLoad_Parameters, &QAction::triggered, this, &MainWindow::load_parameter_triggered);
-    connect(ui->actionPrint_Camera_Params, &QAction::triggered, this, &MainWindow::print_camera_params);
     connect(ui->actionView_ScalarBar, &QAction::triggered, this, &MainWindow::toggle_scalarbar);
 
     connect(qdsbValRange, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &MainWindow::limits_changed);
@@ -270,10 +269,14 @@ void MainWindow::cameraReset_triggered()
     renderer->ResetCamera();
     camera->ParallelProjectionOn();
     camera->SetClippingRange(1e-1,1e3);
-    camera->SetFocalPoint(0, 0., 0.);
-    camera->SetPosition(0.0, 0.0, 50.0);
+
+    const double dx = model.prms.cellsize * model.prms.InitializationImageSizeX/2;
+    const double dy = model.prms.cellsize * model.prms.InitializationImageSizeY/2;
+
+    camera->SetPosition(dx, dy, 50.);
+    camera->SetFocalPoint(dx, dy, 0.);
     camera->SetViewUp(0.0, 1.0, 0.0);
- //   camera->SetParallelScale(2.5);
+    camera->SetParallelScale(std::min(dx,dy)*1.1);
 
     camera->Modified();
     renderWindow->Render();
@@ -370,72 +373,6 @@ void MainWindow::parameters_updated()
     std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
     representation.SynchronizeTopology();
     renderWindow->Render();
-}
-
-void MainWindow::print_camera_params()
-{
-    // --- Basic Checks (Assuming renderer, camera, qt_vtk_widget are valid) ---
-    vtkCamera* camera = renderer->GetActiveCamera(); // Assuming renderer is accessible member
-    if (!camera) {
-        qWarning() << "print_camera_params: Active camera is null.";
-        return;
-    }
-    if (!qt_vtk_widget) {
-        qWarning() << "print_camera_params: QVTKOpenGLNativeWidget is null.";
-        return;
-    }
-
-    QSize viewWindowSize = qt_vtk_widget->size();
-    int viewportWidthPixels = viewWindowSize.width();
-    int viewportHeightPixels = viewWindowSize.height();
-
-    qDebug() << "Viewport Size (Pixels): " << viewportWidthPixels << "x" << viewportHeightPixels;
-
-    if (viewportWidthPixels <= 0 || viewportHeightPixels <= 0) {
-        qWarning() << "print_camera_params: Invalid viewport dimensions.";
-        return;
-    }
-
-    // --- Get Relevant Camera Parameters ---
-    double parallelScale = camera->GetParallelScale(); // This is HALF the actual visible height in world units
-    double camPos[3];
-    camera->GetPosition(camPos);
-    double viewCenterXWorld = camPos[0];
-    double viewCenterYWorld = camPos[1];
-
-    qDebug() << "Camera Parallel Scale: " << parallelScale;
-    qDebug() << "Camera Position (View Center): (" << viewCenterXWorld << "," << viewCenterYWorld << ")";
-
-    // --- Calculate ACTUAL Visible Dimensions based on Camera and Viewport ---
-    double actualVisibleHeightWorld = 2.0 * parallelScale;
-    double actualAspectRatio = static_cast<double>(viewportWidthPixels) / static_cast<double>(viewportHeightPixels);
-    double actualVisibleWidthWorld = actualVisibleHeightWorld * actualAspectRatio;
-
-    // --- Calculate Target 16:9 Dimensions, Matching the ACTUAL Visible Width ---
-    const double targetAspectRatio = 16.0 / 9.0;
-
-    // Use the actual visible width as the target width
-    double targetVisibleWidthWorld = actualVisibleWidthWorld;
-
-    // Calculate the corresponding height for a 16:9 ratio
-    double targetVisibleHeightWorld = targetVisibleWidthWorld / targetAspectRatio;
-
-    // --- Calculate Bottom-Left Offset for the TARGET 16:9 region ---
-    // The offset is still centered around the camera's position (view center)
-    // but uses the TARGET dimensions.
-    double offsetXWorld = viewCenterXWorld - (targetVisibleWidthWorld / 2.0);
-    double offsetYWorld = viewCenterYWorld - (targetVisibleHeightWorld / 2.0);
-
-    // --- Output ---
-    // Printing the offset and size that represent a 16:9 region,
-    // centered like the current view, and scaled so its width matches
-    // the width currently visible in the viewport.
-    qDebug() << "--- Target 16:9 Raster Region (World Coordinates) ---";
-    qDebug() << "  (Based on matching current view width)";
-    qDebug() << "  Offset (Bottom-Left): (" << offsetXWorld << "," << offsetYWorld << ")";
-    qDebug() << "  Size: (" << targetVisibleWidthWorld << "x" << targetVisibleHeightWorld << ")";
-    // Optional: print ratio check
-    // qDebug() << "  Calculated Ratio Check:" << (targetVisibleWidthWorld / targetVisibleHeightWorld);
 }
 
 
