@@ -77,7 +77,7 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
     Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
 
     // PFt is 1st Piola-Kirchhoff Stress times F-transposed
-    PFt = KirchhoffStress_Wolper(Fe);
+    PFt = KirchhoffStress_Wolper(Fe,Jp_inv);
     stress_contribution = -(gprms.dt_vol_Dpinv*Jp_inv*thickness)*PFt;
     stress_contribution += Cp*particle_mass;    // this is part of the linear term from the velocity approximateion
 
@@ -258,8 +258,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     }
     const double initial_thickness = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_thickness];
 
-    double Jp_inv;
-    Jp_inv = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Jp_inv];
+    double Jp_inv = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Jp_inv];
     for(int i=0; i<SimParams::dim; i++)
     {
         for(int j=0; j<SimParams::dim; j++)
@@ -325,7 +324,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     Fe = (Eigen::Matrix2d::Identity() + dt*p_Bp) * Fe;     // Bp plays the role of the gradient of the velocity vector
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
-    ComputePQ(Je_tr, p_tr, q_tr, kappa, mu, Fe);    // computes P, Q, J
+    ComputePQ(Je_tr, p_tr, q_tr, Fe, Jp_inv);    // computes P, Q, J
 
     if(!(utility_data & SimParams::status_crushed))
     {
@@ -736,8 +735,11 @@ __device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d
 
 
 __device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
-    const double &kappa, const double &mu, const Eigen::Matrix2d &F)
+    const Eigen::Matrix2d &F, const double &Jp_inv)
 {
+    const double kappa = gprms.kappa;
+    const double &mu = gprms.mu;
+
     Je_tr = F.determinant();
     p_tr = -(kappa/2.) * (Je_tr*Je_tr - 1.);
     q_tr = coeff1*mu*(1./Je_tr)*dev(F*F.transpose()).norm();
@@ -805,7 +807,8 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, co
                                       Eigen::Matrix2d &Fe, double &Jp_inv)
 {
     const double &mu = gprms.mu;
-    const double &kappa = gprms.kappa;
+    const double kappa = gprms.kappa;
+
     double DP_threshold_p = gprms.DP_threshold_p;
     const double pmin = -gprms.IceTensileStrength;
 
@@ -816,11 +819,12 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, co
 
     double q_yield = 0;
     double q_n_1 = 0, p_n_1 = 0;
+    constexpr double Jp_inv_threshold = 0.05;
 
     if(p_tr < DP_threshold_p)
     {
         // tension
-        if(Jp_inv < 0.1)
+        if(Jp_inv < Jp_inv_threshold)
         {
             double sqrt_Je_new = sqrt(Je_tr);
             Eigen::Vector2d vSigma_new(sqrt_Je_new,sqrt_Je_new); //= Vector2d::Constant(1.)*sqrt(Je_new);  //Matrix2d::Identity() * pow(Je_new, 1./(double)d);
@@ -854,7 +858,7 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, co
             // plasticity will be applied
 
             // estimate the new P based on the ridge height
-            if(p_tr < 0 && Jp_inv < 0.1)
+            if(p_tr < 0 && Jp_inv < Jp_inv_threshold)
             {
                 p_n_1 = p_tr;
                 // otherwise p_n_1 = 0
@@ -947,10 +951,9 @@ __device__ Eigen::Matrix2d dev(Eigen::Matrix2d A)
 }
 
 
-
-__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F)
+__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F, const double &Jp_inv)
 {
-    const double &kappa = gprms.kappa;
+    const double kappa = gprms.kappa;
     const double &mu = gprms.mu;
 
     // Kirchhoff stress as per Wolper (2019)

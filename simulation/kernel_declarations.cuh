@@ -107,7 +107,7 @@ __device__ void ComputeSVD(const Eigen::Matrix2d &Fe, Eigen::Matrix2d &U, Eigen:
 // Computes pressure (p) and second stress invariant (q) from deformation and material properties
 // Used for failure surface checks and visualization
 __device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
-                          const double &kappa, const double &mu, const Eigen::Matrix2d &F);
+                          const Eigen::Matrix2d &F, const double &Jp_inv);
 
 // Wolper-Drucker-Prager constitutive model: updates Fe and Jp_inv based on stress state
 // Implements elastic and plastic deformation for ice material
@@ -139,7 +139,10 @@ __device__ void GetParametersForGrain(uint32_t utility_data, double &pmin, doubl
                                       double &beta, double &mSq, double &pmin2);
 
 // Computes Kirchhoff stress from deformation gradient using Wolper material model
-__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F);
+__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F, const double &Jp_inv);
+
+// how Jp_inv affects bulk modulus
+__device__ double BulkModulusReductionCoeff(const double &Jp_inv);
 
 // Extracts deviatoric (traceless) part of a 2D diagonal matrix
 __device__ Eigen::Vector2d dev_d(Eigen::Vector2d Adiag);
@@ -153,17 +156,6 @@ __device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d
 
 // Retrieves wind vector at given position and time from interpolated wind field data
 __device__ Eigen::Vector2d get_wind_vector(float lat, float lon, float tb);
-
-// Computes bending moment tensor and maximum principal moment for plate fracture
-__device__ void ComputeMp(
-    const Eigen::Matrix2d &kappa_curvature,
-    const double &thickness,
-    const double &E,
-    const double &nu,
-    Eigen::Matrix2d &Mp,
-    double &max_M_principal
-);
-
 
 __device__ void ComputeStressResultants(
     // Inputs
