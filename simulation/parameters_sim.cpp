@@ -86,8 +86,8 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
 
     // parse strings and save into "result"
     std::map<std::string,std::string> result;
-    result["GridData"] = doc["GridData"].GetString();
-    result["CurrentVelocityData"] = doc["CurrentVelocityData"].GetString();
+    if(doc.HasMember("GridData")) result["GridData"] = doc["GridData"].GetString();
+    if(doc.HasMember("CurrentVelocityData")) result["CurrentVelocityData"] = doc["CurrentVelocityData"].GetString();
     if(doc.HasMember("Snapshot")) result["Snapshot"] = doc["Snapshot"].GetString();
 
     if(doc.HasMember("UseWindData")) UseWindData = doc["UseWindData"].GetBool();

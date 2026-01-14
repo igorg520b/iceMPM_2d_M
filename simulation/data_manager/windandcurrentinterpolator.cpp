@@ -10,6 +10,26 @@
 
 WindAndCurrentInterpolator::WindAndCurrentInterpolator(SimParams& params) : prms(params)
 {
+    num_frames = 0;
+//    gx = 0;
+//    gy = 0;
+    time_interval = 0.0;
+    loop_mode = 0;
+    
+    current_ocean_first_idx = -1;
+    current_ocean_second_idx = -1;
+    current_ocean_active_slots[0] = -1;
+    current_ocean_active_slots[1] = -1;
+
+    // Reset buffer slots
+    for(int i=0; i<NUM_SLOTS; ++i) ocean_slot_frames[i] = -1;
+    for(int i=0; i<NUM_SLOTS; ++i) wind_slot_frames[i] = -1;
+    
+    era5_num_frames = 0;
+    current_wind_first_idx = -1;
+    current_wind_second_idx = -1; 
+    current_wind_active_slots[0] = -1;
+    current_wind_active_slots[1] = -1;
 }
 
 WindAndCurrentInterpolator::~WindAndCurrentInterpolator() = default;
@@ -17,6 +37,8 @@ WindAndCurrentInterpolator::~WindAndCurrentInterpolator() = default;
 
 void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
 {
+    if (filePath.empty()) return;
+
     // Check file exists before attempting to open
     if (!std::filesystem::exists(filePath)) {
         throw std::runtime_error(fmt::format("Flow field file not found: {}", filePath));
@@ -24,9 +46,6 @@ void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
 
     hdf5_path = filePath;
 
-    // Lazily open file and load HDF5 metadata (currents)
-    LoadHDF5Metadata();
-    
     // Lazily open file and load HDF5 metadata (currents)
     LoadHDF5Metadata();
 }
@@ -75,8 +94,14 @@ void WindAndCurrentInterpolator::LoadHDF5Metadata()
     hsize_t dims[3];
     space.getSimpleExtentDims(dims, NULL);
     num_frames = static_cast<int>(dims[0]);
-    gx = static_cast<int>(dims[1]);
-    gy = static_cast<int>(dims[2]);
+    int file_gx = static_cast<int>(dims[1]);
+    int file_gy = static_cast<int>(dims[2]);
+
+    if (file_gx != prms.GridXTotal || file_gy != prms.GridYTotal) {
+        throw std::runtime_error(fmt::format(
+            "HDF5 flow dimensions ({}x{}) do not match simulation params ({}x{})", 
+            file_gx, file_gy, prms.GridXTotal, prms.GridYTotal));
+    }
 
     ds_vx.openAttribute("time_interval").read(H5::PredType::NATIVE_DOUBLE, &time_interval);
     ds_vx.openAttribute("loop_mode").read(H5::PredType::NATIVE_INT, &loop_mode);
@@ -144,6 +169,10 @@ void WindAndCurrentInterpolator::LoadOceanFrame(int frameIdx, int bufferSlot)
         if (actualIdx < 0) actualIdx = 0;
     }
 
+
+
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
     int gridSize = gx * gy;
     ocean_vx_frame_buffer[bufferSlot].resize(gridSize);
     ocean_vy_frame_buffer[bufferSlot].resize(gridSize);
@@ -310,6 +339,8 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
     }
     
     // 2. Interpolate to Simulation Grid
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
     int gridSize = gx * gy;
     wind_vx_frame_buffer[bufferSlot].resize(gridSize);
     wind_vy_frame_buffer[bufferSlot].resize(gridSize);
@@ -510,6 +541,7 @@ void WindAndCurrentInterpolator::UpdateRingBufferSlots(int needed_f0, int needed
 
 std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
 {
+
     // --- 0. Wait for any pending async preloads ---
     if (ocean_preload_future.valid()) ocean_preload_future.wait();
     if (wind_preload_future.valid()) wind_preload_future.wait();
@@ -675,6 +707,9 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
 
 std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j) const
 {
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
+
     if (hdf5_path.empty() || num_frames == 0) return {0.0, 0.0};
     if (i < 0 || i >= gx || j < 0 || j >= gy) return {0.0, 0.0};
 
@@ -702,6 +737,10 @@ std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j
 std::pair<double, double> WindAndCurrentInterpolator::GetWindValue(int i, int j) const
 {
     if (!prms.UseWindData) return {0.0, 0.0};
+    
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
+
     // Ensure we have loaded data (check active slots - although SetTime ensures they are set)
     // Note: Checking empty() on slot 0 is not enough as active slot might vary.
     // Just check the active slots.
@@ -730,6 +769,8 @@ const float* WindAndCurrentInterpolator::GetOceanDataPointer(int logicalFrame, i
     if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
     int slot = current_ocean_active_slots[logicalFrame];
     
+    if (slot < 0 || slot >= NUM_SLOTS) return nullptr;
+
     if (component == 0) return ocean_vx_frame_buffer[slot].data();
     else return ocean_vy_frame_buffer[slot].data();
 }
@@ -739,6 +780,8 @@ const float* WindAndCurrentInterpolator::GetWindDataPointer(int logicalFrame, in
     if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
     int slot = current_wind_active_slots[logicalFrame];
     
+    if (slot < 0 || slot >= NUM_SLOTS) return nullptr;
+
     if (component == 0) return wind_vx_frame_buffer[slot].data();
     else return wind_vy_frame_buffer[slot].data();
 }

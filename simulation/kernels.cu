@@ -207,7 +207,8 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
         double k_wind = drag_coeff * dt * U_rel_mag_wind; // quadratic
         k_wind = min(k_wind, 0.1);   // k cannot exceed 0.1
 
-        velocity += (k*U_rel + k_wind*U_rel_wind);
+        velocity += (k*U_rel);
+        if(gprms.UseWindData) velocity += k_wind*U_rel_wind;
     }
 
     // write the updated grid velocity back to memory

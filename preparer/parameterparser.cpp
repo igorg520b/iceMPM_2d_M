@@ -52,8 +52,6 @@ void ParameterParser::LoadParamsFile(std::string fileName)
 
     // Flow field parameters
     if(doc.HasMember("FlowType")) FlowType = doc["FlowType"].GetString();
-    // Flow field parameters
-    if(doc.HasMember("FlowType")) FlowType = doc["FlowType"].GetString();
     if(doc.HasMember("TimeScale")) TimeScale = doc["TimeScale"].GetDouble();
     if(doc.HasMember("CompressFlow")) CompressFlow = doc["CompressFlow"].GetBool();
 

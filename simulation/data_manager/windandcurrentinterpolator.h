@@ -81,7 +81,6 @@ private:
     double time_interval = 0.0;         // time between frames
     int num_frames = 0;                 // total number of frames
     int loop_mode = 0;                  // 0 = periodic, 1 = hold last frame
-    int gx = 0, gy = 0;                 // grid dimensions
     
     // Metadata from ERA5
     std::vector<double> era5_lats;      // 1D latitude array (descending)

@@ -99,9 +99,11 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     pparams.gridX_alloc_capacity = gx_requested;
 
     // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
-    // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
     const size_t grid_forcing_requested = sizeof(float) * gy * (gx_requested + 2*halo);
     CUDA_CHECK(cudaMallocPitch(&pparams.buffer_grid_forcing, &pparams.pitch_grid_forcing, grid_forcing_requested, SimParams::nGridForcingArrays));
+    // Clear buffer immediately (Safety for no-flow cases)
+    CUDA_CHECK(cudaMemset2D(pparams.buffer_grid_forcing, pparams.pitch_grid_forcing, 0, grid_forcing_requested, SimParams::nGridForcingArrays));
+
     total_allocated += pparams.pitch_grid_forcing * SimParams::nGridForcingArrays * sizeof(float); // fix tracking
     if(pparams.pitch_grid_forcing % sizeof(float) != 0) throw std::runtime_error("pparams.pitch_grid_forcing % sizeof(float) != 0");
     pparams.pitch_grid_forcing /= sizeof(float); // convert from bytes to elements
@@ -110,6 +112,8 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     const size_t grid_regions_size = sizeof(uint8_t) * gy * (gx_requested + 2*halo);
     CUDA_CHECK(cudaMalloc(&pparams.buffer_grid_regions, grid_regions_size));
     total_allocated += grid_regions_size;
+    
+    // ...
 
     // small array where per-region forces will be accumulated
     CUDA_CHECK(cudaMalloc(&pparams.grid_forces_summary_per_region, sizeof(double)*(SimParams::MAX_REGIONS*2)));
@@ -281,6 +285,9 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 
 void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator &wac)
 {
+    // If no valid data is available, do nothing (assuming buffer was zeroed on alloc)
+    if (wac.GetOceanDataPointer(0, 0) == nullptr) return;
+
     CUDA_CHECK(cudaSetDevice(Device));
 
     const int &gy = prms.GridYTotal;
@@ -355,13 +362,6 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
     {
         const float* src_wvx = wac.GetWindDataPointer(frame, 0);
         const float* src_wvy = wac.GetWindDataPointer(frame, 1);
-        
-        // Safety check: ensure pointer is valid (buffer not empty)
-        // With current logic, if UseWindData is true, buffers should be loaded.
-        // But GetWindDataPointer could theoretically return null if logic fails.
-        // We assume valid if it returns non-valid, the pointer arithmetic might be invalid?
-        // Actually, src_wvx is just a pointer. Validation:
-        if (src_wvx == nullptr || src_wvy == nullptr) continue; 
         
         src_wvx += gy * offset_wac;
         src_wvy += gy * offset_wac;

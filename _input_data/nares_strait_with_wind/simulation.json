@@ -1,8 +1,17 @@
 {
 "SimulationTitle":"nares_strait_with_wind",
 
+"IceShearStrength":5.0e6,
+"IceShearStrengthFractured":5.5e6,
+"IceCompressiveThreshold":2.0e6,
+"IceTensileStrength2":3.0e6,
+"DP_phi":60,
+"waterDragEffectiveQuadratic":50e-3,
+"windDragEffectiveQuadratic":15e-6,
+"GlenA":1e-25,
+"RidgeFormationCoeff":0.1,
+
 "GridData":"grid.h5",
-"CurrentVelocityData":"grid_flow.h5",
 "Snapshot":"s00000.h5",
 "ERA5Data":"data.nc",
 
@@ -17,30 +26,20 @@
 "SimulationEndTime":1036800,
 "AnimationFramePeriod":300,
 
-"InitialTimeStep":0.5,
+"InitialTimeStep":0.75,
 "ParticleViewSize":2.0,
 
 "YoungsModulus":5.0e8,
 "PoissonsRatio":0.3,
 "IceDensity":916,
 "IceCompressiveStrength":100e6,
-"IceCompressiveThreshold":3.5e6,
 "IceTensileStrength":3e6,
-"IceTensileStrength2":3e6,
-"IceShearStrength":2.5e6,
-"DP_phi":70,
 "DP_threshold_p":-1e4,
-"RidgeFormationCoeff":0.1,
-
-"waterDragEffectiveQuadratic":1e-2,
-"windDragEffectiveQuadratic":12e-6,
-"GlenA":5e-25,
 
 "tpb_P2G":256,
 "tpb_Upd":512,
 "tpb_G2P":128,
 "nPartitions":1
-
 }
 
 

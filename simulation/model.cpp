@@ -228,8 +228,11 @@ void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFi
     gpu.SplitIntoPartitionsAndTransferToDevice();
 
     // Load flow field data (mandatory)
-    std::filesystem::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
-    sim_data.waci.SetHDF5Path(flowPath.string());
+    if(parseResult.count("CurrentVelocityData"))
+    {
+        std::filesystem::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
+        sim_data.waci.SetHDF5Path(flowPath.string());
+    }
     
     // Load ERA5 if present
     if (parseResult.count("ERA5Data")) {

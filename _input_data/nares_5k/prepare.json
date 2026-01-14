@@ -8,22 +8,10 @@
 "ImageCrackedMask":"cracked_5k.png",
 
 "ThicknessFrom":0.8,
-"ThicknessTo":1.2,
+"ThicknessTo":3.0,
 
 "PointsPerCell":5,
 "DimensionHorizontal":1269660,
-
-"FlowType":"FLUENT-transient",
-"FLUENTTimeInterval":447.12,
-"FLUENTFirstFrame":575,
-"FLUENTLastFrame":674,
-"InputFluentDAT":"/home/s2/Documents/vm_shared/_simulation_setups/Nares_Strait_2024/fluent_sln/FFF.1-4-",
-"InputFluentCAS":"FFF.1-4.cas.h5",
-"SVG":"land_2k.svg",
-"RectanglePathID":"rect1",
-"FluentPathID":"path1",
-"VelocityMultiplier":1.0,
-"CompressFlow":true,
 
 "WindData":"data.nc",
 "TimeScale":1119600
