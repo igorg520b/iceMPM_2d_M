@@ -236,8 +236,8 @@ if(BUILD_POSTPROCESSOR)
 
     add_executable(visualizer
     	postprocessor/pp_main.cpp
-    	postprocessor/window/pp_mainwindow.cpp
-    	postprocessor/window/pp_mainwindow.h
+    	postprocessor/window/visualizer_mainwindow.cpp
+    	postprocessor/window/visualizer_mainwindow.h
         postprocessor/window/render_selector_dialog.cpp
         postprocessor/window/render_selector_dialog.h
         icons.qrc
@@ -327,8 +327,8 @@ if(BUILD_PREPARER)
 
     add_executable(preparer
         preparer/preparer_main.cpp
-        preparer/mainwindow.cpp
-        preparer/mainwindow.h
+        preparer/preparer_mainwindow.cpp
+        preparer/preparer_mainwindow.h
 
         preparer/parameterparser.h
         preparer/parameterparser.cpp

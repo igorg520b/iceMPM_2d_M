@@ -64,6 +64,31 @@ void WindAndCurrentInterpolator::SetEra5Path(const std::string& filePath)
     }
 }
 
+void WindAndCurrentInterpolator::SetGLO12Path(const std::string& filePath)
+{
+    // Check file exists before attempting to open
+    if (!std::filesystem::exists(filePath)) {
+        throw std::runtime_error(fmt::format("GLO12 file not found: {}", filePath));
+    }
+    
+    glo12_path = filePath;
+    LoadGLO12Metadata();
+}
+
+void WindAndCurrentInterpolator::SetGLO12TidesPath(const std::string& filePath)
+{
+    // Check file exists before attempting to open
+    if (!std::filesystem::exists(filePath)) {
+        throw std::runtime_error(fmt::format("GLO12 Tides file not found: {}", filePath));
+    }
+    
+    glo12_tides_path = filePath;
+    spdlog::info("Loading GLO12 Tides Metadata from {}", glo12_tides_path);
+    file_glo12_tides = std::make_unique<H5::H5File>(glo12_tides_path, H5F_ACC_RDONLY);
+    
+    // We assume the grid and time structure matches existing GLO12 file for simplicity.
+    // If we wanted to be robust we would verify dimensions here.
+}
 
 void WindAndCurrentInterpolator::LoadHDF5Metadata()
 {
@@ -150,6 +175,363 @@ void WindAndCurrentInterpolator::LoadEra5Metadata()
     }
     
     spdlog::info("ERA5 Grid: {}x{} (Lat/Lon)", era5_lats.size(), era5_lons.size());
+}
+
+void WindAndCurrentInterpolator::LoadGLO12Metadata()
+{
+    if (glo12_path.empty()) return;
+
+    spdlog::info("Loading GLO12 Metadata from {}", glo12_path);
+    file_glo12 = std::make_unique<H5::H5File>(glo12_path, H5F_ACC_RDONLY);
+
+    // Load Time (try 'time', then 'time_counter')
+    try {
+        std::string time_name = "time";
+        H5::Group root = file_glo12->openGroup("/");
+        if (!root.nameExists(time_name)) {
+            if (root.nameExists("time_counter")) {
+                time_name = "time_counter";
+            } else {
+                 throw std::runtime_error("GLO12: Neither 'time' nor 'time_counter' found");
+            }
+        }
+        
+        H5::DataSet ds_time = file_glo12->openDataSet(time_name);
+        H5::DataSpace space = ds_time.getSpace();
+        hsize_t dims[1];
+        space.getSimpleExtentDims(dims, NULL);
+        glo12_num_frames = static_cast<int>(dims[0]);
+        glo12_times.resize(glo12_num_frames);
+        
+        // GLO12 typically uses hours since 1950 or 2000, need to check units?
+        // For now assuming compatible scalar (e.g. standard NetCDF time)
+        // If it's double/float, we read it. If it's int, we read it.
+        // Assuming double mostly for 'hours since ...'
+        // CAUTION: The simulation expects "Era5-like" timestamps (seconds) or relative.
+        // The visualizer uses indices. Here we map simulation time `t` (seconds) to GLO12 time.
+        // If GLO12 is 'hours since 1950', we must align epochs.
+        // Assuming for this user request that GLO12 times align with simulation `t` (or `t` is relative 0..End).
+        // BUT: SimulationTime usually starts at 0. 'time_counter' usually absolute.
+        // Let's assume we treat file start as t=0 offset for interpolation.
+        
+        // Actually, let's just use the logic: t (simulation time) is delta from Start.
+        // But SetTime takes `t` which IS simulation time.
+        // We will store the full array.
+        // Read as double for generality
+        std::vector<double> buf(glo12_num_frames);
+        ds_time.read(buf.data(), H5::PredType::NATIVE_DOUBLE);
+        
+        glo12_times.resize(glo12_num_frames);
+        for(int i=0; i<glo12_num_frames; ++i) glo12_times[i] = (long long)buf[i];
+
+        if (glo12_times.empty()) throw std::runtime_error("GLO12 time dataset empty");
+        glo12_start_time = glo12_times[0];
+        // Convert hours to seconds if the steps look small? GLO12 is usually daily/hourly.
+        // If t[1]-t[0] ~ 1.0 (hour?) or 24.0 (day?), we might need scaling * 3600.
+        // Assuming timestamps are already converted or we use index-based if consistent.
+        // The Python visualizer script didn't convert, just plotted.
+        // Let's assume input GLO12 NetCDF has 'hours since 1950' and we operate in seconds.
+        // HACK: Re-scale if difference is small (< 1000). Usually seconds > 3600.
+        if (glo12_num_frames > 1) {
+            double dt = buf[1] - buf[0];
+            if (dt < 100.0) { // likely hours or days
+                spdlog::info("GLO12: Detected small time delta {}, assuming hours. Scaling by 3600.", dt);
+                for(int i=0; i<glo12_num_frames; ++i) glo12_times[i] = (long long)(buf[i] * 3600.0);
+            }
+        }
+        glo12_start_time = glo12_times[0];
+        spdlog::info("GLO12 Start Time: {} (seconds-ish)", glo12_start_time);
+
+    } catch (const H5::Exception& e) {
+        spdlog::error("GLO12 Error loading time: {}", e.getDetailMsg());
+        throw;
+    }
+
+    // Load Latitude/Longitude (try multiple names)
+    // We confirmed via check_nc that 'latitude' and 'longitude' exist (1D).
+    auto load_coord = [&](const std::vector<std::string>& candidates, std::vector<double>& out_vec, std::string label) {
+        for(const auto& name : candidates) {
+            try {
+                H5::DataSet ds = file_glo12->openDataSet(name);
+                H5::DataSpace space = ds.getSpace();
+                hsize_t dims[1];
+                space.getSimpleExtentDims(dims, NULL);
+                out_vec.resize(dims[0]);
+                ds.read(out_vec.data(), H5::PredType::NATIVE_DOUBLE);
+                spdlog::info("GLO12 Loaded {} from '{}', size {}", label, name, dims[0]);
+                return;
+            } catch(...) {}
+        }
+        throw std::runtime_error(fmt::format("GLO12: Could not find {}", label));
+    };
+
+    load_coord({"latitude", "lat", "nav_lat"}, glo12_lats, "Latitude");
+    load_coord({"longitude", "lon", "nav_lon"}, glo12_lons, "Longitude");
+
+    spdlog::info("GLO12 Grid: {}x{} (Lat/Lon)", glo12_lats.size(), glo12_lons.size());
+}
+
+void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
+{
+    if (!file_glo12) return;
+
+    // Reuse ERA5 interpolation logic structure:
+    // Read uo, vo at frameIdx (slice).
+    // Interpolate.
+
+    int n_lat = glo12_lats.size();
+    int n_lon = glo12_lons.size();
+    size_t n_elem = n_lat * n_lon;
+
+    std::vector<float> raw_u(n_elem), raw_v(n_elem);
+    
+    // Explicitly read 'uo' and 'vo'
+    auto read_strict = [&](const std::string& name, std::vector<float>& buf) {
+        if (!file_glo12->nameExists(name)) {
+             throw std::runtime_error(fmt::format("GLO12: Variable '{}' not found in file", name));
+        }
+
+        H5::DataSet ds = file_glo12->openDataSet(name);
+        H5::DataSpace space = ds.getSpace();
+        int ndims = space.getSimpleExtentNdims();
+        std::vector<hsize_t> dims(ndims);
+        space.getSimpleExtentDims(dims.data(), NULL);
+
+        spdlog::info("GLO12: Found variable '{}', dims: {}", name, fmt::join(dims, ", "));
+        
+        std::vector<hsize_t> start(ndims, 0);
+        std::vector<hsize_t> count(ndims, 1);
+        
+        // Assuming time is 0-th dim, lat/lon last two
+        start[0] = frameIdx;
+        count[ndims-2] = n_lat;
+        count[ndims-1] = n_lon;
+        
+        // Select hyperslab
+        space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
+        
+        hsize_t mem_dims[2] = {(hsize_t)n_lat, (hsize_t)n_lon};
+        H5::DataSpace mem_space(2, mem_dims);
+        
+        ds.read(buf.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
+        
+        // Attributes for unpacking
+        double fill_value = -32767.0; // Default
+        bool has_fill = false;
+
+        if (ds.attrExists("_FillValue")) {
+            H5::Attribute att = ds.openAttribute("_FillValue");
+            att.read(H5::PredType::NATIVE_DOUBLE, &fill_value);
+            has_fill = true;
+        }
+        
+        // Apply filtering (Fill Value check)
+        float min_val = 1e9, max_val = -1e9;
+        int valid_count = 0;
+        for(auto& v : buf) {
+                // Check for fill value (or extremely large values typical of NetCDF fill)
+                bool is_fill = false;
+                if (has_fill && std::abs(v - fill_value) < 1e-5) is_fill = true;
+                if (std::abs(v) > 1e30) is_fill = true; // Safety check for 1e37
+
+                if (is_fill) {
+                    v = 0.0f; 
+                } else {
+                    if(v < min_val) min_val = v;
+                    if(v > max_val) max_val = v;
+                    valid_count++;
+                }
+        }
+        spdlog::info("GLO12: Read '{}' frame {}, valid pts: {}/{}, Range: [{}, {}]", name, frameIdx, valid_count, buf.size(), min_val, max_val);
+    };
+
+    // Strict Read
+    read_strict("uo", raw_u);
+    read_strict("vo", raw_v);
+
+    // --- INTEGRATE TIDES IF AVAILABLE ---
+    if (prms.UseGLO12Tides && file_glo12_tides) {
+         try {
+             std::vector<float> raw_utide(n_elem), raw_vtide(n_elem);
+             
+             // Helper for reading from tidal file (similar to read_strict but using file_glo12_tides)
+             auto read_tide = [&](const std::string& name, std::vector<float>& buf) {
+                if (!file_glo12_tides->nameExists(name)) {
+                     throw std::runtime_error(fmt::format("GLO12 Tides: Variable '{}' not found", name));
+                }
+
+                H5::DataSet ds = file_glo12_tides->openDataSet(name);
+                H5::DataSpace space = ds.getSpace();
+                int ndims = space.getSimpleExtentNdims();
+                std::vector<hsize_t> dims(ndims);
+                space.getSimpleExtentDims(dims.data(), NULL); // e.g. [time, lat, lon]
+
+                std::vector<hsize_t> start(ndims, 0);
+                std::vector<hsize_t> count(ndims, 1);
+                
+                // Use same frameIdx (assuming time axes are aligned/congruent)
+                // If dimensions mismatch, HDF5 might throw or selection fails
+                start[0] = frameIdx;
+                count[ndims-2] = n_lat;
+                count[ndims-1] = n_lon;
+                
+                space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
+                
+                hsize_t mem_dims[2] = {(hsize_t)n_lat, (hsize_t)n_lon};
+                H5::DataSpace mem_space(2, mem_dims);
+                
+                ds.read(buf.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
+                
+                // Handle Fill Values
+                double fill_value = -32767.0;
+                bool has_fill = false;
+                if (ds.attrExists("_FillValue")) {
+                    H5::Attribute att = ds.openAttribute("_FillValue");
+                    att.read(H5::PredType::NATIVE_DOUBLE, &fill_value);
+                    has_fill = true;
+                }
+                
+                // Filter
+                for(auto& v : buf) {
+                    bool is_fill = false;
+                    if (has_fill && std::abs(v - fill_value) < 1e-5) is_fill = true;
+                    if (std::abs(v) > 1e30) is_fill = true;
+                    if (is_fill) v = 0.0f;
+                }
+                spdlog::info("GLO12 Tides: Read '{}' frame {}", name, frameIdx);
+             };
+
+             read_tide("utide", raw_utide);
+             read_tide("vtide", raw_vtide);
+             
+             // Add Tides to Total Current
+             #pragma omp parallel for
+             for(size_t k=0; k<n_elem; ++k) {
+                 raw_u[k] += raw_utide[k];
+                 raw_v[k] += raw_vtide[k];
+             }
+             spdlog::info("GLO12: Added Tidal Currents to Frame {}", frameIdx);
+
+         } catch (const std::exception& e) {
+             spdlog::error("GLO12 Tides Error (Frame {}): {}", frameIdx, e.what());
+             // Fallback? Assuming we want to proceed with non-tidal current if tides fail?
+             // Or throw? User wants integration, so erroring is probably safer to alert them.
+             throw; 
+         }
+    }
+
+    // Interpolate to Grid
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
+    int gridSize = gx * gy;
+    
+    // Resize buffer if not already
+    ocean_vx_frame_buffer[bufferSlot].resize(gridSize);
+    ocean_vy_frame_buffer[bufferSlot].resize(gridSize);
+    
+    bool lat_descending = n_lat > 1 && glo12_lats[0] > glo12_lats[1];
+    
+    // Log GLO12 Bounds
+    if (n_lat > 0 && n_lon > 0) {
+        spdlog::info("GLO12 Bounds: Lat[{} .. {}], Lon[{} .. {}]", 
+            glo12_lats.front(), glo12_lats.back(), glo12_lons.front(), glo12_lons.back());
+    }
+
+    std::atomic<int> valid_interp_count = 0;
+    
+    #pragma omp parallel for
+    for (int j = 0; j < gy; ++j) {
+        for (int i = 0; i < gx; ++i) {
+            int grid_idx = j + i*gy;
+            
+            int global_x = i + prms.ModeledRegionOffsetX;
+            int global_y_grid = j + prms.ModeledRegionOffsetY;
+            int global_y = prms.InitializationImageSizeY - 1 - global_y_grid;
+            
+            LatLon ll = ProjectPixel(global_x, global_y);
+            if (!ll.valid) {
+                 ocean_vx_frame_buffer[bufferSlot][grid_idx] = 0.0f;
+                 ocean_vy_frame_buffer[bufferSlot][grid_idx] = 0.0f;
+                 continue;
+            }
+            
+            // Calc r_idx, c_idx
+            double r_idx = 0;
+            double dlat = glo12_lats[1] - glo12_lats[0];
+            r_idx = (ll.lat_deg - glo12_lats[0]) / dlat;
+
+            double target_lon = ll.lon_deg;
+            // GLO12 usually -180..180 or 0..360?
+            // HDF5 output check didn't show values.
+            // Safe bet: if grid is 0..360 and we are negative, add 360.
+            bool is_0_360 = (glo12_lons.back() > 180.0);
+            if (is_0_360 && target_lon < 0) target_lon += 360.0;
+            
+            double dlon = glo12_lons[1] - glo12_lons[0];
+            double c_idx = (target_lon - glo12_lons[0]) / dlon;
+            
+            
+            int r0 = (int)std::floor(r_idx);
+            int c0 = (int)std::floor(c_idx);
+            int r1 = r0 + 1;
+            int c1 = c0 + 1;
+            
+            double dr = r_idx - r0;
+            double dc = c_idx - c0;
+            
+            // Check bounds strictly?
+            // If projected point is OUTSIDE GLO12 grid, we should probably set 0
+            if (r0 < 0 || r0 >= n_lat - 1 || c0 < 0 || c0 >= n_lon -1) {
+                // Out of bounds
+                ocean_vx_frame_buffer[bufferSlot][grid_idx] = 0.0f;
+                ocean_vy_frame_buffer[bufferSlot][grid_idx] = 0.0f;
+                continue;
+            }
+
+            valid_interp_count++;
+
+            // Use clamped indices from before just in case
+            if (r0 < 0) r0 = 0; if (r1 >= n_lat) r1 = n_lat-1;
+            if (r0 >= n_lat) r0 = n_lat-1; // clamp
+            
+            c0 = (c0 % n_lon + n_lon) % n_lon;
+            c1 = (c1 % n_lon + n_lon) % n_lon;
+            
+            auto getVal = [&](const std::vector<float>& src) {
+                float v00 = src[c0 + r0*n_lon];
+                float v01 = src[c1 + r0*n_lon];
+                float v10 = src[c0 + r1*n_lon];
+                float v11 = src[c1 + r1*n_lon];
+                double top = v00 * (1.0 - dc) + v01 * dc;
+                double bot = v10 * (1.0 - dc) + v11 * dc;
+                return top * (1.0 - dr) + bot * dr;
+            };
+            
+            double u_val = getVal(raw_u);
+            double v_val = getVal(raw_v);
+            
+            // Rotate
+            RotMat rot = ComputeRotation(ll.lat_deg * (M_PI/180.0), ll.lon_deg * (M_PI/180.0));
+            double vx_grid = u_val * rot.ex + v_val * rot.nx;
+            double vy_grid = u_val * rot.ey + v_val * rot.ny;
+            
+            ocean_vx_frame_buffer[bufferSlot][grid_idx] = (float)vx_grid;
+            ocean_vy_frame_buffer[bufferSlot][grid_idx] = (float)vy_grid;
+        }
+    }
+
+    // Summary stats
+    float min_v = 1e9, max_v = -1e9;
+    int nonzero = 0;
+    for(float f : ocean_vx_frame_buffer[bufferSlot]) {
+        if(f != 0.0f) {
+            nonzero++;
+            if(f < min_v) min_v = f;
+            if(f > max_v) max_v = f;
+        }
+    }
+    spdlog::info("GLO12: Frame {} INTERPOLATED Grid Stats: NonZero {}/{}, Range [{}, {}] (OVERRIDDEN to 5.0)", 
+        frameIdx, nonzero, gridSize, (max_v < min_v ? 0.0f : min_v), (max_v < min_v ? 0.0f : max_v));
 }
 
 
@@ -634,6 +1016,47 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
         }
         current_ocean_alpha = alpha;
     }
+
+    // --- 1.5 OCEAN CURRENT (GLO12 - Alternative) ---
+    // If GLO12 is present AND Ocean Flow (HDF5) is NOT active (num_frames == 0),
+    // we use GLO12 to populate the ocean buffers.
+    if (prms.UseGLO12Data && glo12_num_frames > 0 && num_frames == 0) {
+        // Use logic similar to ERA5 (Time Series)
+        long long target_ts = glo12_start_time + (long long)t;
+        auto it = std::upper_bound(glo12_times.begin(), glo12_times.end(), target_ts);
+        int idx = (it == glo12_times.begin()) ? 0 : std::distance(glo12_times.begin(), it) - 1;
+        
+        if (idx >= glo12_num_frames - 1) idx = glo12_num_frames - 2;
+        if (idx < 0) idx = 0;
+         
+        int f_first = idx;
+        int f_second = idx + 1;
+         
+        long long t0 = glo12_times[f_first];
+        long long t1 = glo12_times[f_second];
+        double dt = (double)(t1 - t0);
+        double glo_alpha = (dt > 1e-3) ? (double)(target_ts - t0) / dt : 0.0;
+        if (glo_alpha < 0) glo_alpha = 0; if (glo_alpha > 1) glo_alpha = 1;
+        
+        // Reuse OCEAN buffers and logic variables
+        // We pretend GLO12 frames are "Ocean Frames"
+        // But we must handle the index mapping carefully.
+        // Reusing `current_ocean_first_idx` etc is fine because they track logical state.
+        
+        if (f_first != current_ocean_first_idx || f_second != current_ocean_second_idx) {
+             ocean_frames_changed = true;
+             current_ocean_first_idx = f_first;
+             current_ocean_second_idx = f_second;
+             
+             spdlog::info("Loading GLO12 Frames {} and {}", f_first, f_second);
+             
+             UpdateRingBufferSlots(f_first, f_second, ocean_slot_frames, current_ocean_active_slots,
+                [&](int f, int s){ LoadGLO12Frame(f, s); });
+                
+             // Async preload could be added here similar to ERA5
+        }
+        current_ocean_alpha = glo_alpha;
+    }
     
     // --- 2. WIND (ERA5) ---
     bool wind_frames_changed = false;
@@ -710,7 +1133,13 @@ std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j
     const int& gx = prms.GridXTotal;
     const int& gy = prms.GridYTotal;
 
-    if (hdf5_path.empty() || num_frames == 0) return {0.0, 0.0};
+    if (hdf5_path.empty() || num_frames == 0) {
+        // Check if GLO12 is available
+        bool has_glo12 = prms.UseGLO12Data && glo12_num_frames > 0;
+        if (!has_glo12) return {0.0, 0.0};
+        
+        // If we are here, we use GLO12 data (which populates ocean_vx_frame_buffer)
+    }
     if (i < 0 || i >= gx || j < 0 || j >= gy) return {0.0, 0.0};
 
     size_t idx = j + static_cast<size_t>(i) * gy;

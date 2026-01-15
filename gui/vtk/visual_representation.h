@@ -51,21 +51,34 @@ public:
 
     enum VisOpt {
         none,   // 0
-        regions,    // only basic grid data is needed
+        regions,    //1
         // points must be available
-        pt_status, pt_color,
-        pt_Jp_inv, pt_ridges,
-        pt_P, pt_Q, pt_thickness,
-        pt_partitions,
-        pt_glen_flow,
-        pt_fracture_type,
+        pt_status, //2
+        pt_color, // 3
+        pt_Jp_inv, //4
+        pt_ridges, //5
+        pt_P, //6
+        pt_Q, //7
+        pt_thickness, //8
+        pt_partitions, //9
+        pt_glen_flow, // 10
+        pt_fracture_type, //11
         // grid-based visualizations
-        grid_mass, grid_pt_count, grid_Jpinv,  grid_ridges, grid_P, grid_Q,
-        grid_colors, grid_vnorm, grid_cracked, grid_thickness,
-        grid_fracture_type,
-        str_EqvGreenLagrange, str_vonMises,
+        grid_mass, //12
+        grid_pt_count, //13
+        grid_Jpinv, //14
+        grid_ridges, //15
+        grid_P, //16
+        grid_Q, //17
+        grid_colors, //18
+        grid_vnorm, //19
+        grid_cracked, //20
+        grid_thickness, //21
+        grid_fracture_type, //22
+        str_EqvGreenLagrange, //23
+        str_vonMises, //24
         // visualization of external currents/forces
-        v_ocean_norm,
+        v_ocean_norm, //25
         v_wind_norm,
         vis_lat,
         vis_lon

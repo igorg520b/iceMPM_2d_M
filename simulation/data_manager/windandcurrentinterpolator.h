@@ -30,6 +30,12 @@ public:
     // Set ERA5 file path (must be called before SetTime)
     void SetEra5Path(const std::string& filePath);
 
+    // Set GLO12 NetCDF file path
+    // Set GLO12 NetCDF file path
+    void SetGLO12Path(const std::string& filePath);
+    // Set GLO12 Tidal Currents file path
+    void SetGLO12TidesPath(const std::string& filePath);
+
     // Set current time; return {ocean_changed, wind_changed}
     std::pair<bool, bool> SetTime(double t);
 
@@ -77,6 +83,12 @@ private:
     std::string era5_path;
     std::unique_ptr<H5::H5File> file_wind;
 
+    std::string glo12_path;
+    std::unique_ptr<H5::H5File> file_glo12;
+
+    std::string glo12_tides_path;
+    std::unique_ptr<H5::H5File> file_glo12_tides;
+
     // Metadata from HDF5 (Flow)
     double time_interval = 0.0;         // time between frames
     int num_frames = 0;                 // total number of frames
@@ -88,6 +100,13 @@ private:
     std::vector<long long> era5_times;  // Linux timestamps
     long long era5_start_time = 0;
     int era5_num_frames = 0;
+
+    // Metadata from GLO12
+    std::vector<double> glo12_lats;      // 1D latitude array (descending usually, but we check)
+    std::vector<double> glo12_lons;      // 1D longitude array
+    std::vector<long long> glo12_times;  // Linux timestamps (or hours since epoch converted)
+    long long glo12_start_time = 0;
+    int glo12_num_frames = 0;
 
     // Current state (Flow)
     int current_ocean_first_idx = -1;         // index of first cached frame (logical)
@@ -115,6 +134,9 @@ private:
 
     void LoadEra5Metadata();
     void LoadWindFrame(int frameIdx, int bufferSlot);
+
+    void LoadGLO12Metadata();
+    void LoadGLO12Frame(int frameIdx, int bufferSlot);
 
     // Async preloading
     std::future<void> ocean_preload_future;

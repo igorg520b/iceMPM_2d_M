@@ -2,8 +2,8 @@
 import copernicusmarine
 
 # Nares Strait Region
-LAT_MIN, LAT_MAX = 75.00, 85.00
-LON_MIN, LON_MAX = -85.32, -43.42
+LAT_MIN, LAT_MAX = 76.00, 83.00
+LON_MIN, LON_MAX = -83.4, -54.45
 
 print("Starting download for Nares Strait region...")
 print(f"Lat: {LAT_MIN} to {LAT_MAX}")

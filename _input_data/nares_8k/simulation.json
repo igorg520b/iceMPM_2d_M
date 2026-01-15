@@ -12,7 +12,6 @@
 "RidgeFormationCoeff":0.1,
 
 "GridData":"grid.h5",
-"CurrentVelocityData":"grid_flow.h5",
 "Snapshot":"s00000.h5",
 "ERA5Data":"data.nc",
 

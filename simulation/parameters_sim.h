@@ -185,6 +185,11 @@ public:
     // Wind and ERA5 Data
     bool UseWindData;
 
+    // GLO12 Ocean Data
+    // GLO12 Ocean Data
+    bool UseGLO12Data;
+    bool UseGLO12Tides;
+
     // Orthographic Projection Parameters
     double PROJ_LAT_0;
     double PROJ_LON_0;

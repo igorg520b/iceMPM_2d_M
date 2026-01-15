@@ -9,7 +9,8 @@ from PIL import Image
 
 # --- Configuration ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-NC_FILE = os.path.join(SCRIPT_DIR, 'glo12v4_nares_currents.nc')
+#NC_FILE = os.path.join(SCRIPT_DIR, 'glo12v4_nares_currents.nc')
+NC_FILE = os.path.join(SCRIPT_DIR, 'glo12v4_nares_tidal_currents.nc')
 # Image is in parent directory
 IMAGE_FILE = os.path.join(SCRIPT_DIR, '..', 'land_2k.png')
 
@@ -27,9 +28,11 @@ ORIG_COEFFS = [11.796660738708361, 0.0, -499251.71124660445, 0.0, -11.7966607387
 SCALE_FACTOR = 40.0
 
 # Standard GLORYS variable names
-VAR_U = 'uo'
-VAR_V = 'vo'
-ALT_VAR_U = ['u', 'ugeo', 'vozocrtx'] 
+#VAR_U = 'uo'
+#VAR_V = 'vo'
+VAR_U = 'utide'
+VAR_V = 'vtide'
+ALT_VAR_U = ['u', 'ugeo', 'vozocrtx']
 ALT_VAR_V = ['v', 'vgeo', 'vomecrty']
 
 def find_variable(ds, choices):

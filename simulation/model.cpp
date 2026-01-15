@@ -240,6 +240,17 @@ void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFi
         sim_data.waci.SetEra5Path(era5Path.string());
     }
 
+    // Load GLO12 if present
+    if (parseResult.count("GLO12Data")) {
+        std::filesystem::path glo12Path = jsonFileDir / parseResult["GLO12Data"];
+        sim_data.waci.SetGLO12Path(glo12Path.string());
+    }
+
+    if (parseResult.count("GLO12Tides")) {
+        std::filesystem::path glo12TidesPath = jsonFileDir / parseResult["GLO12Tides"];
+        sim_data.waci.SetGLO12TidesPath(glo12TidesPath.string());
+    }
+
     sim_data.waci.SetTime(sim_data.prms.SimulationTime);
     gpu.update_ocean_current_field(sim_data.waci);
     gpu.update_wind_field(sim_data.waci);

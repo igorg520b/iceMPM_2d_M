@@ -14,6 +14,8 @@
 "GridData":"grid.h5",
 "Snapshot":"s00000.h5",
 "ERA5Data":"data.nc",
+"GLO12Data":"/home/s2/Projects-CUDA/iceMPM_2d_M/_python_code/glorys/glo12v4_nares_currents.nc",
+"GLO12Tides":"/home/s2/Projects-CUDA/iceMPM_2d_M/_python_code/glorys/glo12v4_nares_tidal_currents.nc",
 
 "PROJ_LAT_0":79.87,
 "PROJ_LON_0":-64.37,

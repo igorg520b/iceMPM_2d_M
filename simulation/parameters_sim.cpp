@@ -61,6 +61,8 @@ void SimParams::Reset()
     InitializationImageSizeX = InitializationImageSizeY = 0;
 
     UseWindData = false;
+    UseGLO12Data = false;
+    UseGLO12Tides = false;
 
     ComputeLame();
     ComputeHelperVariables();
@@ -94,6 +96,16 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("ERA5Data")) {
         result["ERA5Data"] = doc["ERA5Data"].GetString();
         UseWindData = true; // Auto-enable if path provided
+    }
+    
+    if(doc.HasMember("GLO12Data")) {
+        result["GLO12Data"] = doc["GLO12Data"].GetString();
+        UseGLO12Data = true;
+    }
+    
+    if(doc.HasMember("GLO12Tides")) {
+        result["GLO12Tides"] = doc["GLO12Tides"].GetString();
+        UseGLO12Tides = true;
     }
 
     // Projection params

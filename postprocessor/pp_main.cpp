@@ -1,4 +1,4 @@
-#include "pp_mainwindow.h"
+#include "visualizer_mainwindow.h"
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QCommandLineParser>
