@@ -941,7 +941,7 @@ void HostSideData::SaveFrame(int SimulationStep, double SimulationTime)
     const int frame = SimulationStep / prms.UpdateEveryNthStep;
     const int &gx = prms.GridXTotal;
     const int &gy = prms.GridYTotal;
-    const int gridSize = gx*gy;
+//    const int gridSize = gx*gy;
 
     PrepareRGB_Buffer();
 

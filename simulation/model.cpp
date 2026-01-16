@@ -14,7 +14,7 @@ bool Model::Step()
          sim_data.prms.SimulationTime, sim_data.hssoa.size, sim_data.hssoa.capacity);
 
     gpu.reset_timings();
-    gpu.clear_force_accumulator();
+    // gpu.clear_force_accumulator(); // currently don't record forces
     double simulation_time;
     int count_unupdated_steps = 0;
 

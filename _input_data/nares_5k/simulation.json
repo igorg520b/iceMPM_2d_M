@@ -28,7 +28,7 @@
 "SimulationEndTime":1036800,
 "AnimationFramePeriod":300,
 
-"InitialTimeStep":0.19,
+"InitialTimeStep":0.153,
 "ParticleViewSize":2.0,
 
 "YoungsModulus":5.0e8,

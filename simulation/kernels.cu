@@ -166,8 +166,9 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
     if(is_modeled_area != SimParams::ModelledAreaIndicator)
     {
         velocity.setZero();
-        bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fx*pitch_grid + idx] += momentum[0];
-        bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fy*pitch_grid + idx] += momentum[1];
+        // Force accumulation removed
+        // bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fx*pitch_grid + idx] += momentum[0];
+        // bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fy*pitch_grid + idx] += momentum[1];
     }
     else
     {
@@ -462,17 +463,29 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
     const double particle_mass = gprms.ParticleMass * thickness;
 
 
-    if(group == 1)
+    if(group == 0)
     {
-        // group 1: Color, Physics scalars, Density
         Eigen::Vector2d velocity;
-        
-        // pull point data from SOA
-        for(int i=0; i<SimParams::dim; i++)
-        {
-            velocity[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::velx+i)];
-        }
+        for(int i=0; i<SimParams::dim; i++) velocity[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::velx+i)];
 
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const double Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+                const double incM = Wip*particle_mass;
+                const Eigen::Vector2d incV = incM*velocity;
+
+                // distribute values to the grid
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_mass*pitch_g + idx_gridnode], incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_px*pitch_g + idx_gridnode], incV.x());
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_py*pitch_g + idx_gridnode], incV.y());
+            }
+    }
+    else if(group == 1)
+    {
+        // group 1: Color
         // Extract RGB (R: 24-31, G: 32-39, B: 40-47)
         uint8_t r = (utility >> 24) & 0xFF;
         uint8_t g = (utility >> 32) & 0xFF;
@@ -482,6 +495,23 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
         const double rG = (double)g / 255.0;
         const double rB = (double)b / 255.0;
 
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const double Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+
+                const double incM = Wip*particle_mass;
+                
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_r*pitch_g + idx_gridnode], rR*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_g*pitch_g + idx_gridnode], rG*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_b*pitch_g + idx_gridnode], rB*incM);
+            }
+    }
+
+    else if(group == 2)
+    {
         // P and Q are scalars (pressure and deviatoric stress measure)
         const double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
         const double P = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_P];
@@ -495,25 +525,15 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
                 const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
 
                 const double incM = Wip*particle_mass;
-                const Eigen::Vector2d incV = incM*velocity;
-                
-                // distribute values to the grid
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_mass*pitch_g + idx_gridnode], incM);
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_px*pitch_g + idx_gridnode], incV.x());
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_py*pitch_g + idx_gridnode], incV.y());
-                
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_r*pitch_g + idx_gridnode], rR*incM);
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_g*pitch_g + idx_gridnode], rG*incM);
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_b*pitch_g + idx_gridnode], rB*incM);
+
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Jpinv*pitch_g + idx_gridnode], Jp_inv*incM);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_P*pitch_g + idx_gridnode], P*incM);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Q*pitch_g + idx_gridnode], Q*incM);
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_pts_density*pitch_g + idx_gridnode], Wip);
             }
     }
-    else if(group == 2)
+
+    else if(group == 3)
     {
-        // group 2: Strains
         Eigen::Matrix2d Fe;
         for(int i=0; i<SimParams::dim; i++)
         {
@@ -532,38 +552,51 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             for (int j = -1; j <= 1; j++)
             {
                 const double Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
                 const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
                 const double incM = Wip*particle_mass;
-
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_pts_density*pitch_g + idx_gridnode], Wip);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_EqvGreenLagrange*pitch_g + idx_gridnode], str_EqvGreenLagrange*incM);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_vonMises*pitch_g + idx_gridnode], str_vonMises*incM);
-                
-                const double thickness = bpts[pt_idx + pitch * SimParams::PtArrIdx::idx_thickness];
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness*pitch_g + idx_gridnode], thickness*incM);
-                
-                // Determine status from utility flags read at kernel start
-                double val_crushed = (utility & SimParams::status_crushed) ? 1.0 : 0.0;
-                double val_cracked = (utility & SimParams::status_cracked) ? 1.0 : 0.0;
 
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_crushed*pitch_g + idx_gridnode], val_crushed*incM);
-                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked*pitch_g + idx_gridnode], val_cracked*incM);
             }
     }
-    else if(group == 3)
+
+    else if(group == 4)
     {
-        // group 3: Fracture Types
+        double val_crushed = (utility & SimParams::status_crushed) ? 1.0 : 0.0;
+        double val_cracked = (utility & SimParams::status_cracked) ? 1.0 : 0.0;
+        const double thickness = bpts[pt_idx + pitch * SimParams::PtArrIdx::idx_thickness];
+
         for (int i = -1; i <= 1; i++)
             for (int j = -1; j <= 1; j++)
             {
                 const double Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
                 const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
                 const double incM = Wip*particle_mass;
-                
-                // Determine fracture status
-                double val_tension = (utility & SimParams::fracture_tension) ? 1.0 : 0.0;
-                double val_shear = (utility & SimParams::fracture_compression_shear) ? 1.0 : 0.0;
-                double val_crush = (utility & SimParams::fracture_crush) ? 1.0 : 0.0;
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness*pitch_g + idx_gridnode], thickness*incM);
+                // Determine status from utility flags read at kernel start
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_crushed*pitch_g + idx_gridnode], val_crushed*incM);
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked*pitch_g + idx_gridnode], val_cracked*incM);
 
+            }
+    }
+
+    else if(group == 5)
+    {
+        double val_tension = (utility & SimParams::fracture_tension) ? 1.0 : 0.0;
+        double val_shear = (utility & SimParams::fracture_compression_shear) ? 1.0 : 0.0;
+        double val_crush = (utility & SimParams::fracture_crush) ? 1.0 : 0.0;
+
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const double Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset)*gridY + gridY*halo;
+                const double incM = Wip*particle_mass;
+                // Determine fracture status
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension*pitch_g + idx_gridnode], val_tension*incM);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_shear*pitch_g + idx_gridnode], val_shear*incM);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush*pitch_g + idx_gridnode], val_crush*incM);
@@ -571,6 +604,8 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
     }
 }
 
+
+/*
 __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
 {
     // forces that were recorded (accumulated) in grid_idx_fx/fy are now summarized by region
@@ -592,7 +627,7 @@ __global__ void partition_kernel_summarize_forces(const PartitionParams pparams)
         atomicAdd(&pparams.grid_forces_summary_per_region[area_idx*2+1], fy);
     }
 }
-
+*/
 
 
 

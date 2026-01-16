@@ -50,42 +50,39 @@ public:
     constexpr static double points_transfer_buffer_fraction = 0.07;  // % of points that could "fly over" during a given cycle
 
     // layout of the grid arrays
-    constexpr static int grid_arrays_to_clear = 8;  // at reset_grid, which should be cleared
+    constexpr static int grid_arrays_to_clear = 3;  // at reset_grid, which should be cleared
     enum GPUGridArrayIndex : size_t {
         // --- Persistent Arrays (Group 0) ---
         // These arrays persist across the entire time step and are not overwritten by visualization logic
         gpu_grid_idx_mass = 0,
         gpu_grid_idx_px = 1,
         gpu_grid_idx_py = 2,
-        gpu_grid_idx_fx = 8,
-        gpu_grid_idx_fy = 9,
+        nGridArraysGPU = 3, // total count for allocation on GPU
 
-        // --- Visualization Group 1 (Standard) ---
-        // Overwrites slots 3-7. Can reuse 8,9 (fx, fy) as forces are consumed before visualization
-        gpu_grid_idx_vis_r = 3,
-        gpu_grid_idx_vis_g = 4,
-        gpu_grid_idx_vis_b = 5,
-        gpu_grid_idx_vis_Jpinv = 6,
-        gpu_grid_idx_vis_P = 7,
-        gpu_grid_idx_vis_Q = 8,           // Reuses fx (slot 8)
-        gpu_grid_idx_vis_pts_density = 9, // Reuses fy (slot 9)
+        // group 1
+        gpu_grid_idx_vis_r = 0,
+        gpu_grid_idx_vis_g = 1,
+        gpu_grid_idx_vis_b = 2,
 
-        // --- Visualization Group 2 (Strains & Fracture) ---
-        // Overwrites slots 3-7. Can reuse 8,9.
-        gpu_grid_idx_vis_crushed = 3,     // Reuses slot 3
-        gpu_grid_idx_vis_cracked = 4,     // Reuses slot 4
-        gpu_grid_idx_vis_thickness = 5,   // Reuses slot 5
-        gpu_grid_idx_vis_strain_EqvGreenLagrange = 6, // Reuses slot 6
-        gpu_grid_idx_vis_strain_vonMises = 7, // Reuses slot 7
+        // group 2
+        gpu_grid_idx_vis_Jpinv = 0,
+        gpu_grid_idx_vis_P = 1,
+        gpu_grid_idx_vis_Q = 2,          
 
-        // --- Visualization Group 3 (Fracture Type) ---
-        // Overwrites slots 3-5
-        gpu_grid_idx_fracture_tension = 3,
-        gpu_grid_idx_fracture_shear = 4,
-        gpu_grid_idx_fracture_crush = 5,
+        // group 3
+        gpu_grid_idx_vis_pts_density = 0,
+        gpu_grid_idx_vis_strain_EqvGreenLagrange = 1,
+        gpu_grid_idx_vis_strain_vonMises = 2,
 
-        // total count (allocation size)
-        nGridArraysGPU = 10
+        // group 4
+        gpu_grid_idx_vis_crushed = 0,
+        gpu_grid_idx_vis_cracked = 1,
+        gpu_grid_idx_vis_thickness = 2,
+
+        // group 5
+        gpu_grid_idx_fracture_tension = 0,
+        gpu_grid_idx_fracture_shear = 1,
+        gpu_grid_idx_fracture_crush = 2
     };
 
 

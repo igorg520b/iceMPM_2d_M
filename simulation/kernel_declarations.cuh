@@ -54,7 +54,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
 __global__ void partition_kernel_normalize_render(const PartitionParams pparams);
 
 // Summarizes grid forces: aggregates forces on the grid for visualization/analysis
-__global__ void partition_kernel_summarize_forces(const PartitionParams pparams);
+//__global__ void partition_kernel_summarize_forces(const PartitionParams pparams);
 
 // ============================================================================
 // MULTI-GPU COMMUNICATION KERNELS - Halo Exchange and Point Transfer

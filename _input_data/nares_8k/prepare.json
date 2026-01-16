@@ -11,7 +11,7 @@
 "ThicknessTo":3.0,
 
 "PointsPerCell":5,
-"DimensionHorizontal":1269660,
+"DimensionHorizontal":998752,
 
 "WindData":"data.nc",
 "TimeScale":1119600

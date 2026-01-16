@@ -49,7 +49,7 @@ public:
     void update_constants();
     void reset_grid();
     void reset_timings();
-    void clear_force_accumulator();
+//    void clear_force_accumulator();
 
     void p2g();
     void update_nodes(float simulation_time);

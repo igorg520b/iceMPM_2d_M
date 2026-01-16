@@ -439,40 +439,40 @@ void GPU_Partition::reset_grid()
     CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, gridArraySize, streamCompute));
 }
 
-void GPU_Partition::clear_force_accumulator()
-{
-    CUDA_CHECK(cudaSetDevice(Device));
-    const size_t arrays_to_clear = 2;   // fx, fy
-    const size_t bytes_to_clear = pparams.pitch_grid * arrays_to_clear * sizeof(double);
-    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid + pparams.pitch_grid*SimParams::GPUGridArrayIndex::gpu_grid_idx_fx, 0, bytes_to_clear, streamCompute));
-}
+//void GPU_Partition::clear_force_accumulator()
+//{
+//    CUDA_CHECK(cudaSetDevice(Device));
+//    const size_t arrays_to_clear = 2;   // fx, fy
+//    const size_t bytes_to_clear = pparams.pitch_grid * arrays_to_clear * sizeof(double);
+//    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid + pparams.pitch_grid*SimParams::GPUGridArrayIndex::gpu_grid_idx_fx, 0, bytes_to_clear, streamCompute));
+//}
 
 
-void GPU_Partition::summarize_forces()
-{
-    CUDA_CHECK(cudaSetDevice(Device));
+//void GPU_Partition::summarize_forces()
+//{
+//    CUDA_CHECK(cudaSetDevice(Device));
 
     // Summarize forces accumulated in fx, fy into per-region array
-    const size_t nGridNodes = prms.GridYTotal * (pparams.partition_gridX + 2*prms.GridHaloSize);
-    const int &tpb = prms.tpb_Upd;
-    const int nBlocks = (nGridNodes + tpb - 1) / tpb;
+//    const size_t nGridNodes = prms.GridYTotal * (pparams.partition_gridX + 2*prms.GridHaloSize);
+//    const int &tpb = prms.tpb_Upd;
+//    const int nBlocks = (nGridNodes + tpb - 1) / tpb;
 
-    CUDA_CHECK(cudaMemsetAsync(pparams.grid_forces_summary_per_region, 0, sizeof(double)*(SimParams::MAX_REGIONS+1), streamCompute));
-    partition_kernel_summarize_forces<<<nBlocks, tpb, 0, streamCompute>>>(pparams);
-    if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("partition_kernel_summarize_forces");
-}
+//    CUDA_CHECK(cudaMemsetAsync(pparams.grid_forces_summary_per_region, 0, sizeof(double)*(SimParams::MAX_REGIONS+1), streamCompute));
+//    partition_kernel_summarize_forces<<<nBlocks, tpb, 0, streamCompute>>>(pparams);
+//    if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("partition_kernel_summarize_forces");
+//}
 
 
-void GPU_Partition::transfer_force_summary_from_device()
-{
-    CUDA_CHECK(cudaSetDevice(Device));
+//void GPU_Partition::transfer_force_summary_from_device()
+//{
+//    CUDA_CHECK(cudaSetDevice(Device));
 
     // Transfer accumulated forces from GPU to host
-    const size_t transfer_bytes = sizeof(double)*SimParams::MAX_REGIONS*2;
-    CUDA_CHECK(cudaMemcpyAsync(host_grid_forces_summary_per_region,
-                               pparams.grid_forces_summary_per_region,
-                               transfer_bytes, cudaMemcpyDeviceToHost, streamCompute));
-}
+//    const size_t transfer_bytes = sizeof(double)*SimParams::MAX_REGIONS*2;
+//    CUDA_CHECK(cudaMemcpyAsync(host_grid_forces_summary_per_region,
+//                               pparams.grid_forces_summary_per_region,
+//                               transfer_bytes, cudaMemcpyDeviceToHost, streamCompute));
+//}
 
 
 void GPU_Partition::p2g()

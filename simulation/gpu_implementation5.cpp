@@ -138,14 +138,14 @@ void GPU_Implementation5::reset_grid()
     }
 }
 
-void GPU_Implementation5::clear_force_accumulator()
-{
-    for(GPU_Partition &p : partitions)
-    {
-        CUDA_CHECK(cudaSetDevice(p.Device));
-        p.clear_force_accumulator();
-    }
-}
+//void GPU_Implementation5::clear_force_accumulator()
+//{
+//    for(GPU_Partition &p : partitions)
+//    {
+//        CUDA_CHECK(cudaSetDevice(p.Device));
+//        p.clear_force_accumulator();
+//    }
+//}
 
 
 void GPU_Implementation5::p2g()
@@ -246,21 +246,26 @@ void GPU_Implementation5::render_visualized_data()
     // Phase 1: Summarize forces from all partitions FIRST
     // This processes accumulated fx, fy into per-region force summary
     // After this, all GPU array slots are free for visualization passes
-    for(GPU_Partition &p : partitions)
-    {
-        p.summarize_forces();
-    }
+//    for(GPU_Partition &p : partitions)
+//    {
+//        p.summarize_forces();
+//    }
 
     // Transfer force summary results from GPU to host
-    for(GPU_Partition &p : partitions)
-    {
-        p.transfer_force_summary_from_device();
-    }
+//    for(GPU_Partition &p : partitions)
+//    {
+//        p.transfer_force_summary_from_device();
+//    }
 
     // Phase 2: Render visualization data group-by-group and transfer to host
     // Each group reuses the same 10 GPU array slots, so we must transfer before the next group
-    // Groups 1, 2, & 3 now.
-    for (int group = 1; group <= 3; ++group)
+    
+    // Initialize host buffer once before accumulating all groups
+    const size_t total_host_buffer_size = (size_t)hsd.prms.GridXTotal * hsd.prms.GridYTotal * SimParams::HostGridArrayIndex::nGridArraysHost;
+    hsd.host_grid_buffer.assign(total_host_buffer_size, 0.0f);
+
+    // Groups 0-5: Render Visualization Properties
+    for (int group = 0; group <= 5; ++group)
     {
         // Clear GPU memory and render this group for all partitions
         for(GPU_Partition &p : partitions)
@@ -473,35 +478,46 @@ void GPU_Implementation5::transfer_from_device()
 // Helper function to get GPU-to-Host slot mapping for a visualization group
 std::vector<std::pair<int, int>> GPU_Implementation5::getGroupSlotMapping(int group)
 {
+    // The enum values in SimParams::GPUGridArrayIndex have been aliased to 0, 1, 2
+    // to reuse the 3 persistent GPU slots.
+    // For clarity, we use the enum names directly in the mapping.
+
     static const std::map<std::pair<int, int>, int> group_slot_map = {
-        // Group 1: Standard Visualizations
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_mass}, SimParams::HostGridArrayIndex::host_grid_idx_mass},
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_px}, SimParams::HostGridArrayIndex::grid_idx_px},
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_py}, SimParams::HostGridArrayIndex::grid_idx_py},
+        // Group 0: Physics (Mass, Px, Py) - Direct Transfer
+        {{0, SimParams::GPUGridArrayIndex::gpu_grid_idx_mass}, SimParams::HostGridArrayIndex::host_grid_idx_mass},
+        {{0, SimParams::GPUGridArrayIndex::gpu_grid_idx_px}, SimParams::HostGridArrayIndex::grid_idx_px},
+        {{0, SimParams::GPUGridArrayIndex::gpu_grid_idx_py}, SimParams::HostGridArrayIndex::grid_idx_py},
+
+        // Group 1: R, G, B
         {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_r}, SimParams::HostGridArrayIndex::grid_idx_vis_r},
         {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_g}, SimParams::HostGridArrayIndex::grid_idx_vis_g},
         {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_b}, SimParams::HostGridArrayIndex::grid_idx_vis_b},
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Jpinv}, SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv},
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_P}, SimParams::HostGridArrayIndex::grid_idx_vis_P},
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Q}, SimParams::HostGridArrayIndex::grid_idx_vis_Q},
-        {{1, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_pts_density}, SimParams::HostGridArrayIndex::grid_idx_vis_pts_density},
 
-        // Group 2: Strains (reusing slots)
-        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_EqvGreenLagrange}, SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange},
-        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_vonMises}, SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises},
-        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_crushed}, SimParams::HostGridArrayIndex::grid_idx_vis_crushed},
+        // Group 2: Jpinv, P, Q
+        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Jpinv}, SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv},
+        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_P}, SimParams::HostGridArrayIndex::grid_idx_vis_P},
+        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Q}, SimParams::HostGridArrayIndex::grid_idx_vis_Q},
 
-        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked}, SimParams::HostGridArrayIndex::grid_idx_vis_cracked},
-        {{2, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness}, SimParams::HostGridArrayIndex::grid_idx_vis_thickness},
+        // Group 3: Density, EqvGL, vonMises
+        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_pts_density}, SimParams::HostGridArrayIndex::grid_idx_vis_pts_density},
+        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_EqvGreenLagrange}, SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange},
+        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_vonMises}, SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises},
 
-        // Group 3: Fracture types (reusing slots)
-        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension}, SimParams::HostGridArrayIndex::grid_idx_fracture_tension},
-        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_shear}, SimParams::HostGridArrayIndex::grid_idx_fracture_shear},
-        {{3, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush}, SimParams::HostGridArrayIndex::grid_idx_fracture_crush}
+        // Group 4: Crushed, Cracked, Thickness
+        {{4, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_crushed}, SimParams::HostGridArrayIndex::grid_idx_vis_crushed},
+        {{4, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_cracked}, SimParams::HostGridArrayIndex::grid_idx_vis_cracked},
+        {{4, SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness}, SimParams::HostGridArrayIndex::grid_idx_vis_thickness},
+
+        // Group 5: Fracture Types
+        {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension}, SimParams::HostGridArrayIndex::grid_idx_fracture_tension},
+        {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_shear}, SimParams::HostGridArrayIndex::grid_idx_fracture_shear},
+        {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush}, SimParams::HostGridArrayIndex::grid_idx_fracture_crush}
     };
 
     std::vector<std::pair<int, int>> result;
-    for (int gpu_slot = 0; gpu_slot < SimParams::GPUGridArrayIndex::nGridArraysGPU; ++gpu_slot) {
+    // Iterate 0..2 because we only have 3 GPU slots.
+    // The enum aliases (e.g. gpu_grid_idx_vis_r) are guaranteed to be in [0, 2].
+    for (int gpu_slot = 0; gpu_slot < (int)SimParams::GPUGridArrayIndex::nGridArraysGPU; ++gpu_slot) {
         auto it = group_slot_map.find({group, gpu_slot});
         if (it != group_slot_map.end()) {
             result.push_back({gpu_slot, it->second});
@@ -574,11 +590,6 @@ void GPU_Implementation5::transfer_grid_group_to_host(int group)
     const int halo = hsd.prms.GridHaloSize;
     const size_t grid_plane_size = (size_t)gx_total * gy_total;
     const int nGridArrays = SimParams::HostGridArrayIndex::nGridArraysHost;
-
-    // Reset host-side grid buffer to zero before the first group
-    if (group == 1) {
-        hsd.host_grid_buffer.assign(grid_plane_size * nGridArrays, 0.0f);
-    }
 
     // Get the slot mapping for this group (throws if group not found)
     auto slot_mapping = getGroupSlotMapping(group);
