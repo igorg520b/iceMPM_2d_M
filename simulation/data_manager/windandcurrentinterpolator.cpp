@@ -39,6 +39,10 @@ void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
 {
     if (filePath.empty()) return;
 
+    if (!hdf5_path.empty()) {
+        throw std::runtime_error("SetHDF5Path called more than once");
+    }
+
     // Check file exists before attempting to open
     if (!std::filesystem::exists(filePath)) {
         throw std::runtime_error(fmt::format("Flow field file not found: {}", filePath));
@@ -52,6 +56,10 @@ void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
 
 void WindAndCurrentInterpolator::SetEra5Path(const std::string& filePath)
 {
+    if (!era5_path.empty()) {
+        throw std::runtime_error("SetEra5Path called more than once");
+    }
+
     // Check file exists before attempting to open
     if (!std::filesystem::exists(filePath)) {
         throw std::runtime_error(fmt::format("ERA5 file not found: {}", filePath));
@@ -66,6 +74,10 @@ void WindAndCurrentInterpolator::SetEra5Path(const std::string& filePath)
 
 void WindAndCurrentInterpolator::SetGLO12Path(const std::string& filePath)
 {
+    if (!glo12_path.empty()) {
+        throw std::runtime_error("SetGLO12Path called more than once");
+    }
+
     // Check file exists before attempting to open
     if (!std::filesystem::exists(filePath)) {
         throw std::runtime_error(fmt::format("GLO12 file not found: {}", filePath));
@@ -77,6 +89,10 @@ void WindAndCurrentInterpolator::SetGLO12Path(const std::string& filePath)
 
 void WindAndCurrentInterpolator::SetGLO12TidesPath(const std::string& filePath)
 {
+    if (!glo12_tides_path.empty()) {
+        throw std::runtime_error("SetGLO12TidesPath called more than once");
+    }
+
     // Check file exists before attempting to open
     if (!std::filesystem::exists(filePath)) {
         throw std::runtime_error(fmt::format("GLO12 Tides file not found: {}", filePath));
@@ -205,39 +221,22 @@ void WindAndCurrentInterpolator::LoadGLO12Metadata()
         
         // GLO12 typically uses hours since 1950 or 2000, need to check units?
         // For now assuming compatible scalar (e.g. standard NetCDF time)
-        // If it's double/float, we read it. If it's int, we read it.
-        // Assuming double mostly for 'hours since ...'
-        // CAUTION: The simulation expects "Era5-like" timestamps (seconds) or relative.
-        // The visualizer uses indices. Here we map simulation time `t` (seconds) to GLO12 time.
-        // If GLO12 is 'hours since 1950', we must align epochs.
-        // Assuming for this user request that GLO12 times align with simulation `t` (or `t` is relative 0..End).
-        // BUT: SimulationTime usually starts at 0. 'time_counter' usually absolute.
-        // Let's assume we treat file start as t=0 offset for interpolation.
-        
-        // Actually, let's just use the logic: t (simulation time) is delta from Start.
-        // But SetTime takes `t` which IS simulation time.
-        // We will store the full array.
-        // Read as double for generality
         std::vector<double> buf(glo12_num_frames);
         ds_time.read(buf.data(), H5::PredType::NATIVE_DOUBLE);
         
         glo12_times.resize(glo12_num_frames);
-        for(int i=0; i<glo12_num_frames; ++i) glo12_times[i] = (long long)buf[i];
-
-        if (glo12_times.empty()) throw std::runtime_error("GLO12 time dataset empty");
-        glo12_start_time = glo12_times[0];
-        // Convert hours to seconds if the steps look small? GLO12 is usually daily/hourly.
-        // If t[1]-t[0] ~ 1.0 (hour?) or 24.0 (day?), we might need scaling * 3600.
-        // Assuming timestamps are already converted or we use index-based if consistent.
-        // The Python visualizer script didn't convert, just plotted.
-        // Let's assume input GLO12 NetCDF has 'hours since 1950' and we operate in seconds.
-        // HACK: Re-scale if difference is small (< 1000). Usually seconds > 3600.
-        if (glo12_num_frames > 1) {
-            double dt = buf[1] - buf[0];
-            if (dt < 100.0) { // likely hours or days
-                spdlog::info("GLO12: Detected small time delta {}, assuming hours. Scaling by 3600.", dt);
-                for(int i=0; i<glo12_num_frames; ++i) glo12_times[i] = (long long)(buf[i] * 3600.0);
-            }
+        // Explicitly handle "Hours since 1950-01-01 00:00:00"
+        // 1950-01-01 to 1970-01-01 is 7305 days (including leap years 1952, 56, 60, 64, 68)
+        // 7305 days * 24 * 3600 = 631,152,000 seconds
+        const long long OFFSET_1950_TO_1970 = 631152000;
+        
+        spdlog::info("GLO12: Converting 'Hours since 1950' to Unix Timestamps");
+        for(int i=0; i<glo12_num_frames; ++i) {
+             double hours_since_1950 = buf[i];
+             // Convert to seconds since 1950
+             long long seconds_since_1950 = (long long)(hours_since_1950 * 3600.0);
+             // Convert to seconds since 1970 (Unix)
+             glo12_times[i] = seconds_since_1950 - OFFSET_1950_TO_1970;
         }
         glo12_start_time = glo12_times[0];
         spdlog::info("GLO12 Start Time: {} (seconds-ish)", glo12_start_time);
@@ -247,26 +246,23 @@ void WindAndCurrentInterpolator::LoadGLO12Metadata()
         throw;
     }
 
-    // Load Latitude/Longitude (try multiple names)
+    // Load Latitude/Longitude (Strict names)
     // We confirmed via check_nc that 'latitude' and 'longitude' exist (1D).
-    auto load_coord = [&](const std::vector<std::string>& candidates, std::vector<double>& out_vec, std::string label) {
-        for(const auto& name : candidates) {
-            try {
-                H5::DataSet ds = file_glo12->openDataSet(name);
-                H5::DataSpace space = ds.getSpace();
-                hsize_t dims[1];
-                space.getSimpleExtentDims(dims, NULL);
-                out_vec.resize(dims[0]);
-                ds.read(out_vec.data(), H5::PredType::NATIVE_DOUBLE);
-                spdlog::info("GLO12 Loaded {} from '{}', size {}", label, name, dims[0]);
-                return;
-            } catch(...) {}
+    auto load_coord_strict = [&](const std::string& name, std::vector<double>& out_vec, std::string label) {
+        if (!file_glo12->nameExists(name)) {
+             throw std::runtime_error(fmt::format("GLO12: Could not find {}", label));
         }
-        throw std::runtime_error(fmt::format("GLO12: Could not find {}", label));
+        H5::DataSet ds = file_glo12->openDataSet(name);
+        H5::DataSpace space = ds.getSpace();
+        hsize_t dims[1];
+        space.getSimpleExtentDims(dims, NULL);
+        out_vec.resize(dims[0]);
+        ds.read(out_vec.data(), H5::PredType::NATIVE_DOUBLE);
+        spdlog::info("GLO12 Loaded {} from '{}', size {}", label, name, dims[0]);
     };
 
-    load_coord({"latitude", "lat", "nav_lat"}, glo12_lats, "Latitude");
-    load_coord({"longitude", "lon", "nav_lon"}, glo12_lons, "Longitude");
+    load_coord_strict("latitude", glo12_lats, "Latitude");
+    load_coord_strict("longitude", glo12_lons, "Longitude");
 
     spdlog::info("GLO12 Grid: {}x{} (Lat/Lon)", glo12_lats.size(), glo12_lons.size());
 }
@@ -717,7 +713,7 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         
     } catch (const H5::Exception& e) {
         spdlog::error("Error reading ERA5 frame {}: {}", frameIdx, e.getDetailMsg());
-        return;
+        throw; // Re-throw to terminate or be caught by higher-level handler
     }
     
     // 2. Interpolate to Simulation Grid

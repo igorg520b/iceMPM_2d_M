@@ -120,7 +120,7 @@ void HostSideData::AllocatePointArrays()
     }
     allocated_bytes[1] += prms.nPtsInitial * sizeof(uint8_t);
 
-    LOGR("AllocatePointArrays: Points memory: {:.3f} GB", allocated_bytes[1] / 1e9);
+    // LOGR("AllocatePointArrays: Points memory: {:.3f} GB", allocated_bytes[1] / 1e9);
 }
 
 

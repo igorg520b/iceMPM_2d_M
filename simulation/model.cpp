@@ -234,9 +234,12 @@ void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFi
         sim_data.waci.SetHDF5Path(flowPath.string());
     }
     
-    // Load ERA5 if present
     if (parseResult.count("ERA5Data")) {
-        std::filesystem::path era5Path = jsonFileDir / parseResult["ERA5Data"];
+        std::string rawPath = parseResult["ERA5Data"];
+        std::filesystem::path era5Path(rawPath);
+        if (era5Path.is_relative()) {
+            era5Path = jsonFileDir / era5Path;
+        }
         sim_data.waci.SetEra5Path(era5Path.string());
     }
 

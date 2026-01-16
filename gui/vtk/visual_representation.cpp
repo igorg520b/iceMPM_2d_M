@@ -828,7 +828,7 @@ void VisualRepresentation::SaveVisualizationState()
 
 void VisualRepresentation::LoadVisualizationState()
 {
-    std::string state_file = ".plateMPM_vis_state";
+    std::string state_file = "plateMPM_vis_state";
     try {
         std::ifstream in(state_file, std::ios::binary);
         if(!in) {

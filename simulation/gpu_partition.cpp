@@ -169,6 +169,29 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     LOGR("allocate: P {}-{}:  requested grid {} x {} = {}; gird pitch {}; Pts-req {}; pts-pitch {}",
          pparams.PartitionID, Device, gx_requested, gy, gx_requested*gy,
          pparams.pitch_grid, n_points_capacity, pparams.pitch_pts);
+
+    // Memory usage summary calculation
+    size_t mem_grid_arrays = 0;
+    mem_grid_arrays += pparams.pitch_grid * sizeof(double) * SimParams::GPUGridArrayIndex::nGridArraysGPU;
+    mem_grid_arrays += pparams.pitch_grid_forcing * sizeof(float) * SimParams::nGridForcingArrays;
+    mem_grid_arrays += grid_regions_size;
+    mem_grid_arrays += transfer_buffer_size * 2;                  // halo_transfer_buffer
+
+    size_t mem_point_arrays = 0;
+    mem_point_arrays += pparams.pitch_pts * sizeof(double) * SimParams::PtArrIdx::nPtsArrays;
+    if(prms.nPartitions > 1) {
+        size_t transfer_buffer_alloc_size = sizeof(double)*SimParams::PtArrIdx::nPtsArrays*pparams.point_transfer_buffer_capacity;
+        mem_point_arrays += transfer_buffer_alloc_size * 4;
+    }
+
+    double gb_grid = (double)mem_grid_arrays / 1e9;
+    double gb_pts = (double)mem_point_arrays / 1e9;
+    double gb_total = gb_grid + gb_pts;
+
+    LOGR("Memory Allocation Summary (PID {}):", pparams.PartitionID);
+    LOGR("  Grid Arrays:   {:.3f} GB", gb_grid);
+    LOGR("  Point Arrays:  {:.3f} GB", gb_pts);
+    LOGR("  Total:         {:.3f} GB", gb_total);
 }
 
 

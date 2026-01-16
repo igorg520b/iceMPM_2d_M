@@ -74,7 +74,7 @@ void HostSideSOA::Allocate(int pts_capacity)
 */
 
     memset(host_buffer, 0, allocation_size);
-    LOGR("HSSOA allocate capacity {} pt; toal {} Gb", capacity, (double)allocation_size/(1024.*1024.*1024.));
+    // LOGR("HSSOA allocate capacity {} pt; toal {} GB", capacity, (double)allocation_size/(1024.*1024.*1024.));
 }
 
 

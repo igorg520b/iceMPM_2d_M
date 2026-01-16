@@ -218,38 +218,30 @@ void MainWindow::LoadParameterFile(QString fileName)
         std::filesystem::path simConfigDir = configPath.parent_path();
         std::filesystem::path simJsonPath = simConfigDir / "simulation.json";
 
-        if (std::filesystem::exists(simJsonPath)) {
-            spdlog::info("Found simulation.json, parsing for projection parameters & ERA5...");
-            // We use hsd.prms.ParseFile which returns map of paths
-            std::map<std::string, std::string> simParseResult = hsd.prms.ParseFile(simJsonPath.string());
-            
-            // If simulation.json had ERA5Data, initialize WACI with it
-            // NOTE: This might enable UseWindData, but we will override it below based on prepare.json
-            if (simParseResult.count("ERA5Data")) {
-                 std::string era5File = simParseResult["ERA5Data"];
-                 // Check if path is absolute or relative
-                 std::filesystem::path era5Path(era5File);
-                 if (era5Path.is_relative()) {
-                     era5Path = simConfigDir / era5Path;
-                 }
+        // --- Resolution of ERA5 Path ---
+        // 1. Check if simulation.json provides ERA5Data
+        std::string finalEra5Path;
+        bool useEra5 = false;
 
-                 if (std::filesystem::exists(era5Path)) {
-                     hsd.waci.SetEra5Path(era5Path.string());
-                     spdlog::info("ERA5 Wind Data loaded from: {}", era5Path.string());
+        if (std::filesystem::exists(simJsonPath)) {
+            // Re-parse to be sure (or reuse simParseResult if valid scope)
+             std::map<std::string, std::string> simParseResult = hsd.prms.ParseFile(simJsonPath.string());
+             
+             if (simParseResult.count("ERA5Data")) {
+                 std::string era5File = simParseResult["ERA5Data"];
+                 std::filesystem::path p(era5File);
+                 if (p.is_relative()) {
+                     p = simConfigDir / p;
+                 }
+                 if (std::filesystem::exists(p)) {
+                     finalEra5Path = p.string();
+                     useEra5 = true;
                  } else {
-                     spdlog::warn("Warning: ERA5Data path in simulation.json not found: {}", era5Path.string());
+                     spdlog::warn("Warning: ERA5Data path in simulation.json not found: {}", p.string());
                  }
             }
-        } else {
-            spdlog::info("simulation.json not found in project directory - wind visualization may not work correctly.");
-        }
-
-        // --- GLO12 Loading Logic (Same as Visualizer) ---
-        // If GLO12Data is present in simulation.json (simParseResult), try to load it.
-        // We need to re-parse simulation.json if not already done, or carry over simParseResult.
-        // Re-parsing to be safe since simParseResult scope is limited above.
-        if (std::filesystem::exists(simJsonPath)) {
-             std::map<std::string, std::string> simParseResult = hsd.prms.ParseFile(simJsonPath.string());
+        
+            // --- GLO12 Loading Logic (Same as Visualizer) ---
              if (simParseResult.count("GLO12Data") && !simParseResult["GLO12Data"].empty()) {
                 std::filesystem::path glo12Path = simConfigDir / simParseResult["GLO12Data"];
                  if (std::filesystem::exists(glo12Path)) {
@@ -269,18 +261,27 @@ void MainWindow::LoadParameterFile(QString fileName)
                      spdlog::warn("Warning: GLO12Tides path in simulation.json not found: {}", glo12TidesPath.string());
                  }
             }
+        } else {
+            spdlog::info("simulation.json not found in project directory.");
         }
 
-        // --- Initialize Wind Data (from prepare.json) overrides selection ---
-        // If WindData is explicitly provided in prepare.json, use it.
-        // If NOT provided, DISABLE wind, even if simulation.json populated it.
+        // 2. Check if prepare.json OVERRIDES it (WindData)
         if (!params.WindData.empty()) {
              std::string windPath = params.ConfigFileDirectory + "/" + params.WindData;
-             hsd.prms.UseWindData = true;
-             hsd.waci.SetEra5Path(windPath);
-             spdlog::info("Preparer: Loaded ERA5 Wind Data from {}", windPath);
-        } else {
-            hsd.prms.UseWindData = false;
+             if (std::filesystem::exists(windPath)) {
+                 finalEra5Path = windPath;
+                 useEra5 = true;
+                 spdlog::info("Preparer: Overriding ERA5 Wind Data from prepare.json: {}", windPath);
+             } else {
+                 spdlog::error("Preparer: WindData in prepare.json not found: {}", windPath);
+             }
+        }
+
+        // 3. Apply FINAL decision
+        hsd.prms.UseWindData = useEra5;
+        if (useEra5 && !finalEra5Path.empty()) {
+             hsd.waci.SetEra5Path(finalEra5Path);
+             spdlog::info("Preparer: ERA5 Wind Data FINALLY loaded from: {}", finalEra5Path);
         }
 
         // Generate flow field if specified in JSON
