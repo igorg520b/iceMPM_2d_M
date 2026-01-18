@@ -66,7 +66,7 @@ void HostSideData::FillModelledAreaWithBlueColor()
 
 // =============================  ALLOCATION FUNCTIONS
 
-void HostSideData::AllocateGridArrays()
+void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
 {
     // Allocate grid buffers (for both preparer and simulation)
     const int modeled_grid_total = prms.GridXTotal * prms.GridYTotal;
@@ -80,16 +80,19 @@ void HostSideData::AllocateGridArrays()
     original_image_colors_rgb.resize(3 * initial_image_total);
     allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
 
-    host_grid_buffer.resize(modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost);
-    allocated_bytes[0] += modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
+    if (allocate_dense_grid)
+    {
+        host_grid_buffer.resize(modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost);
+        allocated_bytes[0] += modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
 
-    tmp_halo_buffer.resize(prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost);
-    allocated_bytes[0] += prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
+        tmp_halo_buffer.resize(prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost);
+        allocated_bytes[0] += prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
+    }
 
     rgb.resize(3 * initial_image_total);
     allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
 
-    LOGR("AllocateGridArrays: Grid memory: {:.3f} GB", allocated_bytes[0] / 1e9);
+    LOGR("AllocateGridArrays: Grid memory: {:.3f} GB (dense grid: {})", allocated_bytes[0] / 1e9, allocate_dense_grid ? "yes" : "no");
 }
 
 void HostSideData::AllocatePointArrays()
@@ -196,8 +199,8 @@ void HostSideData::LoadGridDataFromFile(const std::string& gridFilePath)
                 prms.InitializationImageSizeY, prms.InitializationImageSizeX));
         }
 
-        // Allocate grid arrays
-        AllocateGridArrays();
+        // Allocate grid arrays (dense grid required here since we load data)
+        AllocateGridArrays(true);
 
         // Read landmask dataset
         ds_landmask.read(landmask_buffer.data(), H5::PredType::NATIVE_UINT8);
@@ -223,7 +226,11 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
                                        std::string fileNameIceMask, std::string fileNameCrushedMask,
                                        std::string fileNameCrackedMask,
                                        std::string projectDirectory, double dimensionHorizontal, int pointsPerCell,
-                                       double thicknessFrom, double thicknessTo, std::string fileNameThicknessMask)
+
+                                       double thicknessFrom, double thicknessTo,
+                                       double probCracked, double stdDevThickness,
+                                       std::string fileNameThicknessMask,
+                                       bool allocate_dense_grid)
 {
     LOGR("PrepareGridAndPoints: starting");
 
@@ -377,11 +384,11 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     std::vector<uint8_t> original_colors_copy = color_flipped;
 
     // Process grid using flipped images (this will modify color_flipped by painting water blue)
-    PrepareGrid(landmask_flipped, color_flipped, width, height, projectDirectory, dimensionHorizontal);
+    PrepareGrid(landmask_flipped, color_flipped, width, height, projectDirectory, dimensionHorizontal, allocate_dense_grid);
 
     // Process points using original colors (before blue painting)
     PopulatePoints(icemask_flipped, crushed_flipped, cracked_flipped, original_colors_copy, width, height, pointsPerCell,
-                   thicknessFrom, thicknessTo, thickness_flipped);
+                   thicknessFrom, thicknessTo, probCracked, stdDevThickness, thickness_flipped);
 
     LOGR("PrepareGridAndPoints: completed");
 }
@@ -389,7 +396,8 @@ void HostSideData::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
 // =============================  PREPARE GRID
 
 void HostSideData::PrepareGrid(const std::vector<uint8_t> &landmask, std::vector<uint8_t> &color,
-                               int imgWidth, int imgHeight, std::string projectDirectory, double dimensionHorizontal)
+                               int imgWidth, int imgHeight, std::string projectDirectory, double dimensionHorizontal,
+                               bool allocate_dense_grid)
 {
     LOGR("PrepareGrid: starting");
 
@@ -444,7 +452,7 @@ void HostSideData::PrepareGrid(const std::vector<uint8_t> &landmask, std::vector
     LOGR("Cell size: {}, DimensionHorizontal: {}", prms.cellsize, prms.DimensionHorizontal);
 
     // (3) Allocate grid arrays
-    AllocateGridArrays();
+    AllocateGridArrays(allocate_dense_grid);
 
     // (4) Build landmask_buffer (cropped region, column-major: idx = j + i*GridY)
     // Images are already flipped, so no additional Y-flip needed
@@ -649,7 +657,9 @@ void HostSideData::generate_and_save_poisson(int gx, int gy, float points_per_ce
 void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std::vector<uint8_t> &crushed,
                                   const std::vector<uint8_t> &cracked,
                                   const std::vector<uint8_t> &original_colors, int imgWidth, int imgHeight, int pointsPerCell,
-                                  double thicknessFrom, double thicknessTo, const std::vector<uint8_t> &thicknessMask)
+                                  double thicknessFrom, double thicknessTo,
+                                  double probCracked, double stdDevThickness,
+                                  const std::vector<uint8_t> &thicknessMask)
 {
     LOGR("PopulatePoints: starting");
     LOGR("  Ice thickness scaling: [{}, {}]", thicknessFrom, thicknessTo);
@@ -725,6 +735,11 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
     const int oy = prms.ModeledRegionOffsetY;
     const int width = prms.InitializationImageSizeX;
 
+    // Random number generation for thickness and cracking
+    std::mt19937 rng(12345); // Fixed seed for reproducibility or use std::random_device{}()
+    std::normal_distribution<float> thickness_dist(0.0f, (float)stdDevThickness);
+    std::bernoulli_distribution cracked_dist(probCracked);
+
     for (size_t k = 0; k < pt_buffer.size(); k++) {
         std::array<float, 2> &pt = pt_buffer[k];
         auto [i, j] = idxPt(pt);
@@ -786,6 +801,16 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
             thickness = (float)(thicknessFrom + thickness * (thicknessTo - thicknessFrom));
         }
 
+
+
+        // Apply thickness perturbation if StdDevOfThickness is non-zero
+        if (stdDevThickness > 0.0) {
+            float noise = thickness_dist(rng);
+            thickness += noise;
+            // Clamp to valid range [ThicknessFrom, ThicknessTo]
+            thickness = std::clamp(thickness, (float)thicknessFrom, (float)thicknessTo);
+        }
+
         p.setValue(SimParams::PtArrIdx::idx_thickness, thickness);
 
         // Pack RGB into utility_data (starting at bit 24)
@@ -809,14 +834,21 @@ void HostSideData::PopulatePoints(const std::vector<uint8_t> &icemask, const std
                 utility_data |= SimParams::status_cracked;
             }
         }
+
+        // Apply random cracking if ProportionOfCrackedPoints is non-zero
+        if (probCracked > 0.0) {
+            if (cracked_dist(rng)) {
+                utility_data |= SimParams::status_cracked;
+            }
+        }
         
         // Initialize partition index (bits 0-15) to 0 (will be set later)
         
         p.setValueUInt64(SimParams::PtArrIdx::idx_utility_data, utility_data);
 
         // Initialize other fields
-        p.setValue(SimParams::PtArrIdx::idx_P, 0.0);
-        p.setValue(SimParams::PtArrIdx::idx_Q, 0.0);
+        //p.setValue(SimParams::PtArrIdx::idx_P, 0.0);
+        //p.setValue(SimParams::PtArrIdx::idx_Q, 0.0);
         p.setValue(SimParams::PtArrIdx::idx_Jp_inv, 1.0);
 
         // Identity matrix for Fe

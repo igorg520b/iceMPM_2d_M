@@ -130,28 +130,20 @@ public:
          nGridForcingArrays = 8
     };
 
-    // index of the corresponding array in SoA
+    // storage of point data: index of the corresponding array in SoA
     enum PtArrIdx : size_t {
-        // --- Standard Model (Indices 0-19) ---
-        idx_utility_data = 0,
-        integer_cell_idx = 1,
-        
-        idx_P = 2,
-        idx_Q = 3,
-        idx_Jp_inv = 4,
-
-        posx = 5,
-        posy = 6,
-        
-        velx = 7,
-        vely = 8,
-
+        idx_utility_data = 0,   // flags such as cracked/crushed, also RGB color
+        integer_cell_idx = 1,   // integer (i,j) index of point's cell
+        posx = 2,               // [-0.5, 0.5] local coordinates within cell
+        posy = 3,
+        velx = 4,               // point's velocity
+        vely = 5,
+        idx_thickness = 6,      // local ice thickness
+        idx_Jp_inv = 7,         // volume change due to plastic deformation
+        idx_glen_flow = 8,
         Fe00 = 9,       // size 4: deformation gradient (9,10,11,12)
         Bp00 = 13,      // size 4: grad of v with respect to x,y (13,14,15,16)
-        
-        idx_thickness = 17,
-        idx_glen_flow = 18,
-        nPtsArrays = 19,
+        nPtsArrays = 17
     };
 
     // GPU and multi-GPU-related params

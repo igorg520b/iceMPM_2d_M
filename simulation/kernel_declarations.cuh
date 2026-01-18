@@ -106,8 +106,7 @@ __device__ void ComputeSVD(const Eigen::Matrix2d &Fe, Eigen::Matrix2d &U, Eigen:
 
 // Computes pressure (p) and second stress invariant (q) from deformation and material properties
 // Used for failure surface checks and visualization
-__device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
-                          const Eigen::Matrix2d &F, const double &Jp_inv);
+__device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr, const Eigen::Matrix2d &F);
 
 // Wolper-Drucker-Prager constitutive model: updates Fe and Jp_inv based on stress state
 // Implements elastic and plastic deformation for ice material
@@ -156,6 +155,9 @@ __device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d
 
 // Retrieves wind vector at given position and time from interpolated wind field data
 __device__ Eigen::Vector2d get_wind_vector(float lat, float lon, float tb);
+
+// obtain point's (i,j) cell index from raw double value (stored in points buffer)
+__device__ Eigen::Vector2i getIntegerCellIndex(double raw_value);
 
 __device__ void ComputeStressResultants(
     // Inputs

@@ -163,16 +163,16 @@ bool ProxyPoint::getFractureCrush()
 
 int ProxyPoint::getCellIndex(int GridY)
 {
-    uint32_t cell = getValueInt(SimParams::PtArrIdx::integer_cell_idx);
-    uint32_t x_idx = cell & 0xffff;
-    uint32_t y_idx = (cell >> 16);
+    uint64_t cell = getValueUInt64(SimParams::PtArrIdx::integer_cell_idx);
+    uint64_t x_idx = cell & 0xffffffff;
+    uint64_t y_idx = (cell >> 32);
     return x_idx*GridY + y_idx;
 }
 
 unsigned ProxyPoint::getCellX()
 {
-    uint32_t cell = getValueInt(SimParams::PtArrIdx::integer_cell_idx);
-    uint32_t x_idx = cell & 0xffff;
+    uint64_t cell = getValueUInt64(SimParams::PtArrIdx::integer_cell_idx);
+    uint64_t x_idx = cell & 0xffffffff;
     return (unsigned) x_idx;
 }
 
@@ -182,10 +182,10 @@ void ProxyPoint::ConvertToIntegerCellFormat(double h)
     const double hinv = 1.0f/h;
     double x = getValue(SimParams::PtArrIdx::posx);
     double y = getValue(SimParams::PtArrIdx::posx+1);
-    uint32_t x_idx = (uint32_t)(x*hinv + 0.5);
-    uint32_t y_idx = (uint32_t)(y*hinv + 0.5);
-    uint32_t cell = (y_idx << 16) | x_idx;
-    setValueInt(SimParams::PtArrIdx::integer_cell_idx, cell);
+    uint64_t x_idx = (uint64_t)(x*hinv + 0.5);
+    uint64_t y_idx = (uint64_t)(y*hinv + 0.5);
+    uint64_t cell = (y_idx << 32) | x_idx;
+    setValueUInt64(SimParams::PtArrIdx::integer_cell_idx, cell);
 
     x = x*hinv - (double)x_idx;
     y = y*hinv - (double)y_idx;
@@ -195,9 +195,9 @@ void ProxyPoint::ConvertToIntegerCellFormat(double h)
 
 Eigen::Vector2d ProxyPoint::getPos(double cellsize)
 {
-    uint32_t cell = getValueInt(SimParams::PtArrIdx::integer_cell_idx);
-    uint32_t x_idx = cell & 0xffff;
-    uint32_t y_idx = (cell >> 16);
+    uint64_t cell = getValueUInt64(SimParams::PtArrIdx::integer_cell_idx);
+    uint64_t x_idx = cell & 0xffffffff;
+    uint64_t y_idx = (cell >> 32);
     Eigen::Vector2d cell_pos(x_idx, y_idx);
     return (getPos() + cell_pos) * cellsize;
 }

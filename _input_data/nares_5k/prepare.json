@@ -2,13 +2,15 @@
 "ProjectName":"nares_5k",
 
 "ImageColor":"color_5k.png",
-"ImageIceMask":"ice_optimized_5k.png",
+"ImageIceMask":"ice_5k.png",
 "ImageLandMask":"land_5k.png",
 "ImageThicknessMask":"thickness_5k.png",
 "ImageCrackedMask":"cracked_5k.png",
 
 "ThicknessFrom":0.8,
 "ThicknessTo":3.0,
+"ProportionOfCrackedPoints":0.1,
+"StdDevOfThickness":0.2,
 
 "PointsPerCell":5,
 "DimensionHorizontal":998752,

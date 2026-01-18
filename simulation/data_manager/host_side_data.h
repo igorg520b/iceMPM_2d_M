@@ -48,7 +48,7 @@ public:
     // Memory tracking: [0]=grid bytes, [1]=points bytes
     size_t allocated_bytes[2] = {0, 0};
 
-    void AllocateGridArrays();
+    void AllocateGridArrays(bool allocate_dense_grid = true);
     void AllocatePointArrays();
 
     void LoadGridDataFromFile(const std::string& gridFilePath);
@@ -57,8 +57,10 @@ public:
                               std::string fileNameIceMask, std::string fileNameCrushedMask,
                               std::string fileNameCrackedMask,
                               std::string projectDirectory, double dimensionHorizontal, int pointsPerCell,
-                              double thicknessFrom = 1.0, double thicknessTo = 1.0,
-                              std::string fileNameThicknessMask = "");
+                              double thicknessFrom, double thicknessTo,
+                              double probCracked, double stdDevThickness,
+                              std::string fileNameThicknessMask,
+                              bool allocate_dense_grid);
 
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "");
@@ -83,12 +85,14 @@ private:
 
     // Preparation helper methods (internal use only)
     void PrepareGrid(const std::vector<uint8_t> &landmask, std::vector<uint8_t> &color,
-                     int imgWidth, int imgHeight, std::string projectDirectory, double dimensionHorizontal);
+                     int imgWidth, int imgHeight, std::string projectDirectory, double dimensionHorizontal,
+                     bool allocate_dense_grid);
     void PopulatePoints(const std::vector<uint8_t> &icemask, const std::vector<uint8_t> &crushed,
                         const std::vector<uint8_t> &cracked,
                         const std::vector<uint8_t> &original_colors, int imgWidth, int imgHeight, int pointsPerCell,
-                        double thicknessFrom = 1.0, double thicknessTo = 1.0,
-                        const std::vector<uint8_t> &thicknessMask = {});
+                        double thicknessFrom, double thicknessTo,
+                        double probCracked, double stdDevThickness,
+                        const std::vector<uint8_t> &thicknessMask);
 
     // Poisson point generation helpers
     static std::string prepare_cache_filename(int gx, int gy, int ppc);

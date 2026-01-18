@@ -2,17 +2,18 @@
 "ProjectName":"nares_strait_8k",
 
 "ImageColor":"color_8k.png",
-"ImageIceMask":"ice_optimized_8k.png",
+"ImageIceMask":"ice_8k.png",
 "ImageLandMask":"land_8k.png",
 "ImageThicknessMask":"thickness_8k.png",
 "ImageCrackedMask":"cracked_8k.png",
-
+    
 "ThicknessFrom":0.8,
 "ThicknessTo":3.0,
+"ProportionOfCrackedPoints":0.1,
+"StdDevOfThickness":0.2,
 
 "PointsPerCell":5,
 "DimensionHorizontal":998752,
 
-"WindData":"data.nc",
 "TimeScale":1119600
 }

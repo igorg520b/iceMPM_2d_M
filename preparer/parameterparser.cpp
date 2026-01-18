@@ -50,6 +50,9 @@ void ParameterParser::LoadParamsFile(std::string fileName)
     if(doc.HasMember("ThicknessFrom")) ThicknessFrom = doc["ThicknessFrom"].GetDouble();
     if(doc.HasMember("ThicknessTo")) ThicknessTo = doc["ThicknessTo"].GetDouble();
 
+    if(doc.HasMember("ProportionOfCrackedPoints")) ProportionOfCrackedPoints = doc["ProportionOfCrackedPoints"].GetDouble();
+    if(doc.HasMember("StdDevOfThickness")) StdDevOfThickness = doc["StdDevOfThickness"].GetDouble();
+
     // Flow field parameters
     if(doc.HasMember("FlowType")) FlowType = doc["FlowType"].GetString();
     if(doc.HasMember("TimeScale")) TimeScale = doc["TimeScale"].GetDouble();

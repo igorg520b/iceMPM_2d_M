@@ -1,17 +1,19 @@
 {
-"ProjectName":"nares_strait_with_wind_v1",
+"ProjectName":"nares_2k_full",
 
 "ImageColor":"color_2k.png",
-"ImageIceMask":"ice_optimized_2k.png",
+"ImageIceMask":"ice_2k.png",
 "ImageLandMask":"land_2k.png",
 "ImageThicknessMask":"thickness_2k.png",
 "ImageCrackedMask":"cracked_2k.png",
 
 "ThicknessFrom":0.8,
 "ThicknessTo":3.0,
+"ProportionOfCrackedPoints":0.1,
+"StdDevOfThickness":0.2,
 
 "PointsPerCell":5,
-"DimensionHorizontal":1269660,
+"DimensionHorizontal":998752,
 
 "WindData":"data.nc",
 "TimeScale":1119600

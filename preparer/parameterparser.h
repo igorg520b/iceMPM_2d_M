@@ -21,6 +21,10 @@ struct ParameterParser
     double DimensionHorizontal = 0.0;
     double ThicknessFrom = 1.0;  // default: no scaling
     double ThicknessTo = 1.0;    // default: no scaling
+    
+    // Random perturbation parameters
+    double ProportionOfCrackedPoints = 0.0;
+    double StdDevOfThickness = 0.0;
 
     // Flow field parameters
     std::string FlowType = "";              // "constant", "wave", "Kelvin_wake", "FLUENT-static" (empty = no flow)

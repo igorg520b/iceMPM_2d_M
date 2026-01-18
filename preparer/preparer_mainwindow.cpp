@@ -201,9 +201,13 @@ void MainWindow::LoadParameterFile(QString fileName)
         std::string projectDir = params.ProjectDirectory;
 
         // Unified grid and points preparation (loads images once, flips them, then processes)
+        // Note: allocate_dense_grid = false to save memory (preparer doesn't need simulation grid state)
         hsd.PrepareGridAndPoints(landmaskPath, colorPath, icemaskPath, crushedmaskPath, crackedmaskPath,
                                  projectDir, params.DimensionHorizontal, params.PointsPerCell,
-                                 params.ThicknessFrom, params.ThicknessTo, thicknessmaskPath);
+                                 params.ThicknessFrom, params.ThicknessTo,
+                                 params.ProportionOfCrackedPoints, params.StdDevOfThickness,
+                                 thicknessmaskPath,
+                                 false);
 
         spdlog::info("Preparer: Grid and Points prepared successfully");
 

@@ -54,19 +54,13 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
     Eigen::Matrix2d Cp, Fe, PFt;
     Eigen::Matrix2d stress_contribution = Eigen::Matrix2d::Zero();
 
-    double Jp_inv;
-
     const double thickness = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_thickness];
     const double particle_mass = gprms.ParticleMass * thickness;
 
     for(int i=0; i<SimParams::dim; i++)
     {
-        pos[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::posx+i)];
-    }
-
-    for(int i=0; i<SimParams::dim; i++)
-    {
         velocity[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::velx+i)];
+        pos[i] = bpts[pt_idx + pitch*(SimParams::PtArrIdx::posx+i)];
 
         for(int j=0; j<SimParams::dim; j++)
         {
@@ -74,19 +68,14 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
             Cp(i,j) = bpts[pt_idx + pitch*(SimParams::PtArrIdx::Bp00 + i*SimParams::dim + j)];
         }
     }
-    Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
+    double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
 
     // PFt is 1st Piola-Kirchhoff Stress times F-transposed
     PFt = KirchhoffStress_Wolper(Fe,Jp_inv);
     stress_contribution = -(gprms.dt_vol_Dpinv*Jp_inv*thickness)*PFt;
     stress_contribution += Cp*particle_mass;    // this is part of the linear term from the velocity approximateion
 
-
-
-
-    const double cell_double = bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx];
-    const long long cell = __double_as_longlong(cell_double);
-    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
+    Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx]);
 
     Eigen::Array2d ww[3];
     CalculateWeightCoeffs(pos, ww);
@@ -254,24 +243,18 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     Eigen::Matrix2d p_Bp; p_Bp.setZero();
 
     // pull point data from SOA
-    for(int i=0; i<SimParams::dim; i++)
-    {
-        pos[i] = bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::posx+i)];
-    }
     const double initial_thickness = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_thickness];
-
     double Jp_inv = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Jp_inv];
     for(int i=0; i<SimParams::dim; i++)
     {
+        pos[i] = bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::posx+i)];
         for(int j=0; j<SimParams::dim; j++)
         {
             Fe(i,j) = bpts[pt_idx + pitch_pts*(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j)];
         }
     }
 
-    const double cell_double = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx];
-    long long cell = __double_as_longlong(cell_double);
-    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
+    Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
 
     // optimized method of computing the quadratic weight function without conditional operators
     Eigen::Array2d ww[3];
@@ -326,7 +309,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     Fe = (Eigen::Matrix2d::Identity() + dt*p_Bp) * Fe;     // Bp plays the role of the gradient of the velocity vector
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
-    ComputePQ(Je_tr, p_tr, q_tr, Fe, Jp_inv);    // computes P, Q, J
+    ComputePQ(Je_tr, p_tr, q_tr, Fe);    // computes P, Q
 
     if(!(utility_data & SimParams::status_crushed))
     {
@@ -351,8 +334,6 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         Wolper_Drucker_Prager(utility_data, initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
     }
 
-
-
     // distribute the values of p back into GPU memory
     if(perform_glen_step) bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_glen_flow] += glen_flow_change;
 
@@ -371,16 +352,16 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     if(cell_updated)
     {
-        cell = ((long long)cell_i[1] << 16) | (long long)cell_i[0];
+        long long cell = ((long long)cell_i[1] << 32) | (long long)cell_i[0];
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx] = __longlong_as_double(cell);
     }
 
     // upon request, PQ are recorded for visualization
-    if(recordPQ)
-    {
-        bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_P] = p_tr;
-        bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Q] = q_tr;
-    }
+//    if(recordPQ)
+//    {
+//        bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_P] = p_tr;
+//        bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_Q] = q_tr;
+//    }
 
     // save crushed/disabled status (preserves upper 32 bits with color info)
     if(utility_data != utility_original)
@@ -456,8 +437,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
     Eigen::Array2d ww[3];
     CalculateWeightCoeffs(pos, ww);
 
-    const uint32_t cell = *reinterpret_cast<const uint32_t*>(&bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx]);
-    Eigen::Vector2i cell_i((int)(cell & 0xffff), (int)(cell >> 16));
+    Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch*SimParams::PtArrIdx::integer_cell_idx]);
 
     const double thickness = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_thickness];
     const double particle_mass = gprms.ParticleMass * thickness;
@@ -514,8 +494,16 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
     {
         // P and Q are scalars (pressure and deviatoric stress measure)
         const double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
-        const double P = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_P];
-        const double Q = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Q];
+
+        double Je_tr, p_tr, q_tr;
+        Eigen::Matrix2d Fe;
+        for(int i=0; i<SimParams::dim; i++)
+            for(int j=0; j<SimParams::dim; j++)
+                Fe(i,j) = bpts[pt_idx + pitch*(SimParams::PtArrIdx::Fe00 + i*SimParams::dim + j)];
+        ComputePQ(Je_tr, p_tr, q_tr, Fe);    // computes P, Q
+
+        const double P = p_tr; //bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_P];
+        const double Q = q_tr; //bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Q];
 
         for (int i = -1; i <= 1; i++)
             for (int j = -1; j <= 1; j++)
@@ -669,10 +657,8 @@ __global__ void partition_kernel_check_if_transfer_needed(const PartitionParams 
     const unsigned long long utility_data = __double_as_longlong(utility_double_pt);
     if(utility_data & SimParams::status_disabled) return; // point is disabled
 
-    const double cell_double = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx];
-    const uint32_t cell = (uint32_t)__double_as_longlong(cell_double);
-
-    const int cx = (int)(cell & 0xffff) - (int)gridX_offset; // x-index of the cell of the point
+    Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
+    const int cx = cell_i.x() - (int)gridX_offset; // x-index of the cell of the point
 
     if(cx < ( -threshold))
     {
@@ -703,10 +689,8 @@ __global__ void partition_kernel_point_transfer(const PartitionParams pparams)
     unsigned long long utility_data = __double_as_longlong(utility_double_g2p);
     if(utility_data & SimParams::status_disabled) return; // point is disabled
 
-    const double cell_double = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx];
-    const long long cell = __double_as_longlong(cell_double);
-
-    const int cx = (int)(cell & 0xffff) - (int)gridX_offset; // x-index of the cell in the current partition
+    Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
+    const int cx = cell_i.x() - (int)gridX_offset; // x-index of the cell in the current partition
     int transfer_threshold = 0;
 
     auto transferPoint = [&](int bufferIndex, unsigned int* counter) {
@@ -771,7 +755,7 @@ __device__ void CalculateWeightCoeffs(const Eigen::Vector2d &pos, Eigen::Array2d
 
 
 __device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
-    const Eigen::Matrix2d &F, const double &Jp_inv)
+    const Eigen::Matrix2d &F)
 {
     const double kappa = gprms.kappa;
     const double &mu = gprms.mu;
@@ -1010,3 +994,9 @@ __device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F, cons
 // ============================================================================
 
 
+__device__ Eigen::Vector2i getIntegerCellIndex(double raw_value)
+{
+    const long long cell = __double_as_longlong(raw_value);
+    Eigen::Vector2i cell_i((int)(cell & 0xffffffff), (int)(cell >> 32));
+    return cell_i;
+}
