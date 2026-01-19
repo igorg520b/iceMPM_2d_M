@@ -44,23 +44,34 @@ HostSideData::HostSideData() : waci(prms)
 
 void HostSideData::FillModelledAreaWithBlueColor()
 {
-    const int &width = prms.InitializationImageSizeX;
-    const int &height = prms.InitializationImageSizeY;
-    const int &ox = prms.ModeledRegionOffsetX;
-    const int &oy = prms.ModeledRegionOffsetY;
-    const int &gx = prms.GridXTotal;
-    const int &gy = prms.GridYTotal;
+    const int &width_ref = prms.InitializationImageSizeX;
+    const int &height_ref = prms.InitializationImageSizeY;
+    const int &ox_ref = prms.ModeledRegionOffsetX;
+    const int &oy_ref = prms.ModeledRegionOffsetY;
+    const int &gx_ref = prms.GridXTotal;
+    const int &gy_ref = prms.GridYTotal;
 
-    for(int i = 0; i < gx; i++)
-        for(int j = 0; j < gy; j++)
+    const size_t width = (size_t)width_ref;
+    // const size_t height = (size_t)height_ref;
+    const size_t ox = (size_t)ox_ref;
+    const size_t oy = (size_t)oy_ref;
+    const size_t gx = (size_t)gx_ref;
+    const size_t gy = (size_t)gy_ref;
+
+    for(size_t i = 0; i < gx; i++)
+    {
+        for(size_t j = 0; j < gy; j++)
         {
             uint8_t status = landmask_buffer[j + i*gy];
             if(status == SimParams::ModelledAreaIndicator)
             {
-                for(int k = 0; k < 3; k++)
-                    original_image_colors_rgb[((i+ox)+(j+oy)*width)*3+k] = ColorMap::rgb_water[k];
+                for(int k = 0; k < 3; k++) {
+                    size_t idx = ((i+ox) + (j+oy)*width)*3 + k;
+                    original_image_colors_rgb[idx] = ColorMap::rgb_water[k];
+                }
             }
         }
+    }
 }
 
 
@@ -69,8 +80,8 @@ void HostSideData::FillModelledAreaWithBlueColor()
 void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
 {
     // Allocate grid buffers (for both preparer and simulation)
-    const int modeled_grid_total = prms.GridXTotal * prms.GridYTotal;
-    const int initial_image_total = prms.InitializationImageSizeX * prms.InitializationImageSizeY;
+    const size_t modeled_grid_total = (size_t)prms.GridXTotal * prms.GridYTotal;
+    const size_t initial_image_total = (size_t)prms.InitializationImageSizeX * prms.InitializationImageSizeY;
 
     allocated_bytes[0] = 0;  // Reset grid allocation counter
 
@@ -85,8 +96,8 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
         host_grid_buffer.resize(modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost);
         allocated_bytes[0] += modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
 
-        tmp_halo_buffer.resize(prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost);
-        allocated_bytes[0] += prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
+        tmp_halo_buffer.resize((size_t)prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost);
+        allocated_bytes[0] += (size_t)prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
 
         // 'rgb' buffer is used for saving frames (simulation) but not needed for preparer
         rgb.resize(3 * initial_image_total);
@@ -292,7 +303,7 @@ void HostSideData::PrepareRGB_Buffer()
 {
     const int &gx = prms.GridXTotal;
     const int &gy = prms.GridYTotal;
-    const int gridSize = gx*gy;
+    const size_t gridSize = (size_t)gx*gy;
     rgb.resize(gridSize*3);
 
 #pragma omp parallel for
@@ -613,107 +624,3 @@ void HostSideData::LoadFrameData(const std::string& framePath)
     }
 }
 
-
-void HostSideData::LoadParametersFromConfigFile(const std::string& parameterFile,
-                                                 const std::string& mapFile,
-                                                 const std::string& pngImageFile)
-{
-    LOGR("LoadParametersFromConfigFile: {}", parameterFile);
-    LOGR("  Parameter file: {}", parameterFile);
-    LOGR("  Map file: {}", mapFile);
-    LOGR("  PNG file: {}", pngImageFile.empty() ? "(not provided)" : pngImageFile);
-
-    namespace fs = std::filesystem;
-
-    // Verify map file exists
-    if (!fs::exists(mapFile)) {
-        LOGR("ERROR: Map file does not exist: {}", mapFile);
-        throw std::runtime_error(fmt::format("Map file not found: {}", mapFile));
-    }
-
-    // 1. Load Grid Parameters from HDF5 Map File
-    std::vector<int> path_indices;
-    {
-        LOGR("Loading grid metadata from map file: {}", mapFile);
-        H5::H5File file(mapFile, H5F_ACC_RDONLY);
-        H5::DataSet ds_path_indices = file.openDataSet("path_indices");
-
-        ds_path_indices.openAttribute("width").read(H5::PredType::NATIVE_INT, &prms.InitializationImageSizeX);
-        ds_path_indices.openAttribute("height").read(H5::PredType::NATIVE_INT, &prms.InitializationImageSizeY);
-        ds_path_indices.openAttribute("ModeledRegionOffsetX").read(H5::PredType::NATIVE_INT, &prms.ModeledRegionOffsetX);
-        ds_path_indices.openAttribute("ModeledRegionOffsetY").read(H5::PredType::NATIVE_INT, &prms.ModeledRegionOffsetY);
-        ds_path_indices.openAttribute("GridXTotal").read(H5::PredType::NATIVE_INT, &prms.GridXTotal);
-        ds_path_indices.openAttribute("GridYTotal").read(H5::PredType::NATIVE_INT, &prms.GridYTotal);
-
-        prms.cellsize = prms.DimensionHorizontal / (prms.InitializationImageSizeX - 1);
-        prms.cellsize_inv = 1.0 / prms.cellsize;
-
-        path_indices.resize(prms.InitializationImageSizeX * prms.InitializationImageSizeY);
-        ds_path_indices.read(path_indices.data(), H5::PredType::NATIVE_INT);
-    } // file closed automatically
-
-    // 2. Load PNG Image (optional - only if provided)
-    if (!pngImageFile.empty()) {
-        if (!fs::exists(pngImageFile)) {
-            LOGR("ERROR: PNG file does not exist: {}", pngImageFile);
-            throw std::runtime_error(fmt::format("PNG file not found: {}", pngImageFile));
-        }
-
-        LOGR("Loading PNG background image: {}", pngImageFile);
-        int channels, imgx, imgy;
-        unsigned char* png_data = stbi_load(pngImageFile.c_str(), &imgx, &imgy, &channels, 3);
-        if (!png_data || channels != 3 || imgx != prms.InitializationImageSizeX || imgy != prms.InitializationImageSizeY) {
-            LOGR("Fatal Error: PNG file '{}' could not be loaded or has incorrect dimensions.", pngImageFile);
-            throw std::runtime_error("Failed to load PNG image for background.");
-        }
-
-        // 3. Populate original_image_colors_rgb
-        original_image_colors_rgb.resize(prms.InitializationImageSizeX * prms.InitializationImageSizeY * 3);
-        auto idxInPng = [&](int i, int j) -> int {
-            return 3 * ((prms.InitializationImageSizeY - j - 1) * prms.InitializationImageSizeX + i);
-        };
-
-        for (int j = 0; j < prms.InitializationImageSizeY; j++) {
-            for (int i = 0; i < prms.InitializationImageSizeX; i++) {
-                for (int k = 0; k < 3; k++) {
-                    original_image_colors_rgb[((j * prms.InitializationImageSizeX) + i) * 3 + k] =
-                        png_data[idxInPng(i, j) + k];
-                }
-            }
-        }
-        stbi_image_free(png_data);
-    } else {
-        LOGR("PNG file not provided - skipping background image loading (post-processor mode)");
-    }
-
-    // 4. Allocate host_grid_buffer
-    const int gx = prms.GridXTotal;
-    const int gy = prms.GridYTotal;
-    const size_t gridSize = (size_t)gx * gy;
-    host_grid_buffer.assign(gridSize * SimParams::HostGridArrayIndex::nGridArraysHost, 0.0);
-
-    // 5. Generate grid_status_buffer (landmask_buffer for post-processor)
-    landmask_buffer.resize((size_t)gx * gy);
-
-    auto transformPathIdx = [](const int& idx) -> uint8_t {
-        if (idx < 1000) return (uint8_t)(idx + 1);
-        else if (idx == 1000) return (uint8_t)(100); // 1000 -> 100 (modeled area)
-        else return (uint8_t)(idx - 1000 + 1);
-    };
-
-    const int ox = prms.ModeledRegionOffsetX;
-    const int oy = prms.ModeledRegionOffsetY;
-
-    for (int i = 0; i < gx; i++) {
-        for (int j = 0; j < gy; j++) {
-            // Index in the full-size image/path_indices map (row-major)
-            size_t image_map_idx = (size_t)(i + ox) + (size_t)(j + oy) * prms.InitializationImageSizeX;
-            // Index in the grid-sized status buffer (column-major)
-            size_t grid_buffer_idx = (size_t)j + (size_t)i * gy;
-
-            landmask_buffer[grid_buffer_idx] = transformPathIdx(path_indices[image_map_idx]);
-        }
-    }
-
-    LOGR("LoadParametersFromConfigFile: Done");
-}

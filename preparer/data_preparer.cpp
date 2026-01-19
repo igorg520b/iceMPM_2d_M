@@ -10,8 +10,118 @@
 #include <fmt/std.h>
 
 // Helper includes
-#include "stb_image.h"
-#include "stb_image_write.h"
+#include <png.h>
+
+
+// Static helper for PNG loading
+bool DataPreparer::LoadPng(const std::string& filename, int& w, int& h, int& channels, std::vector<uint8_t>& data)
+{
+    FILE* fp = fopen(filename.c_str(), "rb");
+    if (!fp) {
+        LOGR("LoadPng: Failed to open file {}", filename);
+        return false;
+    }
+
+    // verify signature
+    png_byte header[8];
+    if (fread(header, 1, 8, fp) != 8) {
+        LOGR("LoadPng: Failed to read signature from {}", filename);
+        fclose(fp);
+        return false;
+    }
+    if (png_sig_cmp(header, 0, 8)) {
+        LOGR("LoadPng: File {} is not a PNG", filename);
+        fclose(fp);
+        return false;
+    }
+
+    png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png_ptr) {
+        LOGR("LoadPng: png_create_read_struct failed");
+        fclose(fp);
+        return false;
+    }
+
+    png_infop info_ptr = png_create_info_struct(png_ptr);
+    if (!info_ptr) {
+        LOGR("LoadPng: png_create_info_struct failed");
+        png_destroy_read_struct(&png_ptr, (png_infopp)NULL, (png_infopp)NULL);
+        fclose(fp);
+        return false;
+    }
+
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        LOGR("LoadPng: Error during init_io");
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        fclose(fp);
+        return false;
+    }
+
+    png_init_io(png_ptr, fp);
+    png_set_sig_bytes(png_ptr, 8);
+
+    png_read_info(png_ptr, info_ptr);
+
+    w = png_get_image_width(png_ptr, info_ptr);
+    h = png_get_image_height(png_ptr, info_ptr);
+    auto color_type = png_get_color_type(png_ptr, info_ptr);
+    auto bit_depth = png_get_bit_depth(png_ptr, info_ptr);
+
+    // Standardize to RGBA 8-bit
+    if (bit_depth == 16)
+        png_set_strip_16(png_ptr);
+
+    if (color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_palette_to_rgb(png_ptr);
+
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+        png_set_expand_gray_1_2_4_to_8(png_ptr);
+
+    if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS))
+        png_set_tRNS_to_alpha(png_ptr);
+
+    // Expand gray to RGB
+    if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png_ptr);
+
+    // Add alpha if missing
+    if (!(color_type & PNG_COLOR_MASK_ALPHA))
+         png_set_add_alpha(png_ptr, 0xff, PNG_FILLER_AFTER);
+
+    png_read_update_info(png_ptr, info_ptr);
+
+    // We effectively forced it to RGBA 8-bit, so channels = 4
+    channels = 4;
+    size_t row_bytes = png_get_rowbytes(png_ptr, info_ptr);
+    
+    // row_bytes should be w * 4
+    if (row_bytes != w * 4) {
+        LOGR("LoadPng: Unexpected row_bytes {} for width {}", row_bytes, w);
+    }
+    
+    data.resize((size_t)h * row_bytes);
+
+    std::vector<png_bytep> row_pointers(h);
+    for (int y = 0; y < h; y++) {
+        row_pointers[y] = &data[y * row_bytes];
+    }
+
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        LOGR("LoadPng: Error during read_image");
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        fclose(fp);
+        return false;
+    }
+
+    png_read_image(png_ptr, row_pointers.data());
+
+    png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+    fclose(fp);
+    return true;
+}
+
+
+
 
 namespace fs = std::filesystem;
 
@@ -130,61 +240,41 @@ void DataPreparer::generate_and_save_poisson(int gx, int gy, float points_per_ce
     }
 }
 
-// Helper to flip an image vertically in place
-static void FlipImageVertically(std::vector<uint8_t>& data, int width, int height, int channels)
-{
-    int row_size = width * channels;
-    std::vector<uint8_t> temp_row(row_size);
-    for (int y = 0; y < height / 2; ++y) {
-        int top_idx = y * row_size;
-        int bottom_idx = (height - 1 - y) * row_size;
-        
-        std::memcpy(temp_row.data(), &data[top_idx], row_size);
-        std::memcpy(&data[top_idx], &data[bottom_idx], row_size);
-        std::memcpy(&data[bottom_idx], temp_row.data(), row_size);
-    }
-}
+
 
 bool DataPreparer::ProcessMaskLayer(const std::string& filename, uint8_t flag, bool invert, int threshold)
 {
     if (filename.empty()) return false;
 
     int w, h, c;
-    unsigned char* raw = stbi_load(filename.c_str(), &w, &h, &c, 1);
-    if (!raw) {
+    std::vector<uint8_t> raw;
+    if (!LoadPng(filename, w, h, c, raw)) {
         throw std::runtime_error("Failed to load mask: " + filename);
     }
 
     if (w != m_width || h != m_height) {
-        stbi_image_free(raw);
         throw std::runtime_error(fmt::format("Dimension mismatch for {}: expected {}x{}, got {}x{}", 
                                              filename, m_width, m_height, w, h));
     }
 
-    // Apply to bitmask (handling vertical flip implicitly by reading bottom-up or flipping first)
-    // Let's flip the raw buffer first to match our coordinate system (bottom-left origin)
-    // Actually, `FlipImageVertically` is easy to write.
-    // Or we can just iterate appropriately. Let's iterate.
-    // Our m_flags is flat [width * height]. 
-    // Image is top-left origin. m_flags matches simulation (bottom-left origin).
-    
+    // raw is RGBA (4 bytes per pixel)
     for (int y = 0; y < h; ++y) {
-        int src_y = h - 1 - y; // Flip Y
+        // LoadPng returns top-left origin, same as stbi.
+        // We flip Y to match simulation coordinates (bottom-left origin).
+        int src_y = h - 1 - y; 
         for (int x = 0; x < w; ++x) {
-            uint8_t val = raw[src_y * w + x];
+            size_t idx = ((size_t)src_y * w + x) * 4;
+            // Use Red channel (index 0) as the value
+            uint8_t val = raw[idx];
             bool condition = (val < threshold); // Default: black (<128) matches condition
             if (invert) condition = !condition;
 
             if (condition) {
-                m_flags[y * w + x] |= flag;
-            } else {
-                // Ensure specific flag is CLEARED if it was set (though we usually start with 0)
-                // m_flags[y * w + x] &= ~flag; 
+                m_flags[(size_t)y * w + x] |= flag;
             }
         }
     }
 
-    stbi_image_free(raw);
     LOGR("Loaded mask {} -> flag {}", filename, flag);
     return true;
 }
@@ -203,21 +293,35 @@ void DataPreparer::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     hsd.data_directory = projectDirectory;
 
     // 1. Load Color Image (Master Dimensions)
+    // 1. Load Color Image (Master Dimensions)
     int c;
-    unsigned char* color_raw = stbi_load(fileNameColor.c_str(), &m_width, &m_height, &c, 3);
-    if (!color_raw) {
+    std::vector<uint8_t> color_raw;
+    if (!LoadPng(fileNameColor, m_width, m_height, c, color_raw)) {
         throw std::runtime_error("Failed to load ImageColor: " + fileNameColor);
     }
     
-    // Store in m_color and flip vertically
-    m_color.assign(color_raw, color_raw + m_width * m_height * 3);
-    stbi_image_free(color_raw);
-    FlipImageVertically(m_color, m_width, m_height, 3);
+    // Store in m_color (RGB) and flip vertically
+    m_color.resize((size_t)m_width * m_height * 3);
+    
+    for (int y = 0; y < m_height; ++y) {
+        int src_y = m_height - 1 - y; // Flip Y
+        for (int x = 0; x < m_width; ++x) {
+            size_t src_idx = ((size_t)src_y * m_width + x) * 4; // RGBA
+            size_t dst_idx = ((size_t)y * m_width + x) * 3;     // RGB
+            m_color[dst_idx + 0] = color_raw[src_idx + 0];
+            m_color[dst_idx + 1] = color_raw[src_idx + 1];
+            m_color[dst_idx + 2] = color_raw[src_idx + 2];
+        }
+    }
+    
+    // Clear raw buffer
+    color_raw.clear(); color_raw.shrink_to_fit();
+
     LOGR("[MEMORY] DataPreparer: m_color allocated: {:.3f} MB", (double)m_color.size() * sizeof(uint8_t) / 1.0e6);
 
     // Initialize buffers
-    m_flags.assign(m_width * m_height, 0); // All zero initially
-    m_thickness.resize(m_width * m_height);
+    m_flags.assign((size_t)m_width * m_height, 0); // All zero initially
+    m_thickness.resize((size_t)m_width * m_height);
     LOGR("[MEMORY] DataPreparer: m_flags allocated: {:.3f} MB", (double)m_flags.size() * sizeof(uint8_t) / 1.0e6);
     LOGR("[MEMORY] DataPreparer: m_thickness allocated: {:.3f} MB", (double)m_thickness.size() * sizeof(uint8_t) / 1.0e6);
 
@@ -254,19 +358,21 @@ void DataPreparer::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     // 3. Load Thickness Mask (Grayscale) or Generate
     if (!fileNameThicknessMask.empty()) {
          int tw, th, tc;
-         unsigned char* traw = stbi_load(fileNameThicknessMask.c_str(), &tw, &th, &tc, 1);
-         if (!traw) throw std::runtime_error("Failed to load ThicknessMask");
+         std::vector<uint8_t> traw;
+         if (!LoadPng(fileNameThicknessMask, tw, th, tc, traw)) 
+              throw std::runtime_error("Failed to load ThicknessMask");
+         
          if (tw != m_width || th != m_height) {
-             stbi_image_free(traw);
              throw std::runtime_error("ThicknessMask dimension mismatch");
          }
          
-         // Flip and store
+         // Flip and store (traw is RGBA)
          for(int y=0; y<th; ++y) {
              int src_y = th - 1 - y;
-             std::memcpy(&m_thickness[y*tw], &traw[src_y*tw], tw);
+             for (int x=0; x<tw; ++x) {
+                  m_thickness[(size_t)y*tw + x] = traw[(src_y*(size_t)tw + x)*4]; // Red channel
+             }
          }
-         stbi_image_free(traw);
     } else {
         // Generate random thickness
         std::mt19937 gen(1337);
@@ -305,7 +411,7 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     bool found_water = false;
     for (int j = 0; j < m_height; j++) {
         for (int i = 0; i < m_width; i++) {
-            if (m_flags[j * m_width + i] & FLAG_WATER) {
+            if (m_flags[(size_t)j * m_width + i] & FLAG_WATER) {
                 xmin = std::min(xmin, i);
                 xmax = std::max(xmax, i);
                 ymin = std::min(ymin, j);
@@ -341,12 +447,13 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     hsd.AllocateGridArrays(allocate_dense_grid);
 
     // (4) Build landmask_buffer
+    LOGR("PrepareGrid: building landmask_buffer...");
     for (int i = 0; i < hsd.prms.GridXTotal; i++) {
         for (int j = 0; j < hsd.prms.GridYTotal; j++) {
             int img_x = i + hsd.prms.ModeledRegionOffsetX;
             int img_y = j + hsd.prms.ModeledRegionOffsetY;
             
-            bool is_water = (m_flags[img_y * m_width + img_x] & FLAG_WATER);
+            bool is_water = (m_flags[(size_t)img_y * m_width + img_x] & FLAG_WATER);
             uint8_t status = is_water ? SimParams::ModelledAreaIndicator : 0;
 
             size_t idx = j + (size_t)i * hsd.prms.GridYTotal;
@@ -355,14 +462,17 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     }
 
     // (5) Store original colors (copy from m_color)
+    LOGR("PrepareGrid: copying color buffer...");
     hsd.original_image_colors_rgb = m_color; 
     // This is the COPY the user might be worried about, but HSD needs it for visualization.
     // m_color will be freed after this whole function ends.
 
     // (6) Fill water areas with blue color for visualization in HSD
+    LOGR("PrepareGrid: filling modelled area with blue...");
     hsd.FillModelledAreaWithBlueColor();
 
     // (7) Save grid HDF5 file
+    LOGR("PrepareGrid: saving grid.h5...");
     std::string gridFilePath = projectDirectory + "/grid.h5";
     H5::H5File file(gridFilePath, H5F_ACC_TRUNC);
 
@@ -415,6 +525,7 @@ void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, doubl
     LOGR("PopulatePoints: starting");
     
     // (3) Generate or load Poisson points
+    LOGR("PopulatePoints: preparing point buffer...");
     std::vector<std::array<float, 2>> pt_buffer;
     const int gx = hsd.prms.GridXTotal;
     const int gy = hsd.prms.GridYTotal;
@@ -430,6 +541,7 @@ void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, doubl
     hsd.prms.ParticleArea = (h * h * gx * gy) / (double)pt_buffer.size();
 
     // (5) Filter points
+    LOGR("PopulatePoints: filtering points...");
     auto idxPt = [&](const std::array<float, 2> &pt) -> std::pair<int, int> {
         const double scale = gx - 1;
         return {(int)(pt[0] * scale + 0.5), (int)(pt[1] * scale + 0.5)};
@@ -443,7 +555,7 @@ void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, doubl
         int img_y = j + hsd.prms.ModeledRegionOffsetY;
         
         // Use m_flags
-        uint8_t flags = m_flags[img_y * m_width + img_x];
+        uint8_t flags = m_flags[(size_t)img_y * m_width + img_x];
         
         // Must be WATER
         if (!(flags & FLAG_WATER)) return true;
@@ -460,6 +572,7 @@ void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, doubl
     if (hsd.prms.nPtsInitial == 0) throw std::runtime_error("All points filtered out!");
 
     // (7) Allocate HSSOA
+    LOGR("PopulatePoints: allocating HSSOA...");
     hsd.AllocatePointArrays();
     hsd.hssoa.size = hsd.prms.nPtsInitial;
 
@@ -472,10 +585,11 @@ void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, doubl
     std::normal_distribution<float> thickness_dist(0.0f, (float)stdDevThickness);
     std::bernoulli_distribution cracked_dist(probCracked);
 
+    LOGR("PopulatePoints: transferring points to SOA...");
     for (size_t k = 0; k < pt_buffer.size(); k++) {
         std::array<float, 2> &pt = pt_buffer[k];
         auto [i, j] = idxPt(pt);
-        int img_idx = (j + oy) * m_width + (i + ox);
+        size_t img_idx = (size_t)(j + oy) * m_width + (i + ox);
 
         SOAIterator it = hsd.hssoa.begin() + k;
         ProxyPoint &p = *it;

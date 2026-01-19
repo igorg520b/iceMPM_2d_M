@@ -2,7 +2,7 @@
 
 #include "flowfieldgenerator.h"
 #include "parameterparser.h"
-#include "fluentflowimporter.h"
+// #include "fluentflowimporter.h"
 
 #include <H5Cpp.h>
 #include <spdlog/spdlog.h>
@@ -208,173 +208,14 @@ void FlowFieldGenerator::AddWindToFlowFieldHDF5(const std::string& windFilePath,
 
 void FlowFieldGenerator::GenerateFluentFlow(const ParameterParser& params)
 {
-    spdlog::info("FlowFieldGenerator::GenerateFluentFlow starting");
-    spdlog::info("  ConfigDirectory: {}", params.ConfigFileDirectory);
-    spdlog::info("  CAS file: {}", params.InputFluentCAS);
-    spdlog::info("  DAT file: {}", params.InputFluentDAT);
-    spdlog::info("  SVG file: {}", params.SVG);
-    spdlog::info("  RectanglePathID: {}", params.RectanglePathID);
-    spdlog::info("  FluentPathID: {}", params.FluentPathID);
-
-    // Note: The FLUENT raster must match the initialization image dimensions exactly
-    // so that it aligns pixel-for-pixel with the land/ice/color masks
-    // The image dimensions are the ground truth from the loaded images (PrepareGridAndPoints)
-
-    spdlog::info("InitializationImageSize: {}x{}", imageWidth, imageHeight);
-
-    // Import FLUENT flow field - rasterize to match initialization image dimensions
-    FluentFlowImporter importer;
-    importer.Import(params.ConfigFileDirectory,
-                   params.InputFluentCAS,
-                   params.InputFluentDAT,
-                   params.SVG,
-                   params.RectanglePathID,
-                   params.FluentPathID,
-                   imageWidth, imageHeight,  // Must match the initialization image dimensions
-                   params.VelocityMultiplier);  // Apply velocity multiplier
-
-    // Get the actual rasterized dimensions and velocity data
-    int width = importer.image_width;
-    int height = importer.image_height;
-    std::vector<double> vx_full = importer.vx_data;
-    std::vector<double> vy_full = importer.vy_data;
-
-    spdlog::info("FLUENT import completed: {}x{} grid", width, height);
-
-    // Verify that FLUENT raster matches initialization image dimensions
-    if (width != imageWidth || height != imageHeight) {
-        throw std::runtime_error(fmt::format("FLUENT raster dimensions ({}x{}) do not match initialization image ({}x{})",
-                                            width, height, imageWidth, imageHeight));
-    }
-
-    // Extract modeled region from full raster
-    // Full raster is column-major (i + width*j) and matches image dimensions
-    // Output needs to be row-major (j + i*gy) per WriteFlowFieldToHDF5 convention
-
-    spdlog::info("Extracting region: grid={}x{}, offset=({}, {})", gx, gy, ox, oy);
-    spdlog::info("  Full raster size: {}x{}", width, height);
-    spdlog::info("  Modeled region size: {}x{}", gx, gy);
-
-    std::vector<double> vx_data(gx * gy, 0.0);
-    std::vector<double> vy_data(gx * gy, 0.0);
-
-    for (int i = 0; i < gx; ++i) {
-        for (int j = 0; j < gy; ++j) {
-            // Source: full raster grid (image coordinates) with column-major indexing
-            // The modeled region has offset (ox, oy) from the image origin
-            int src_i = i + ox;
-            int src_j = j + oy;
-
-            // Verify within bounds
-            if (src_i < 0 || src_i >= width || src_j < 0 || src_j >= height) {
-                spdlog::warn("Region index ({}, {}) out of raster bounds ({}x{})",
-                           src_i, src_j, width, height);
-                vx_data[j + (size_t)i * gy] = 0.0;
-                vy_data[j + (size_t)i * gy] = 0.0;
-                continue;
-            }
-
-            int src_idx = src_i + width * src_j;  // Column-major indexing in raster
-            int dst_idx = j + (size_t)i * gy;    // Row-major indexing in output
-
-            vx_data[dst_idx] = vx_full[src_idx];
-            vy_data[dst_idx] = vy_full[src_idx];
-        }
-    }
-
-    spdlog::info("Region extraction completed");
-
-    // Package into frame containers (single frame for static FLUENT flow)
-    std::vector<std::vector<double>> vx_frames = {vx_data};
-    std::vector<std::vector<double>> vy_frames = {vy_data};
-
-    // Write to HDF5 with static flow parameters
-    double time_interval = 0.0;  // Static flow (single frame, no interpolation)
-    int loop_mode = 1;           // Hold last frame (irrelevant for single frame)
-
-    WriteFlowFieldToHDF5(params.FlowType, 1, time_interval, loop_mode, params.CompressFlow,
-                        vx_frames, vy_frames);
-
-    spdlog::info("GenerateFluentFlow completed");
+    spdlog::critical("FluentFlowImporter is temporarily disabled.");
+    throw std::runtime_error("FluentFlowImporter is temporarily disabled.");
 }
 
 void FlowFieldGenerator::GenerateFluentTransient(const ParameterParser& params)
 {
-    spdlog::info("FlowFieldGenerator::GenerateFluentTransient starting");
-    spdlog::info("  Range: Frame {} to {}", params.FLUENTFirstFrame, params.FLUENTLastFrame);
-    spdlog::info("  Time Interval: {}", params.FLUENTTimeInterval);
-    spdlog::info("  DAT Prefix: {}", params.InputFluentDAT);
-
-    int startFrame = params.FLUENTFirstFrame;
-    int endFrame = params.FLUENTLastFrame;
-    int num_frames = endFrame - startFrame + 1;
-
-    if (num_frames <= 0) {
-        throw std::runtime_error("Invalid FLUENT frame range: FirstFrame > LastFrame");
-    }
-
-    // Initialize HDF5 file structure
-    // loop_mode = 0 (periodic) for transient
-    CreateFlowFieldHDF5(params.FlowType, num_frames, params.FLUENTTimeInterval, 0, params.CompressFlow);
-
-    // Loop over frames
-    FluentFlowImporter importer; // Re-use importer instance (though Import() might be stateless)
-
-    for (int i = 0; i < num_frames; ++i) {
-        int frameID = startFrame + i;
-        
-        // Construct DAT filename
-        // Assumes Prefix ends with '-' or correct base, appends 00575.dat.h5
-        std::string datFile = fmt::format("{}{:05d}.dat.h5", params.InputFluentDAT, frameID);
-        
-        spdlog::info("Processing frame {}/{}: {}", i + 1, num_frames, datFile);
-
-        if (!std::filesystem::exists(datFile)) {
-             throw std::runtime_error("FLUENT DAT file not found: " + datFile);
-        }
-
-        // Import
-        // Note: This re-parses CAS and SVG every time. 
-        // Optimization possible but keeping it simple as requested.
-        importer.Import(params.ConfigFileDirectory,
-                        params.InputFluentCAS,
-                        datFile,
-                        params.SVG,
-                        params.RectanglePathID,
-                        params.FluentPathID,
-                        imageWidth, imageHeight,
-                        params.VelocityMultiplier);
-
-        // Verify dimensions (paranoid check)
-        if (importer.image_width != imageWidth || importer.image_height != imageHeight) {
-            throw std::runtime_error("Imported dimensions mismatch initialization image");
-        }
-
-        // Extract Region and Populate buffers
-        #pragma omp parallel for
-        for (int gy_idx = 0; gy_idx < gy; ++gy_idx) {
-            for (int gx_idx = 0; gx_idx < gx; ++gx_idx) {
-                 int src_i = gx_idx + ox;
-                 int src_j = gy_idx + oy;
-                 size_t dst_idx = gy_idx + (size_t)gx_idx * gy;
-                 
-                 // Valid check - import should ensure correct size, but boundary check is safe
-                 if (src_i >= 0 && src_i < imageWidth && src_j >= 0 && src_j < imageHeight) {
-                     size_t src_idx = src_i + imageWidth * src_j;
-                     vx_frame[dst_idx] = (float)importer.vx_data[src_idx];
-                     vy_frame[dst_idx] = (float)importer.vy_data[src_idx];
-                 } else {
-                     vx_frame[dst_idx] = 0.0f;
-                     vy_frame[dst_idx] = 0.0f;
-                 }
-            }
-        }
-
-        // Write Frame
-        WriteFrameToHDF5(i);
-    }
-
-    spdlog::info("GenerateFluentTransient completed");
+    spdlog::critical("FluentFlowImporter is temporarily disabled.");
+    throw std::runtime_error("FluentFlowImporter is temporarily disabled.");
 }
 
 
@@ -468,14 +309,3 @@ void FlowFieldGenerator::WriteFlowFieldToHDF5(const std::string& flowType, int n
 
     spdlog::info("WriteFlowFieldToHDF5 completed: saved {} frames to {}/grid_flow.h5", num_frames, projectDirectory);
 }
-
-
-
-
-
-
-
-
-
-
-

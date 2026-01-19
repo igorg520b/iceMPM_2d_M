@@ -61,11 +61,6 @@ public:
     // Post-processor support: Load frame data from saved simulation output
     void LoadFrameData(const std::string& framePath);
 
-    // Post-processor support: Load parameters and grid metadata from configuration
-    void LoadParametersFromConfigFile(const std::string& parameterFile,
-                                      const std::string& mapFile,
-                                      const std::string& pngImageFile);
-
 private:
     ColorMap colormap;
 

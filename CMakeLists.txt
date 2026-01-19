@@ -25,6 +25,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(HDF5 REQUIRED COMPONENTS CXX)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
+find_package(PNG REQUIRED)
 
 
 if(BUILD_GUI_VERSION)
@@ -313,11 +314,6 @@ endif()
 
 if(BUILD_PREPARER)
 
-    find_path(NANOSVG_INCLUDE_DIR NAMES nanosvg.h PATH_SUFFIXES nanosvg)
-    if(NOT NANOSVG_INCLUDE_DIR)
-        message(FATAL_ERROR "nanosvg.h not found. Please install libnanosvg-dev.")
-    endif()
-
     find_package(VTK 9.1 REQUIRED COMPONENTS
     CommonCore
     IOGeometry
@@ -349,11 +345,7 @@ if(BUILD_PREPARER)
         preparer/flowfieldgenerator.cpp
         preparer/flowfieldgenerator.h
 
-        preparer/fluentflowimporter.cpp
-        preparer/fluentflowimporter.h
 
-        simulation/data_manager/fluent_importer/vtkFLUENTCFFCustomReader.cxx
-        simulation/data_manager/fluent_importer/vtkFLUENTCFFCustomReader.h
 
         simulation/data_manager/intinterval.h
 
@@ -383,12 +375,14 @@ if(BUILD_PREPARER)
     target_link_libraries(preparer PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES} ${VTK_LIBRARIES})
     target_link_libraries(preparer PRIVATE Qt${QT_VERSION_MAJOR}::Widgets )
 
-    target_include_directories(preparer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_include_directories(preparer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
     target_include_directories(preparer PRIVATE External preparer/vtk preparer/svg preparer/processing preparer gui/vtk gui simulation simulation/hssoa simulation/data_manager)
 
     # OpenMP support for parallel Kelvin wake computation
     target_compile_options(preparer PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
     target_link_libraries(preparer PRIVATE gomp)
+
+    target_link_libraries(preparer PRIVATE PNG::PNG)
 
     vtk_module_autoinit(
     TARGETS preparer
@@ -416,7 +410,8 @@ if(BUILD_PREPARER_CLI)
     )
 
     target_link_libraries(preparer_cli PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES})
-    target_include_directories(preparer_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(preparer_cli PRIVATE PNG::PNG)
+    target_include_directories(preparer_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
     target_include_directories(preparer_cli PRIVATE External preparer/vtk preparer/svg preparer/processing preparer gui/vtk gui simulation simulation/hssoa simulation/data_manager)
 
     # OpenMP support for parallel Kelvin wake computation

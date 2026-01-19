@@ -51,6 +51,9 @@ private:
     std::string prepare_cache_filename(int gx, int gy, int ppc);
     bool attempt_to_fill_from_cache(int gx, int gy, int ppc, std::vector<std::array<float, 2>> &buffer);
     void generate_and_save_poisson(int gx, int gy, float points_per_cell, std::vector<std::array<float, 2>> &buffer);
+
+    // Image loading helper
+    static bool LoadPng(const std::string& filename, int& w, int& h, int& channels, std::vector<uint8_t>& data);
 };
 
 #endif // DATA_PREPARER_H
