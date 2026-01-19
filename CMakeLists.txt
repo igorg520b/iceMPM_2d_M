@@ -343,6 +343,9 @@ if(BUILD_PREPARER)
         preparer/parameterparser.h
         preparer/parameterparser.cpp
 
+        preparer/data_preparer.h
+        preparer/data_preparer.cpp
+
         preparer/flowfieldgenerator.cpp
         preparer/flowfieldgenerator.h
 
@@ -402,6 +405,14 @@ if(BUILD_PREPARER_CLI)
 
     add_executable(preparer_cli
         preparer/cli/cli_preparer_main.cpp
+        preparer/data_preparer.cpp
+        simulation/data_manager/host_side_data.cpp
+        simulation/parameters_sim.cpp
+        preparer/parameterparser.cpp
+        simulation/hssoa/host_side_soa.cpp
+        gui/colormap.cpp
+        simulation/data_manager/windandcurrentinterpolator.cpp
+        simulation/hssoa/proxypoint2d.cpp
     )
 
     target_link_libraries(preparer_cli PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES})

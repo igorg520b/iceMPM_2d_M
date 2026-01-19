@@ -64,6 +64,8 @@ void SimParams::Reset()
     UseGLO12Data = false;
     UseGLO12Tides = false;
 
+    extra_space_pts = 0.15;     // extra allocation for storage of points (to allow transfer between GPU partitions)
+
     ComputeLame();
     ComputeHelperVariables();
     spdlog::info("SimParams reset");
@@ -181,6 +183,8 @@ void SimParams::ComputeHelperVariables()
     Dp_inv = 4./(cellsize*cellsize);
     dt_vol_Dpinv = InitialTimeStep*ParticleArea*Dp_inv;
     vmax = 0.25*cellsize/InitialTimeStep;
+
+    if(nPartitions == 1) extra_space_pts = 0;
 
     // compute suggested time step
 //    double suggested_dt = 0.8 * cellsize * sqrt(IceDensity*ThicknessFrom/YoungsModulus);

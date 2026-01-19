@@ -46,7 +46,6 @@ public:
     constexpr static uint32_t fracture_crush = 0x200000; // bit 21 (22 and 23 are free)
 
     // GPU allocation
-    constexpr static double extra_space_pts = 0.15;               // reserved additional space on devices for points
     constexpr static double points_transfer_buffer_fraction = 0.07;  // % of points that could "fly over" during a given cycle
 
     // layout of the grid arrays
@@ -152,6 +151,7 @@ public:
     unsigned GridHaloSize;
     unsigned HaloDiffusionThreshold;    // must be <GridHaloSize-1
     unsigned PointTransferPeriod;       // how often do we try to transfer points (~GridHaloSize)
+    double extra_space_pts;               // reserved additional space on devices for points
 
     int nPtsInitial;
     double InitialTimeStep, SimulationEndTime;
@@ -206,6 +206,8 @@ public:
     double ParticleMass;
     double cellsize_inv, Dp_inv;
     int UpdateEveryNthStep;
+
+
 
     void Reset();
     std::map<std::string,std::string> ParseFile(std::string fileName);  // return additional filenames to load
