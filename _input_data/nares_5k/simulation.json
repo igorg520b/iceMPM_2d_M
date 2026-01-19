@@ -1,15 +1,15 @@
 {
 "SimulationTitle":"nares_5k",
 
-"IceShearStrength":3.75e6,
-"IceShearStrengthFractured":4.25e6,
-"IceCompressiveThreshold":3.1e6,
-"IceTensileStrength2":3.1e6,
+"IceShearStrength":3.5e6,
+"IceShearStrengthFractured":4.5e6,
+"IceCompressiveThreshold":3.0e6,
+"IceTensileStrength2":3.0e6,
 "DP_phi":55,
-"waterDragEffectiveQuadratic":18e-3,
-"windDragEffectiveQuadratic":14e-6,
-"GlenA":1e-24,
-"RidgeFormationCoeff":0.1,
+"waterDragEffectiveQuadratic":30e-3,
+"windDragEffectiveQuadratic":11e-6,
+"GlenA":2e-24,
+"RidgeFormationCoeff":0.1, 
 
 "GridData":"grid.h5",
 "Snapshot":"s00000.h5",
@@ -33,7 +33,7 @@
 
 "YoungsModulus":5.0e8,
 "PoissonsRatio":0.3,
-"IceDensity":916,
+"IceDensity":1500,
 "IceCompressiveStrength":100e6,
 "IceTensileStrength":3e6,
 "DP_threshold_p":-1e4,

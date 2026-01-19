@@ -10,6 +10,8 @@ option(BUILD_CLI_VERSION "Build CLI version" ON)
 option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
+option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" OFF)
+option(ENABLE_NAN_CHECKS "Perform NaN checks during the simulation" OFF)
 
 if(BUILD_GUI_VERSION OR BUILD_POSTPROCESSOR OR BUILD_PREPARER)
     set(CMAKE_AUTOUIC ON)
@@ -139,6 +141,10 @@ FetchContent_MakeAvailable(PBrowser)
     TARGETS gplate
     MODULES ${VTK_LIBRARIES}
     )
+
+    if(ENABLE_NAN_CHECKS)
+        target_compile_definitions(gplate PRIVATE ENABLE_NAN_CHECKS)
+    endif()
 
 endif()
 
@@ -294,6 +300,10 @@ if(BUILD_POSTPROCESSOR)
     target_compile_options(visualizer PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
     target_link_libraries(visualizer PRIVATE gomp)
 
+    if(ENABLE_NAN_CHECKS)
+        target_compile_definitions(cplate PRIVATE ENABLE_NAN_CHECKS)
+    endif()
+
 endif()
 
 
@@ -384,3 +394,22 @@ if(BUILD_PREPARER)
 
 endif()
 
+
+
+
+if(BUILD_PREPARER_CLI)
+    find_path(NANOSVG_INCLUDE_DIR NAMES nanosvg.h PATH_SUFFIXES nanosvg)
+
+    add_executable(preparer_cli
+        preparer/cli/cli_preparer_main.cpp
+    )
+
+    target_link_libraries(preparer_cli PRIVATE spdlog::spdlog Eigen3::Eigen ${HDF5_LIBRARIES})
+    target_include_directories(preparer_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${NANOSVG_INCLUDE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_include_directories(preparer_cli PRIVATE External preparer/vtk preparer/svg preparer/processing preparer gui/vtk gui simulation simulation/hssoa simulation/data_manager)
+
+    # OpenMP support for parallel Kelvin wake computation
+    target_compile_options(preparer_cli PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+    target_link_libraries(preparer_cli PRIVATE gomp)
+
+endif()

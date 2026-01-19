@@ -418,11 +418,11 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
     }
 
     // Setup frame range controls
-    qsbFrameTo->setMaximum(countFrames - 1);
-    qsbFrameTo->setValue(countFrames - 1);
+    qsbFrameTo->setMaximum(countFrames-1);
+    qsbFrameTo->setValue(countFrames-1);
 
     qsbFrameFrom->setMaximum(countFrames - 1);
-    qsbFrameFrom->setValue(0);
+    qsbFrameFrom->setValue(1);
 
     // Load and display the last frame as a starting point
     slider2->setValue(countFrames - 2);

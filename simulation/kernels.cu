@@ -97,28 +97,24 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
             // distribute values to the grid (mass and momentum)
             atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_px*pparams.pitch_grid + idx_gridnode], incV[0]);
             atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_py*pparams.pitch_grid + idx_gridnode], incV[1]);
-
+#ifdef ENABLE_NAN_CHECKS
             // sanity checks
             if(isnan(incV[0]) || isnan(incV[1])) gpu_error_indicator |= error_code_grid_p2g_nan_vel;
             if(isnan(incM)) gpu_error_indicator |= error_code_grid_p2g_nan_mass;
-
-
-
+#endif
         }
 
     // check if a point is out of bounds of the local grid partition
     const int lboundX = 1 + (int)pparams.gridX_offset - (int)gprms.GridHaloSize;
     const int hboundX = pparams.partition_gridX + pparams.gridX_offset - 2 + gprms.GridHaloSize;
 
+#ifdef ENABLE_NAN_CHECKS
     // global bounds
     if(cell_i[0] < 1 || cell_i[1] < 1 || cell_i[0] > (gprms.GridXTotal-2) || cell_i[1] > gridY-2)
-    {
         gpu_error_indicator |= error_code_point_left_global;
-    }
     else if(cell_i[0] < lboundX || cell_i[0] > hboundX)
-    {
         gpu_error_indicator |= error_code_point_left_area;
-    }
+#endif
 }
 
 
@@ -206,8 +202,10 @@ __global__ void partition_kernel_update_nodes(const PartitionParams pparams,
 
     bgrid[SimParams::grid_idx_px*pitch_grid + idx] = velocity[0];
     bgrid[SimParams::grid_idx_py*pitch_grid + idx] = velocity[1];
-    if(isnan(velocity[0]) || isnan(velocity[1])) gpu_error_indicator |= error_code_grid_nan;
 
+#ifdef ENABLE_NAN_CHECKS
+    if(isnan(velocity[0]) || isnan(velocity[1])) gpu_error_indicator |= error_code_grid_nan;
+#endif
 
 }
 
@@ -281,10 +279,12 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     pos += p_velocity * (dt*h_inv); // position is in local cell coordinates [-0.5 to 0.5]
 
+#ifdef ENABLE_NAN_CHECKS
     // check if there is an error
     if(isnan(p_velocity[0]) || isnan(p_velocity[1])) gpu_error_indicator |= error_code_point_vel_nan;
     if(isnan(pos[0]) || isnan(pos[1])) gpu_error_indicator |= error_code_point_pos_nan;
     if(isnan(p_Bp(0,0)) || isnan(p_Bp(1,0)) || isnan(p_Bp(0,1)) || isnan(p_Bp(1,1))) gpu_error_indicator |= error_code_point_Bp_nan;
+#endif
 
     // encode the position of the point as coordinates + cell index
     // if a point moves to the next cell, account for the change
@@ -303,12 +303,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         }
     }
 
-    // ensure the coordinates are valid
-    if(pos.x() > 0.5 || pos.x() < -0.5 || pos.y() > 0.5 || pos.y() < -0.5)
-        gpu_error_indicator |= error_code_point_jump_cells;
-
     Fe = (Eigen::Matrix2d::Identity() + dt*p_Bp) * Fe;     // Bp plays the role of the gradient of the velocity vector
-    if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
     ComputePQ(Je_tr, p_tr, q_tr, Fe);    // computes P, Q
 
     if(!(utility_data & SimParams::status_crushed))
@@ -366,6 +361,13 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     // save crushed/disabled status (preserves upper 32 bits with color info)
     if(utility_data != utility_original)
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_utility_data] = __longlong_as_double(utility_data);
+
+#ifdef ENABLE_NAN_CHECKS
+    if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1))) gpu_error_indicator |= error_code_point_Fe_nan;
+    // ensure the coordinates are valid
+    if(pos.x() > 0.5 || pos.x() < -0.5 || pos.y() > 0.5 || pos.y() < -0.5)
+        gpu_error_indicator |= error_code_point_jump_cells;
+#endif
 }
 
 
@@ -922,11 +924,13 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, co
         }
     }
 
+#ifdef ENABLE_NAN_CHECKS
     // check if something went wrong
     if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1)))
     {
         gpu_error_indicator |= error_code_point_Fe_nan;
     }
+#endif
 }
 
 
