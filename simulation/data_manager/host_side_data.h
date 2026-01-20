@@ -56,7 +56,12 @@ public:
 
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "");
-    void SaveFrame(int SimulationStep, double SimulationTime);
+    void SaveFrame_Old(int SimulationStep, double SimulationTime);
+    void SaveFrame(int SimulationStep, double SimulationTime); // New split-saving implementation
+
+    // Reusable buffers for saving (allocated once to avoid reallocation)
+    std::vector<float> save_buffer_float; 
+    std::vector<uint8_t> save_buffer_uint8; 
 
     // Post-processor support: Load frame data from saved simulation output
     void LoadFrameData(const std::string& framePath);

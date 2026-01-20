@@ -1,5 +1,6 @@
 #include "data_preparer.h"
 #include "poisson_disk_sampling.h"
+#include "optimized_poisson_disk_sampling.h"
 #include <spdlog/spdlog.h>
 #include <H5Cpp.h>
 #include <iostream>
@@ -169,11 +170,13 @@ bool DataPreparer::attempt_to_fill_from_cache(int gx, int gy, int ppc, std::vect
     }
 }
 
+
+
 void DataPreparer::generate_and_save_poisson(int gx, int gy, float points_per_cell, std::vector<std::array<float, 2>> &buffer)
 {
     const float dy = (float)gy / gx;
 
-    LOGR("Generating Poisson points with radius-based parameters");
+    LOGR("Generating Poisson points with radius-based parameters (OPTIMIZED)");
 
     const std::array<float, 2> x_min{0, 0};
     const std::array<float, 2> x_max{1, dy};
@@ -182,38 +185,69 @@ void DataPreparer::generate_and_save_poisson(int gx, int gy, float points_per_ce
 
     LOGR("Poisson parameters: grid={}x{}, dy={}, radius={}, target_ppc={}", gx, gy, dy, radius, points_per_cell);
 
-    buffer = thinks::PoissonDiskSampling(radius, x_min, x_max);
+    // MASK LAMBDA for optimization
+    // Maps local point p [0, 1]x[0, dy] to global image coordinates and checks ICE mask.
+    auto mask_func = [&](const std::array<float, 2>& pt) -> bool {
+        // Map to integer grid coordinates relative to Ice Region
+        // pt[0] is in [0, 1], pt[1] is in [0, dy]
+        // gx is IceRegionWidth, gy is IceRegionHeight
+        
+        // Map pt[0] from [0, 1] to [0, gx-1]
+        int i = (int)(pt[0] * (gx - 1) + 0.5f);
+        // Map pt[1] from [0, dy] to [0, gy-1]
+        int j = (int)(pt[1] / dy * (gy - 1) + 0.5f); 
+        
+        // Bounds check (local to IceRegion)
+        if (i < 0 || i >= gx || j < 0 || j >= gy) return false;
+
+        // Global check
+        int img_x = i + this->IceRegionOffsetX;
+        int img_y = j + this->IceRegionOffsetY;
+        
+        // Safety check for image bounds
+        if (img_x < 0 || img_x >= m_width || img_y < 0 || img_y >= m_height) return false;
+        
+        uint8_t flags = m_flags[(size_t)img_y * m_width + img_x];
+        bool is_ice = (flags & FLAG_ICE) && (flags & FLAG_WATER);
+        return is_ice;
+    };
+
+    // Use the optimized version with Mask
+    buffer = thinks::PoissonDiskSampling(radius, x_min, x_max, mask_func);
     LOGR("Generated {} raw Poisson points", buffer.size());
 
-    // Log the actual points per cell achieved before scaling
-    const float raw_ppc = (float)buffer.size() / (gx * gy);
-    LOGR("Raw achieved ppc: {:.4f} (target was {:.4f})", raw_ppc, points_per_cell);
-
-    // Scale points to achieve target ppc
-    const float scale = std::sqrt(raw_ppc / (points_per_cell * 1.0005f));
-    if (scale < 1.0f) {
-        LOGR("requested ppc {}; generated ppc {}", points_per_cell, raw_ppc);
-        throw std::runtime_error("point generation error: achieved ppc is lower than requested");
+    // Calculate actual Ice Area (count of valid cells) for correct PPC calculation
+    long long count_ice_cells = 0;
+    for(int j=0; j<gy; ++j) {
+        for(int i=0; i<gx; ++i) {
+            int img_x = i + this->IceRegionOffsetX;
+            int img_y = j + this->IceRegionOffsetY;
+            
+            if (img_x >= 0 && img_x < m_width && img_y >= 0 && img_y < m_height) {
+                uint8_t flags = m_flags[(size_t)img_y * m_width + img_x];
+                if ((flags & FLAG_ICE) && (flags & FLAG_WATER)) {
+                    count_ice_cells++;
+                }
+            }
+        }
     }
 
-    LOGR("requested ppc {}; generated ppc {}; scale {}%", points_per_cell, raw_ppc, 100.0f * (scale - 1.0f));
-
-    // Scale all points
-    for (auto &pt : buffer) {
-        pt[0] *= scale;
-        pt[1] *= scale;
+    // Log the actual points per cell achieved based on ACTIVE area
+    double active_area_fraction = (double)count_ice_cells / (double)(gx * gy);
+    float raw_ppc = 0.0f;
+    if (count_ice_cells > 0) {
+        raw_ppc = (float)buffer.size() / (float)count_ice_cells;
     }
 
-    // Remove out-of-bounds points after scaling
-    auto result_it = std::remove_if(buffer.begin(), buffer.end(),
-                                    [&](const std::array<float, 2> &pt) {
-                                        return (pt[0] > 1.0f || pt[1] > dy || pt[0] < 0.0f || pt[1] < 0.0f);
-                                    });
-    buffer.erase(result_it, buffer.end());
+    LOGR("Raw achieved ppc: {:.4f} (target {:.4f}) | IceCells: {}/{} ({:.1f}%)", 
+         raw_ppc, points_per_cell, count_ice_cells, gx*gy, active_area_fraction*100.0);
 
-    // Log final ppc after cropping
-    const float final_ppc = (float)buffer.size() / (gx * gy);
-    LOGR("grid: {}x{}; final pts {:>8}; final_ppc {:.4f}", gx, gy, buffer.size(), final_ppc);
+    // Note: We deliberately DO NOT scale the points. 
+    // Scaling shifts coordinates relative to the underlying Mask (IceRegion), causing data misalignment.
+    // Small variations in PPC are handled by the ParticleArea normalization in PopulatePoints.
+    
+    // Log final ppc
+    LOGR("grid: {}x{}; final pts {:>8}; final_ppc {:.4f}", gx, gy, buffer.size(), raw_ppc);
 
     // Save to cache
     std::string cache_file = prepare_cache_filename(gx, gy, (int)points_per_cell);
@@ -396,6 +430,16 @@ void DataPreparer::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     m_flags.clear(); m_flags.shrink_to_fit();
     m_thickness.clear(); m_thickness.shrink_to_fit();
 
+    // Reload the points so they are visible in the GUI (and HSSOA is populated)
+    // We do this AFTER cleanup to keep peak RAM usage low.
+    std::string snapshotFile = projectDirectory + "/snapshots/s00000.h5";
+    if (std::filesystem::exists(snapshotFile)) {
+        LOGR("Reloading points from {} for visualization...", snapshotFile);
+        hsd.ReadPointsFromSnapshot(snapshotFile);
+    } else {
+        LOGR("Warning: snapshot file not found after generation?");
+    }
+
     LOGR("PrepareGridAndPoints: completed");
 }
 
@@ -409,16 +453,29 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     // (1) Find cropped area (bounding box of WATER pixels)
     int xmin = m_width, xmax = -1;
     int ymin = m_height, ymax = -1;
+
+    // Ice bounding box
+    int xmin_ice = m_width, xmax_ice = -1;
+    int ymin_ice = m_height, ymax_ice = -1;
+    bool found_ice = false;
     
     bool found_water = false;
     for (int j = 0; j < m_height; j++) {
         for (int i = 0; i < m_width; i++) {
-            if (m_flags[(size_t)j * m_width + i] & FLAG_WATER) {
+            uint8_t flags = m_flags[(size_t)j * m_width + i];
+            if (flags & FLAG_WATER) {
                 xmin = std::min(xmin, i);
                 xmax = std::max(xmax, i);
                 ymin = std::min(ymin, j);
                 ymax = std::max(ymax, j);
                 found_water = true;
+            }
+            if (flags & FLAG_ICE) {
+                xmin_ice = std::min(xmin_ice, i);
+                xmax_ice = std::max(xmax_ice, i);
+                ymin_ice = std::min(ymin_ice, j);
+                ymax_ice = std::max(ymax_ice, j);
+                found_ice = true;
             }
         }
     }
@@ -427,7 +484,7 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
          throw std::runtime_error("No modeled area (WATER) found in landmask!");
     }
 
-    // Pad by ±2 cells and clamp
+    // Pad by ±2 cells and clamp (Water)
     xmin = std::max(0, xmin - 2);
     xmax = std::min(m_width - 1, xmax + 2);
     ymin = std::max(0, ymin - 2);
@@ -437,6 +494,28 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     hsd.prms.ModeledRegionOffsetY = ymin;
     hsd.prms.GridXTotal = xmax - xmin + 1;
     hsd.prms.GridYTotal = ymax - ymin + 1;
+
+    // Process Ice Region
+    if (found_ice) {
+        // Pad Ice Region as well for safety
+        xmin_ice = std::max(0, xmin_ice - 2);
+        xmax_ice = std::min(m_width - 1, xmax_ice + 2);
+        ymin_ice = std::max(0, ymin_ice - 2);
+        ymax_ice = std::min(m_height - 1, ymax_ice + 2);
+        
+        IceRegionOffsetX = xmin_ice;
+        IceRegionOffsetY = ymin_ice;
+        IceRegionWidth = xmax_ice - xmin_ice + 1;
+        IceRegionHeight = ymax_ice - ymin_ice + 1;
+        LOGR("Ice Region: offset({}, {}), size {}x{}", xmin_ice, ymin_ice, IceRegionWidth, IceRegionHeight);
+    } else {
+        // No ice found? (Shouldn't happen if simulation expects ice, but handle gracefully)
+        LOGR("No ICE found!");
+        IceRegionOffsetX = 0;
+        IceRegionOffsetY = 0;
+        IceRegionWidth = 0;
+        IceRegionHeight = 0;
+    }
 
     LOGR("Grid size: {} x {}", hsd.prms.GridXTotal, hsd.prms.GridYTotal);
 
@@ -650,8 +729,27 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     // (1) Load points from cache
     LOGR("PopulatePoints_RAM_Optimized: preparing point buffer...");
     std::vector<std::array<float, 2>> pt_buffer;
-    const int gx = hsd.prms.GridXTotal;
-    const int gy = hsd.prms.GridYTotal;
+    
+    // START OPTIMIZATION: Use Ice Region for point generation
+    if (this->IceRegionWidth <= 0 || this->IceRegionHeight <= 0) {
+        // Fallback or error?
+        // If no ice found, we can't generate ice points.
+        LOGR("PopulatePoints: IceRegion is empty. Skipping point generation.");
+        throw std::runtime_error("no ice");
+        return; 
+    }
+
+    const int gx = this->IceRegionWidth;
+    const int gy = this->IceRegionHeight;
+    const int ox = this->IceRegionOffsetX;
+    const int oy = this->IceRegionOffsetY;
+
+    // Relative offset from Simulation Grid Origin (ModeledRegionOffset) to Ice Region Origin
+    const int rel_ox = ox - hsd.prms.ModeledRegionOffsetX;
+    const int rel_oy = oy - hsd.prms.ModeledRegionOffsetY;
+
+    LOGR("PopulatePoints: Generating in Ice Region {}x{}, offset ({},{}), relative ({},{})", 
+         gx, gy, ox, oy, rel_ox, rel_oy);
 
     if (!attempt_to_fill_from_cache(gx, gy, pointsPerCell, pt_buffer)) {
         generate_and_save_poisson(gx, gy, (float)pointsPerCell, pt_buffer);
@@ -659,23 +757,25 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
 
     if (pt_buffer.empty()) throw std::runtime_error("No Poisson points generated");
 
-    // (2) Calculate ParticleArea
-    const double h = hsd.prms.cellsize;
-    hsd.prms.ParticleArea = (h * h * gx * gy) / (double)pt_buffer.size();
-
     // (3) Filter points (using existing logic)
     LOGR("PopulatePoints_RAM_Optimized: filtering points...");
+    
+    const float dy = (float)gy / gx;
+    
     auto idxPt = [&](const std::array<float, 2> &pt) -> std::pair<int, int> {
-        const double scale = gx - 1;
-        return {(int)(pt[0] * scale + 0.5), (int)(pt[1] * scale + 0.5)};
+        // Correct anisotropic mapping matching generate_and_save_poisson mask logic
+        int i = (int)(pt[0] * (gx - 1) + 0.5f);
+        int j = (int)(pt[1] / dy * (gy - 1) + 0.5f);
+        return {i, j};
     };
 
     auto shouldRemove = [&](const std::array<float, 2> &pt) -> bool {
         auto [i, j] = idxPt(pt);
         if (i <= 1 || j <= 1 || i >= (gx - 2) || j >= (gy - 2)) return true;
 
-        int img_x = i + hsd.prms.ModeledRegionOffsetX;
-        int img_y = j + hsd.prms.ModeledRegionOffsetY;
+        // ox/oy are IceRegionOffsets here
+        int img_x = i + ox;
+        int img_y = j + oy;
         
         uint8_t flags = m_flags[(size_t)img_y * m_width + img_x];
         if (!(flags & FLAG_WATER)) return true;
@@ -691,6 +791,31 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     if (hsd.prms.nPtsInitial == 0) throw std::runtime_error("All points filtered out!");
 
     LOGR("PopulatePoints_RAM_Optimized: {} points remaining", hsd.prms.nPtsInitial);
+
+    // Calculate ParticleArea using ICE AREA (not bounding box area)
+    // Area = N_ice_cells * h * h
+    // ParticleArea = Area / N_points
+    long long count_ice_cells = 0;
+    for(int j=0; j<gy; ++j) {
+        for(int i=0; i<gx; ++i) {
+            int img_x = i + ox;
+            int img_y = j + oy;
+            if (img_x >= 0 && img_x < m_width && img_y >= 0 && img_y < m_height) {
+                uint8_t f = m_flags[(size_t)img_y * m_width + img_x];
+                if ((f & FLAG_ICE) && (f & FLAG_WATER)) {
+                    count_ice_cells++;
+                }
+            }
+        }
+    }
+    
+    const double h = hsd.prms.cellsize;
+    double total_ice_area = (double)count_ice_cells * h * h;
+    hsd.prms.ParticleArea = total_ice_area / (double)hsd.prms.nPtsInitial;
+    
+    LOGR("ParticleArea Calc: IceCells={}, TotalArea={:.4e}, nPts={}, PtArea={:.4e}", 
+         count_ice_cells, total_ice_area, hsd.prms.nPtsInitial, hsd.prms.ParticleArea);
+
 
     // Initial random generators
     std::mt19937 rng(12345);
@@ -716,7 +841,7 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     // Standard was {17, 100000}. We can stick to that.
     hsize_t chunk_dims[2] = {nArrays, std::min<hsize_t>(nPts, 100000)};
     proplist.setChunk(2, chunk_dims);
-    proplist.setDeflate(6); // As requested implicitly by reusing SaveSnapshot logic
+    proplist.setDeflate(1); // As requested implicitly by reusing SaveSnapshot logic
 
     H5::DataSet dataset = file.createDataSet("pts_data", H5::PredType::NATIVE_DOUBLE, file_dataspace, proplist);
 
@@ -725,14 +850,12 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     // But we write it as a block of 4 arrays.
     std::vector<double> ram_buffer(4 * nPts);
 
-    const double pointScale = (gx - 1) * h;
     const double hinv = 1.0 / h;
-    const int ox = hsd.prms.ModeledRegionOffsetX;
-    const int oy = hsd.prms.ModeledRegionOffsetY;
 
     // Helper to write buffer to dataset
     auto write_batch = [&](int start_array_idx, int count) {
         hsize_t mem_dims[2] = {(hsize_t)count, nPts};
+        
         H5::DataSpace mem_space(2, mem_dims);
         
         hsize_t file_count[2] = {(hsize_t)count, nPts};
@@ -746,22 +869,42 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     // --- BATCH 1: Indices 0, 1, 2, 3 (Utility, CellIdx, PosX, PosY) ---
     LOGR("PopulatePoints_RAM_Optimized: Batch 1 (Basic Data)");
     
-    // Pointers to rows in ram_buffer
+    // Pointers to rows in ram_buffer for Batch 1
+    // Layout in file:
+    // 0: Utility
+    // 1: CellIdx
+    // 2: PosX
+    // 3: PosY
     double* buf_utility = ram_buffer.data() + 0 * nPts;
     double* buf_cell    = ram_buffer.data() + 1 * nPts;
     double* buf_posx    = ram_buffer.data() + 2 * nPts;
     double* buf_posy    = ram_buffer.data() + 3 * nPts;
 
-    for (size_t k = 0; k < nPts; k++) {
+    for (size_t k = 0; k < nPts; ++k) {
         std::array<float, 2> &pt = pt_buffer[k];
-        auto [i, j] = idxPt(pt); // Grid indices (approx)
-        size_t img_idx = (size_t)(j + oy) * m_width + (i + ox);
+        
+        // Continuous index coordinates within Ice Region
+        double u = pt[0] * (gx - 1);
+        double v = (pt[1] / dy) * (gy - 1);
 
-        // Color and Flags (Utility)
+        // Integer Cell Index (Local to IceRegion)
+        int i = (int)(u + 0.5f);
+        int j = (int)(v + 0.5f);
+        
+        // Image Index for property lookup (uses IceRegionOffset `ox`)
+        int img_x = i + ox;
+        int img_y = j + oy;
+        // Clamp to safe bounds just in case
+        if (img_x < 0) img_x = 0; if (img_x >= m_width) img_x = m_width - 1;
+        if (img_y < 0) img_y = 0; if (img_y >= m_height) img_y = m_height - 1;
+        
+        size_t img_idx = (size_t)img_y * m_width + img_x;
+
+        // Utility Data (Color, Flags)
         uint32_t r = m_color[img_idx * 3 + 0];
         uint32_t g = m_color[img_idx * 3 + 1];
         uint32_t b = m_color[img_idx * 3 + 2];
-        
+
         uint64_t utility = 0;
         utility |= ((uint64_t)r << 24);
         utility |= ((uint64_t)g << 32);
@@ -771,25 +914,22 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         if (flags & FLAG_CRUSHED) utility |= SimParams::status_crushed;
         if (flags & FLAG_CRACKED) utility |= SimParams::status_cracked;
         if (probCracked > 0.0 && cracked_dist(rng)) utility |= SimParams::status_cracked;
-        
+
         buf_utility[k] = *reinterpret_cast<double*>(&utility);
 
-        // Integer Cell Index + Local Pos
-        // Simulating ConvertToIntegerCellFormat
-        double x_global = pt[0] * pointScale;
-        double y_global = pt[1] * pointScale;
-        
-        // i and j are the integer indices
-        uint64_t x_idx = (uint64_t)i;
-        uint64_t y_idx = (uint64_t)j;
-        uint64_t cell = (y_idx << 32) | x_idx;
-        buf_cell[k] = *reinterpret_cast<double*>(&cell);
+        // Global Cell Indices for Simulation
+        uint64_t x_idx_global = (uint64_t)(i + rel_ox);
+        uint64_t y_idx_global = (uint64_t)(j + rel_oy);
+        uint64_t cell = (y_idx_global << 32) | x_idx_global;
+        buf_cell[k] = *reinterpret_cast<double*>(&cell);    
 
-        // Local coord
-        double x_local = x_global * hinv - (double)x_idx;
-        double y_local = y_global * hinv - (double)y_idx;
-        buf_posx[k] = x_local;
-        buf_posy[k] = y_local;
+        // Normalized Local Position [-0.5, 0.5)
+        // This MUST be unitless (relative to h), centered in the cell.
+        double x_local_norm = u - (double)i; 
+        double y_local_norm = v - (double)j;
+        
+        buf_posx[k] = x_local_norm;
+        buf_posy[k] = y_local_norm;
     }
     write_batch(0, 4);
 
@@ -866,6 +1006,7 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     dataset.createAttribute("nPtsArrays", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &nPtsArrays_int);
     dataset.createAttribute("nPtsInitial", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &hsd.prms.nPtsInitial);
     dataset.createAttribute("ParticleArea", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &hsd.prms.ParticleArea);
+
 
     file.close();
     LOGR("PopulatePoints_RAM_Optimized: completed");

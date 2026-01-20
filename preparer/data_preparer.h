@@ -34,6 +34,12 @@ private:
 
     int m_width = 0;
     int m_height = 0;
+
+    // Ice region bounding box (detected in PrepareGrid)
+    int IceRegionOffsetX = 0;
+    int IceRegionOffsetY = 0;
+    int IceRegionWidth = 0;
+    int IceRegionHeight = 0;
     std::vector<uint8_t> m_flags;      // Bitpacked flags (water, ice, crushed, cracked)
     std::vector<uint8_t> m_thickness;  // Thickness values (0-255)
     std::vector<uint8_t> m_color;      // RGB color data (3 bytes per pixel)
