@@ -27,7 +27,8 @@ public:
                               double thicknessFrom, double thicknessTo,
                               double probCracked, double stdDevThickness,
                               std::string fileNameThicknessMask,
-                              bool allocate_dense_grid);
+                              bool allocate_dense_grid,
+                              bool reload_after_save = true);
 
 private:
     HostSideData& hsd;
@@ -50,11 +51,11 @@ private:
 
     void PrepareGrid(std::string projectDirectory, double dimensionHorizontal, bool allocate_dense_grid);
 
-    void PopulatePoints(int pointsPerCell, double thicknessFrom, double thicknessTo,
-                        double probCracked, double stdDevThickness);
-
     void PopulatePoints_RAM_Optimized(int pointsPerCell, double thicknessFrom, double thicknessTo,
                                       double probCracked, double stdDevThickness, bool compress = true);
+
+    void DetermineExtents(double dimensionHorizontal);
+
 
     // Poisson point generation helpers
     std::string prepare_cache_filename(int gx, int gy, int ppc);

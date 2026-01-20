@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
                                       params.ThicknessFrom, params.ThicknessTo,
                                       params.ProportionOfCrackedPoints, params.StdDevOfThickness,
                                       thicknessmaskPath,
-                                      false);
+                                      false, false);
 
         LOGR("Preparation Complete.");
         LOGR("  Grid Dimensions: {} x {}", hsd.prms.GridXTotal, hsd.prms.GridYTotal);

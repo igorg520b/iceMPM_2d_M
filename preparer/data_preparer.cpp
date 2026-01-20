@@ -174,7 +174,8 @@ bool DataPreparer::attempt_to_fill_from_cache(int gx, int gy, int ppc, std::vect
 
 void DataPreparer::generate_and_save_poisson(int gx, int gy, float points_per_cell, std::vector<std::array<float, 2>> &buffer)
 {
-    const float dy = (float)gy / gx;
+    // Use (gy-1)/(gx-1) to ensure that isotropic scaling (by gx-1) maps exactly to [0, gy-1]
+    const float dy = (float)(gy - 1) / (gx - 1);
 
     LOGR("Generating Poisson points with radius-based parameters (OPTIMIZED)");
 
@@ -194,8 +195,9 @@ void DataPreparer::generate_and_save_poisson(int gx, int gy, float points_per_ce
         
         // Map pt[0] from [0, 1] to [0, gx-1]
         int i = (int)(pt[0] * (gx - 1) + 0.5f);
-        // Map pt[1] from [0, dy] to [0, gy-1]
-        int j = (int)(pt[1] / dy * (gy - 1) + 0.5f); 
+        // Map pt[1] from [0, dy] to [0, gy-1]. 
+        // Since dy = (gy-1)/(gx-1), pt[1] * (gx-1) maps [0, dy] -> [0, gy-1]
+        int j = (int)(pt[1] * (gx - 1) + 0.5f); 
         
         // Bounds check (local to IceRegion)
         if (i < 0 || i >= gx || j < 0 || j >= gy) return false;
@@ -320,7 +322,8 @@ void DataPreparer::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
                                        double thicknessFrom, double thicknessTo,
                                        double probCracked, double stdDevThickness,
                                        std::string fileNameThicknessMask,
-                                       bool allocate_dense_grid)
+                                       bool allocate_dense_grid,
+                                       bool reload_after_save)
 {
     LOGR("PrepareGridAndPoints: starting optimization run");
 
@@ -417,36 +420,27 @@ void DataPreparer::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
         LOGR("Generated random thickness field");
     }
 
-    // 4. Process Grid (Using m_flags and m_color)
-    PrepareGrid(projectDirectory, dimensionHorizontal, allocate_dense_grid);
+    DetermineExtents(dimensionHorizontal);
+
 
     // 5. Populate Points (Using m_flags, m_thickness, and m_color)
 //    PopulatePoints(pointsPerCell, thicknessFrom, thicknessTo, probCracked, stdDevThickness);
     PopulatePoints_RAM_Optimized(pointsPerCell, thicknessFrom, thicknessTo, probCracked, stdDevThickness);
 
+    // 4. Process Grid (Using m_flags and m_color)
+    PrepareGrid(projectDirectory, dimensionHorizontal, allocate_dense_grid);
 
     // Cleanup member buffers to release memory
     m_color.clear(); m_color.shrink_to_fit();
     m_flags.clear(); m_flags.shrink_to_fit();
     m_thickness.clear(); m_thickness.shrink_to_fit();
 
-    // Reload the points so they are visible in the GUI (and HSSOA is populated)
-    // We do this AFTER cleanup to keep peak RAM usage low.
-    std::string snapshotFile = projectDirectory + "/snapshots/s00000.h5";
-    if (std::filesystem::exists(snapshotFile)) {
-        LOGR("Reloading points from {} for visualization...", snapshotFile);
-        hsd.ReadPointsFromSnapshot(snapshotFile);
-    } else {
-        LOGR("Warning: snapshot file not found after generation?");
-    }
-
     LOGR("PrepareGridAndPoints: completed");
 }
 
-void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHorizontal, bool allocate_dense_grid)
-{
-    LOGR("PrepareGrid: starting");
 
+void DataPreparer::DetermineExtents(double dimensionHorizontal)
+{
     hsd.prms.InitializationImageSizeX = m_width;
     hsd.prms.InitializationImageSizeY = m_height;
 
@@ -458,7 +452,7 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     int xmin_ice = m_width, xmax_ice = -1;
     int ymin_ice = m_height, ymax_ice = -1;
     bool found_ice = false;
-    
+
     bool found_water = false;
     for (int j = 0; j < m_height; j++) {
         for (int i = 0; i < m_width; i++) {
@@ -481,7 +475,7 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     }
 
     if (!found_water) {
-         throw std::runtime_error("No modeled area (WATER) found in landmask!");
+        throw std::runtime_error("No modeled area (WATER) found in landmask!");
     }
 
     // Pad by ±2 cells and clamp (Water)
@@ -502,7 +496,7 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
         xmax_ice = std::min(m_width - 1, xmax_ice + 2);
         ymin_ice = std::max(0, ymin_ice - 2);
         ymax_ice = std::min(m_height - 1, ymax_ice + 2);
-        
+
         IceRegionOffsetX = xmin_ice;
         IceRegionOffsetY = ymin_ice;
         IceRegionWidth = xmax_ice - xmin_ice + 1;
@@ -523,6 +517,14 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     hsd.prms.DimensionHorizontal = dimensionHorizontal;
     hsd.prms.cellsize = hsd.prms.DimensionHorizontal / (hsd.prms.InitializationImageSizeX - 1);
     hsd.prms.cellsize_inv = 1.0 / hsd.prms.cellsize;
+
+}
+
+
+void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHorizontal, bool allocate_dense_grid)
+{
+    LOGR("PrepareGrid: starting");
+
 
     // (3) Allocate grid arrays
     hsd.AllocateGridArrays(allocate_dense_grid);
@@ -563,7 +565,7 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     H5::DSetCreatPropList landmask_props;
     hsize_t chunks[2] = {std::min<hsize_t>(hsd.prms.GridXTotal, 64), std::min<hsize_t>(hsd.prms.GridYTotal, 64)};
     landmask_props.setChunk(2, chunks);
-    landmask_props.setDeflate(6);
+    landmask_props.setDeflate(1);
     file.createDataSet("landmask", H5::PredType::NATIVE_UINT8, landmask_space, landmask_props)
         .write(hsd.landmask_buffer.data(), H5::PredType::NATIVE_UINT8);
 
@@ -600,131 +602,10 @@ void DataPreparer::PrepareGrid(std::string projectDirectory, double dimensionHor
     LOGR("PrepareGrid completed");
 }
 
-void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, double thicknessTo,
-                                 double probCracked, double stdDevThickness)
-{
-    LOGR("PopulatePoints: starting");
-    
-    // (3) Generate or load Poisson points
-    LOGR("PopulatePoints: preparing point buffer...");
-    std::vector<std::array<float, 2>> pt_buffer;
-    const int gx = hsd.prms.GridXTotal;
-    const int gy = hsd.prms.GridYTotal;
-
-    if (!attempt_to_fill_from_cache(gx, gy, pointsPerCell, pt_buffer)) {
-        generate_and_save_poisson(gx, gy, (float)pointsPerCell, pt_buffer);
-    }
-
-    if (pt_buffer.empty()) throw std::runtime_error("No Poisson points generated");
-
-    // (4) Calculate ParticleArea
-    const double h = hsd.prms.cellsize;
-    hsd.prms.ParticleArea = (h * h * gx * gy) / (double)pt_buffer.size();
-
-    // (5) Filter points
-    LOGR("PopulatePoints: filtering points...");
-    auto idxPt = [&](const std::array<float, 2> &pt) -> std::pair<int, int> {
-        const double scale = gx - 1;
-        return {(int)(pt[0] * scale + 0.5), (int)(pt[1] * scale + 0.5)};
-    };
-
-    auto shouldRemove = [&](const std::array<float, 2> &pt) -> bool {
-        auto [i, j] = idxPt(pt);
-        if (i <= 1 || j <= 1 || i >= (gx - 2) || j >= (gy - 2)) return true;
-
-        int img_x = i + hsd.prms.ModeledRegionOffsetX;
-        int img_y = j + hsd.prms.ModeledRegionOffsetY;
-        
-        // Use m_flags
-        uint8_t flags = m_flags[(size_t)img_y * m_width + img_x];
-        
-        // Must be WATER
-        if (!(flags & FLAG_WATER)) return true;
-        
-        // Must be ICE
-        if (!(flags & FLAG_ICE)) return true;
-
-        return false;
-    };
-
-    std::erase_if(pt_buffer, shouldRemove);
-    hsd.prms.nPtsInitial = pt_buffer.size();
-    
-    if (hsd.prms.nPtsInitial == 0) throw std::runtime_error("All points filtered out!");
-
-    // (7) Allocate HSSOA
-    LOGR("PopulatePoints: allocating HSSOA...");
-    hsd.AllocatePointArrays();
-    hsd.hssoa.size = hsd.prms.nPtsInitial;
-
-    // (8) Transfer
-    const double pointScale = (gx - 1) * h;
-    const int ox = hsd.prms.ModeledRegionOffsetX;
-    const int oy = hsd.prms.ModeledRegionOffsetY;
-    
-    std::mt19937 rng(12345);
-    std::normal_distribution<float> thickness_dist(0.0f, (float)stdDevThickness);
-    std::bernoulli_distribution cracked_dist(probCracked);
-
-    LOGR("PopulatePoints: transferring points to SOA...");
-    for (size_t k = 0; k < pt_buffer.size(); k++) {
-        std::array<float, 2> &pt = pt_buffer[k];
-        auto [i, j] = idxPt(pt);
-        size_t img_idx = (size_t)(j + oy) * m_width + (i + ox);
-
-        SOAIterator it = hsd.hssoa.begin() + k;
-        ProxyPoint &p = *it;
-
-        p.setValue(SimParams::PtArrIdx::posx, pt[0] * pointScale);
-        p.setValue(SimParams::PtArrIdx::posx + 1, pt[1] * pointScale);
-
-        // Color: We MUST use m_color because hsd.original_image_colors_rgb has been painted blue in water!
-        // This justifies keeping m_color alive until here.
-        uint32_t r = m_color[img_idx * 3 + 0];
-        uint32_t g = m_color[img_idx * 3 + 1];
-        uint32_t b = m_color[img_idx * 3 + 2];
-
-        // Thickness
-        uint8_t t_val = m_thickness[img_idx];
-        float t_norm = (float)t_val / 255.0f;
-        float thickness = (float)(thicknessFrom + t_norm * (thicknessTo - thicknessFrom));
-
-        if (stdDevThickness > 0.0) {
-            thickness += thickness_dist(rng);
-            thickness = std::clamp(thickness, (float)thicknessFrom, (float)thicknessTo);
-        }
-        p.setValue(SimParams::PtArrIdx::idx_thickness, thickness);
-
-        // Flags
-        uint64_t utility = 0;
-        utility |= ((uint64_t)r << 24);
-        utility |= ((uint64_t)g << 32);
-        utility |= ((uint64_t)b << 40);
-
-        uint8_t flags = m_flags[img_idx];
-        if (flags & FLAG_CRUSHED) utility |= SimParams::status_crushed;
-        if (flags & FLAG_CRACKED) utility |= SimParams::status_cracked;
-        if (probCracked > 0.0 && cracked_dist(rng)) utility |= SimParams::status_cracked;
-
-        p.setValueUInt64(SimParams::PtArrIdx::idx_utility_data, utility);
-        p.setValue(SimParams::PtArrIdx::idx_Jp_inv, 1.0);
-        // Identity matrix for Fe
-        p.setValue(SimParams::PtArrIdx::Fe00, 1.0);
-        p.setValue(SimParams::PtArrIdx::Fe00 + SimParams::dim * 1 + 1, 1.0);
-
-        p.setValue(SimParams::PtArrIdx::velx, 0.0);
-        p.setValue(SimParams::PtArrIdx::velx + 1, 0.0);
-    }
-
-    hsd.hssoa.convertToIntegerCellFormat(h);
-    hsd.SaveSnapshot(0, 0.0, true, hsd.data_directory);
-    LOGR("PopulatePoints completed");
-}
-
 void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thicknessFrom, double thicknessTo,
                                      double probCracked, double stdDevThickness, bool compress)
 {
-    LOGR("PopulatePoints_RAM_Optimized: starting");
+    LOGR("PopulatePoints_RAM_Optimized (New): starting");
 
     // (1) Load points from cache
     LOGR("PopulatePoints_RAM_Optimized: preparing point buffer...");
@@ -732,8 +613,6 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     
     // START OPTIMIZATION: Use Ice Region for point generation
     if (this->IceRegionWidth <= 0 || this->IceRegionHeight <= 0) {
-        // Fallback or error?
-        // If no ice found, we can't generate ice points.
         LOGR("PopulatePoints: IceRegion is empty. Skipping point generation.");
         throw std::runtime_error("no ice");
         return; 
@@ -751,21 +630,23 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     LOGR("PopulatePoints: Generating in Ice Region {}x{}, offset ({},{}), relative ({},{})", 
          gx, gy, ox, oy, rel_ox, rel_oy);
 
+    // Try cache or generate
     if (!attempt_to_fill_from_cache(gx, gy, pointsPerCell, pt_buffer)) {
         generate_and_save_poisson(gx, gy, (float)pointsPerCell, pt_buffer);
     }
 
     if (pt_buffer.empty()) throw std::runtime_error("No Poisson points generated");
 
-    // (3) Filter points (using existing logic)
+    // (3) Filter points 
     LOGR("PopulatePoints_RAM_Optimized: filtering points...");
     
-    const float dy = (float)gy / gx;
+    // Consistent dy definition
+    const float dy = (float)(gy - 1) / (gx - 1);
     
     auto idxPt = [&](const std::array<float, 2> &pt) -> std::pair<int, int> {
-        // Correct anisotropic mapping matching generate_and_save_poisson mask logic
+        // Correct isotropic mapping matching generate_and_save_poisson mask logic
         int i = (int)(pt[0] * (gx - 1) + 0.5f);
-        int j = (int)(pt[1] / dy * (gy - 1) + 0.5f);
+        int j = (int)(pt[1] * (gx - 1) + 0.5f);
         return {i, j};
     };
 
@@ -784,7 +665,6 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     };
 
     std::erase_if(pt_buffer, shouldRemove);
-    // Squeeze buffer
     pt_buffer.shrink_to_fit();
 
     hsd.prms.nPtsInitial = pt_buffer.size();
@@ -793,8 +673,6 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     LOGR("PopulatePoints_RAM_Optimized: {} points remaining", hsd.prms.nPtsInitial);
 
     // Calculate ParticleArea using ICE AREA (not bounding box area)
-    // Area = N_ice_cells * h * h
-    // ParticleArea = Area / N_points
     long long count_ice_cells = 0;
     for(int j=0; j<gy; ++j) {
         for(int i=0; i<gx; ++i) {
@@ -816,85 +694,80 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     LOGR("ParticleArea Calc: IceCells={}, TotalArea={:.4e}, nPts={}, PtArea={:.4e}", 
          count_ice_cells, total_ice_area, hsd.prms.nPtsInitial, hsd.prms.ParticleArea);
 
-
     // Initial random generators
     std::mt19937 rng(12345);
-    std::normal_distribution<float> thickness_dist(0.0f, (float)stdDevThickness);
+    std::normal_distribution<double> thickness_dist((double)thicknessFrom, (double)stdDevThickness); // check types
     std::bernoulli_distribution cracked_dist(probCracked);
 
-    // Prepare for HDF5 writing
-    std::string outputDir = hsd.data_directory + "/snapshots";
-    fs::create_directories(outputDir);
-    std::string h5_filename = outputDir + "/s00000.h5";
+    // --- Transform and Sort pt_buffer ---
+    LOGR("PopulatePoints: Transforming and Sorting points in RAM...");
     
-    LOGR("PopulatePoints_RAM_Optimized: creating HDF5 file {}", h5_filename);
-    H5::H5File file(h5_filename, H5F_ACC_TRUNC);
-
-    hsize_t nPts = hsd.prms.nPtsInitial;
-    hsize_t nArrays = SimParams::nPtsArrays;
-    hsize_t file_dims[2] = {nArrays, nPts};
-    H5::DataSpace file_dataspace(2, file_dims);
-
-    // Create Dataset
-    H5::DSetCreatPropList proplist;
-    // Chunking: optimize for writing full rows or reasonable blocks
-    // Standard was {17, 100000}. We can stick to that.
-    hsize_t chunk_dims[2] = {nArrays, std::min<hsize_t>(nPts, 100000)};
-    proplist.setChunk(2, chunk_dims);
-    proplist.setDeflate(1); // As requested implicitly by reusing SaveSnapshot logic
-
-    H5::DataSet dataset = file.createDataSet("pts_data", H5::PredType::NATIVE_DOUBLE, file_dataspace, proplist);
-
-    // Allocate small RAM buffer (4 slices)
-    // Layout: 4 rows x nPts columns (stored flat as 4*nPts)
-    // But we write it as a block of 4 arrays.
-    std::vector<double> ram_buffer(4 * nPts);
-
-    const double hinv = 1.0 / h;
-
-    // Helper to write buffer to dataset
-    auto write_batch = [&](int start_array_idx, int count) {
-        hsize_t mem_dims[2] = {(hsize_t)count, nPts};
-        
-        H5::DataSpace mem_space(2, mem_dims);
-        
-        hsize_t file_count[2] = {(hsize_t)count, nPts};
-        hsize_t file_offset[2] = {(hsize_t)start_array_idx, 0};
-        
-        file_dataspace.selectHyperslab(H5S_SELECT_SET, file_count, file_offset);
-        dataset.write(ram_buffer.data(), H5::PredType::NATIVE_DOUBLE, mem_space, file_dataspace);
-        LOGR("Written arrays {}-{}", start_array_idx, start_array_idx + count - 1);
-    };
-
-    // --- BATCH 1: Indices 0, 1, 2, 3 (Utility, CellIdx, PosX, PosY) ---
-    LOGR("PopulatePoints_RAM_Optimized: Batch 1 (Basic Data)");
+    // Scale factor for transforming normalized coordinates to grid indices.
+    // User requested equal scaling for both directions.
+    // pt[0] is in [0, 1], mapped to [0, gx-1]
+    const double scale = (double)(gx - 1);
     
-    // Pointers to rows in ram_buffer for Batch 1
-    // Layout in file:
-    // 0: Utility
-    // 1: CellIdx
-    // 2: PosX
-    // 3: PosY
-    double* buf_utility = ram_buffer.data() + 0 * nPts;
-    double* buf_cell    = ram_buffer.data() + 1 * nPts;
-    double* buf_posx    = ram_buffer.data() + 2 * nPts;
-    double* buf_posy    = ram_buffer.data() + 3 * nPts;
+    // Transform to Global Grid Continuous Coordinates
+    for(size_t k = 0; k < pt_buffer.size(); ++k) {
+        std::array<float, 2> &pt = pt_buffer[k];
+        // pt[0] -> u_global
+        pt[0] = (float)(pt[0] * scale + rel_ox);
+        // pt[1] -> v_global
+        pt[1] = (float)(pt[1] * scale + rel_oy);
+    }
+    
+    // Sort by Cell Index (j + i * GridYTotal)
+    // Note: Use a stable sort or regular sort? Regular is fine.
+    const int GridYTotal = hsd.prms.GridYTotal;
+    std::sort(pt_buffer.begin(), pt_buffer.end(), [GridYTotal](const std::array<float, 2>& a, const std::array<float, 2>& b){
+        int ia = (int)(a[0] + 0.5f);
+        int ja = (int)(a[1] + 0.5f);
+        int ib = (int)(b[0] + 0.5f);
+        int jb = (int)(b[1] + 0.5f);
+        
+        long long idx_a = ja + (long long)ia * GridYTotal;
+        long long idx_b = jb + (long long)ib * GridYTotal;
+        return idx_a < idx_b;
+    });
 
-    for (size_t k = 0; k < nPts; ++k) {
+    // --- Allocate HSSOA ---
+    hsd.hssoa.Allocate(hsd.prms.nPtsInitial);
+    hsd.hssoa.size = hsd.prms.nPtsInitial;
+
+    unsigned capacity = hsd.hssoa.capacity;
+    double* host_buffer = hsd.hssoa.host_buffer;
+
+    // Pointers to arrays
+    double* ptr_utility = host_buffer + SimParams::PtArrIdx::idx_utility_data * capacity;
+    double* ptr_cell    = host_buffer + SimParams::PtArrIdx::integer_cell_idx * capacity;
+    double* ptr_posx    = host_buffer + SimParams::PtArrIdx::posx * capacity;
+    double* ptr_posy    = host_buffer + SimParams::PtArrIdx::posy * capacity;
+    double* ptr_velx    = host_buffer + SimParams::PtArrIdx::velx * capacity;
+    double* ptr_vely    = host_buffer + SimParams::PtArrIdx::vely * capacity;
+    double* ptr_thick   = host_buffer + SimParams::PtArrIdx::idx_thickness * capacity;
+    double* ptr_Jpinv   = host_buffer + SimParams::PtArrIdx::idx_Jp_inv * capacity;
+    double* ptr_Fe00    = host_buffer + SimParams::PtArrIdx::Fe00 * capacity;
+    double* ptr_Fe11    = host_buffer + (SimParams::PtArrIdx::Fe00 + SimParams::dim + 1) * capacity;
+
+    LOGR("PopulatePoints: Filling HSSOA...");
+
+    for (size_t k = 0; k < hsd.prms.nPtsInitial; ++k) {
         std::array<float, 2> &pt = pt_buffer[k];
         
-        // Continuous index coordinates within Ice Region
-        double u = pt[0] * (gx - 1);
-        double v = (pt[1] / dy) * (gy - 1);
+        // Points are already in Global Continuous Grid Coordinates
+        double u_global = pt[0];
+        double v_global = pt[1];
 
-        // Integer Cell Index (Local to IceRegion)
-        int i = (int)(u + 0.5f);
-        int j = (int)(v + 0.5f);
+        // Global Integer Cell Index
+        int i_global = (int)(u_global + 0.5f);
+        int j_global = (int)(v_global + 0.5f);
         
-        // Image Index for property lookup (uses IceRegionOffset `ox`)
-        int img_x = i + ox;
-        int img_y = j + oy;
-        // Clamp to safe bounds just in case
+        // Image Index for property lookup
+        // i_global is relative to ModeledRegionOffset
+        // img_x is relative to Image Origin (0,0)
+        int img_x = i_global + hsd.prms.ModeledRegionOffsetX;
+        int img_y = j_global + hsd.prms.ModeledRegionOffsetY;
+        
         if (img_x < 0) img_x = 0; if (img_x >= m_width) img_x = m_width - 1;
         if (img_y < 0) img_y = 0; if (img_y >= m_height) img_y = m_height - 1;
         
@@ -915,99 +788,59 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         if (flags & FLAG_CRACKED) utility |= SimParams::status_cracked;
         if (probCracked > 0.0 && cracked_dist(rng)) utility |= SimParams::status_cracked;
 
-        buf_utility[k] = *reinterpret_cast<double*>(&utility);
+        ptr_utility[k] = *reinterpret_cast<double*>(&utility);
 
-        // Global Cell Indices for Simulation
-        uint64_t x_idx_global = (uint64_t)(i + rel_ox);
-        uint64_t y_idx_global = (uint64_t)(j + rel_oy);
+        // Global Cell Indices
+        uint64_t x_idx_global = (uint64_t)i_global;
+        uint64_t y_idx_global = (uint64_t)j_global;
         uint64_t cell = (y_idx_global << 32) | x_idx_global;
-        buf_cell[k] = *reinterpret_cast<double*>(&cell);    
+        ptr_cell[k] = *reinterpret_cast<double*>(&cell);    
 
         // Normalized Local Position [-0.5, 0.5)
-        // This MUST be unitless (relative to h), centered in the cell.
-        double x_local_norm = u - (double)i; 
-        double y_local_norm = v - (double)j;
+        double x_local_norm = u_global - (double)i_global; 
+        double y_local_norm = v_global - (double)j_global;
         
-        buf_posx[k] = x_local_norm;
-        buf_posy[k] = y_local_norm;
-    }
-    write_batch(0, 4);
+        ptr_posx[k] = x_local_norm;
+        ptr_posy[k] = y_local_norm;
 
-    // --- BATCH 2: Indices 4, 5 (VelX, VelY) ---
-    LOGR("PopulatePoints_RAM_Optimized: Batch 2 (Velocities)");
-    std::fill(ram_buffer.begin(), ram_buffer.begin() + 2 * nPts, 0.0);
-    write_batch(4, 2);
+        // Velocities
+        ptr_velx[k] = 0.0;
+        ptr_vely[k] = 0.0;
 
-    // --- BATCH 3: Index 6 (Thickness) ---
-    LOGR("PopulatePoints_RAM_Optimized: Batch 3 (Thickness)");
-    // Reuse first row of buffer
-    double* buf_thick = ram_buffer.data();
-    for (size_t k = 0; k < nPts; k++) {
-        std::array<float, 2> &pt = pt_buffer[k];
-        auto [i, j] = idxPt(pt);
-        size_t img_idx = (size_t)(j + oy) * m_width + (i + ox);
-
+        // Thickness
+        // m_thickness is 0-255 map.
         uint8_t t_val = m_thickness[img_idx];
         float t_norm = (float)t_val / 255.0f;
-        float thickness = (float)(thicknessFrom + t_norm * (thicknessTo - thicknessFrom));
-
+        // Linear mix
+        double thick_val = thicknessFrom + t_norm * (thicknessTo - thicknessFrom);
+        
         if (stdDevThickness > 0.0) {
-            thickness += thickness_dist(rng);
-            thickness = std::clamp(thickness, (float)thicknessFrom, (float)thicknessTo);
+            double noise = thickness_dist(rng);
+             thick_val += noise;
+             thick_val = std::clamp(thick_val, (double)thicknessFrom, (double)thicknessTo);
         }
-        buf_thick[k] = thickness;
+        ptr_thick[k] = thick_val;
+        
+        // Jp_inv
+        ptr_Jpinv[k] = 1.0;
+        
+        // Fe identity
+        ptr_Fe00[k] = 1.0;
+        ptr_Fe11[k] = 1.0;
     }
-    write_batch(6, 1);
 
-    // --- BATCH 4: Indices 7-16 (Remaining) ---
-    LOGR("PopulatePoints_RAM_Optimized: Batch 4 (Remaining)");
-    // 7: idx_Jp_inv = 1.0
-    // 8: idx_glen_flow = 0.0
-    // 9: Fe00 = 1.0
-    // 10: Fe10 = 0.0
-    // 11: Fe01 = 0.0
-    // 12: Fe11 = 1.0
-    // 13-16: Bp00 = 0.0
+    // Clear buffer!
+    LOGR("PopulatePoints: Cleaning up RAM buffer...");
+    pt_buffer.clear(); 
+    pt_buffer.shrink_to_fit();
 
-    // Group 4a: 7, 8, 9, 10
-    std::fill(ram_buffer.begin(), ram_buffer.end(), 0.0);
-    double* row0 = ram_buffer.data() + 0 * nPts; // Array 7
-    double* row1 = ram_buffer.data() + 1 * nPts; // Array 8
-    double* row2 = ram_buffer.data() + 2 * nPts; // Array 9
-    double* row3 = ram_buffer.data() + 3 * nPts; // Array 10
-    
-    std::fill(row0, row0 + nPts, 1.0); // 7: Jp_inv
-    std::fill(row2, row2 + nPts, 1.0); // 9: Fe00
-    write_batch(7, 4);
+    // Sort
+    LOGR("PopulatePoints: Sorting points...");
+    hsd.hssoa.RemoveDisabledAndSort(hsd.prms.GridYTotal);
 
-    // Group 4b: 11, 12, 13, 14
-    std::fill(ram_buffer.begin(), ram_buffer.end(), 0.0);
-    row0 = ram_buffer.data() + 0 * nPts; // Array 11
-    row1 = ram_buffer.data() + 1 * nPts; // Array 12
-    row2 = ram_buffer.data() + 2 * nPts; // Array 13
-    row3 = ram_buffer.data() + 3 * nPts; // Array 14
-    
-    std::fill(row1, row1 + nPts, 1.0); // 12: Fe11
-    write_batch(11, 4);
+    // Save
+    LOGR("PopulatePoints: Saving s00000.h5 via HSSOA...");
+    hsd.SaveSnapshot(0, 0.0, true, hsd.data_directory);
 
-    // Group 4c: 15, 16
-    std::fill(ram_buffer.begin(), ram_buffer.begin() + 2 * nPts, 0.0);
-    write_batch(15, 2);
-
-    // Attributes
-    LOGR("PopulatePoints_RAM_Optimized: Writing attributes...");
-    H5::DataSpace att_dspace(H5S_SCALAR);
-    int step = 0;
-    double time = 0.0;
-    dataset.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &step);
-    dataset.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &time);
-    
-    int nPtsArrays_int = (int)nArrays;
-    dataset.createAttribute("nPtsArrays", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &nPtsArrays_int);
-    dataset.createAttribute("nPtsInitial", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &hsd.prms.nPtsInitial);
-    dataset.createAttribute("ParticleArea", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &hsd.prms.ParticleArea);
-
-
-    file.close();
-    LOGR("PopulatePoints_RAM_Optimized: completed");
+    LOGR("PopulatePoints_RAM_Optimized (New) completed");
 }

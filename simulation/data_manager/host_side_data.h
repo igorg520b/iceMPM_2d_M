@@ -42,7 +42,8 @@ public:
     std::vector<double> tmp_halo_buffer;        // temporary buffer for GPU halo communication
     std::array<double, 2*SimParams::MAX_REGIONS> grid_forces_summary_per_region;
 
-    std::vector<uint8_t> rgb;   // for saving/visualization frame
+    std::vector<uint8_t> rgb;   // for saving/visualization frame (RGB 3 bytes)
+    std::vector<uint8_t> frame_rgba; // NEW: for loading/visualization (RGBA 4 bytes)
 
     // Memory tracking: [0]=grid bytes, [1]=points bytes
     size_t allocated_bytes[2] = {0, 0};
@@ -64,7 +65,7 @@ public:
     std::vector<uint8_t> save_buffer_uint8; 
 
     // Post-processor support: Load frame data from saved simulation output
-    void LoadFrameData(const std::string& framePath);
+    void LoadFrameData(int frameIndex, const std::string& framesDirectory);
 
 private:
     ColorMap colormap;

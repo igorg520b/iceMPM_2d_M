@@ -208,20 +208,31 @@ void VisualRepresentation::SynchronizeTopology()
                 // Modeled area
                 double val_pt_density = 0, val_crushed = 0;
                 std::array<uint8_t, 3> _rgb = {0, 0, 0};
+                float alpha = 0.0f;
 
                 if(has_grid)
                 {
                     val_pt_density = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_pts_density];
                     val_crushed = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_crushed];
+                }
 
-                // Original ice colors
+                // Determine base color and alpha
+                if (hsd.frame_rgba.size() == gridSize * 4) {
+                    _rgb[0] = hsd.frame_rgba[grid_idx * 4 + 0];
+                    _rgb[1] = hsd.frame_rgba[grid_idx * 4 + 1];
+                    _rgb[2] = hsd.frame_rgba[grid_idx * 4 + 2];
+                    alpha = hsd.frame_rgba[grid_idx * 4 + 3] / 255.0f;
+                } 
+                else if (has_grid) {
+                    // Original ice colors from grid variables
                     for (int k = 0; k < 3; k++) {
                         float v = grid_buffer[grid_idx + gridSize * (SimParams::grid_idx_vis_r + k)];
                         _rgb[k] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255);
                     }
+                    // Calculate alpha from density
+                    alpha = std::min(val_pt_density * (2.0 / 5.0), 1.0);
                 }
 
-                float alpha = std::min(val_pt_density * (2.0 / 5.0), 1.0);
                 std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
 
                 if (VisualizingVariable == VisOpt::regions) {

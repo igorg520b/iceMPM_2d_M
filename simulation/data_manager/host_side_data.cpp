@@ -745,9 +745,9 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
     if (compress)
     {
         H5::DSetCreatPropList proplist;
-        hsize_t chunk_dims[2] = {SimParams::PtArrIdx::nPtsArrays, 100000};
+        hsize_t chunk_dims[2] = {SimParams::PtArrIdx::nPtsArrays, std::min((size_t)10000000, (size_t)nPts)};
         proplist.setChunk(2, chunk_dims);
-        proplist.setDeflate(6);
+        proplist.setDeflate(1);
         dataset_pts = file.createDataSet("pts_data", H5::PredType::NATIVE_DOUBLE,
                                          file_dataspace, proplist);
     }
@@ -803,71 +803,109 @@ void HostSideData::readGridDataset(const H5::H5File& file, const std::string& da
 }
 
 
-void HostSideData::LoadFrameData(const std::string& framePath)
+void HostSideData::LoadFrameData(int frameIndex, const std::string& framesDirectory)
 {
-    LOGR("LoadFrameData: Loading frame from {}", framePath);
-
-    namespace fs = std::filesystem;
-    if (!fs::exists(framePath)) {
-        LOGR("Error: Frame file does not exist: {}", framePath);
-        throw std::runtime_error(fmt::format("Frame file not found: {}", framePath));
-    }
-
-    try {
-        const H5::H5File file(framePath, H5F_ACC_RDONLY);
-
-        // 1. Read Frame Attributes from the "rgb" dataset
-        const H5::DataSet attr_dset = file.openDataSet("rgb");
-        int simulationStep = 0;
-        double simulationTime = 0.0;
-        attr_dset.openAttribute("SimulationStep").read(H5::PredType::NATIVE_INT, &simulationStep);
-        attr_dset.openAttribute("SimulationTime").read(H5::PredType::NATIVE_DOUBLE, &simulationTime);
-
-        prms.SimulationStep = simulationStep;
-        prms.SimulationTime = simulationTime;
-
-        // 2. Prepare Memory Buffers
-        const auto gx = prms.GridXTotal;
-        const auto gy = prms.GridYTotal;
-        const size_t gridSize = (size_t)gx * gy;
-
-        rgb.resize(gridSize * 3);
-        host_grid_buffer.assign(gridSize * SimParams::HostGridArrayIndex::nGridArraysHost, 0.0);
-
-        // 3. Load the pre-rendered RGB data into the rgb buffer
+    // LOGR("LoadFrameData: frame {} from {}", frameIndex, framesDirectory);
+    
+    fs::path framesDir(framesDirectory);
+    std::string filename = fmt::format("frame_{:05d}.h5", frameIndex);
+    
+    // 2. Prepare Paths using lambda
+    auto get_path = [&](const std::string& subdir) {
+        return framesDir / subdir / filename;
+    };
+    
+    fs::path colorPath      = get_path("color");
+    fs::path fracStatPath   = get_path("fracture_status");
+    fs::path fracTypePath   = get_path("fracture_type");
+    fs::path physicsPath    = get_path("physics");
+    fs::path strainsPath    = get_path("strains");
+    
+    const int gx = prms.GridXTotal;
+    const int gy = prms.GridYTotal;
+    const size_t gridSize = (size_t)gx * gy;
+    
+    // 3. Load Color -> frame_rgba
+    if (fs::exists(colorPath)) {
         try {
-            attr_dset.read(rgb.data(), H5::PredType::NATIVE_UINT8);
-        } catch (const H5::Exception& e) {
-            LOGR("HDF5 Error reading 'rgb' dataset: {}", e.getCDetailMsg());
-            throw;
-        }
+            H5::H5File file(colorPath.string(), H5F_ACC_RDONLY);
+            H5::DataSet ds = file.openDataSet("color");
+            
+            // Read attributes for SimulationTime/Step from color file (primary)
+            H5::DataSpace att_dspace(H5S_SCALAR);
+            if(H5Aexists(file.getId(), "SimulationStep"))
+                file.openAttribute("SimulationStep").read(H5::PredType::NATIVE_INT, &prms.SimulationStep);
+            if(H5Aexists(file.getId(), "SimulationTime"))
+                file.openAttribute("SimulationTime").read(H5::PredType::NATIVE_DOUBLE, &prms.SimulationTime);
 
-        // 4. De-interleave and transpose RGB data into host_grid_buffer
-        // The HDF5 data has dims (gx, gy, 3) in row-major (x varies fastest)
-        // Our internal grid buffers are column-major (y varies fastest)
-        const size_t r_offset = gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_r;
-        const size_t g_offset = gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_g;
-        const size_t b_offset = gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_b;
-
-        for (int i = 0; i < gx; ++i) {
-            for (int j = 0; j < gy; ++j) {
-                const size_t src_idx = ((size_t)i * gy + j) * 3;
-                const size_t dst_idx = (size_t)j + (size_t)i * gy;
-
-                host_grid_buffer[r_offset + dst_idx] = static_cast<double>(rgb[src_idx + 0]) / 255.0;
-                host_grid_buffer[g_offset + dst_idx] = static_cast<double>(rgb[src_idx + 1]) / 255.0;
-                host_grid_buffer[b_offset + dst_idx] = static_cast<double>(rgb[src_idx + 2]) / 255.0;
+            std::vector<uint8_t> temp_rgb(gridSize * 3);
+            ds.read(temp_rgb.data(), H5::PredType::NATIVE_UINT8);
+            
+            // Convert to RGBA
+            frame_rgba.resize(gridSize * 4);
+            #pragma omp parallel for
+            for(size_t i=0; i<gridSize; ++i) {
+                frame_rgba[i*4 + 0] = temp_rgb[i*3 + 0];
+                frame_rgba[i*4 + 1] = temp_rgb[i*3 + 1];
+                frame_rgba[i*4 + 2] = temp_rgb[i*3 + 2];
+                frame_rgba[i*4 + 3] = 255;
             }
+            LOGR("Loaded Color from {}", colorPath.string());
+        } catch (...) {
+            LOGR("Failed to load color from {}", colorPath.string());
         }
-
-        // 5. Load grid_data: 3D array [nGridArraysHost] x [gx] x [gy]
-        const H5::DataSet grid_dset = file.openDataSet("grid_data");
-        grid_dset.read(host_grid_buffer.data(), H5::PredType::NATIVE_DOUBLE);
-
-        LOGR("Successfully loaded frame from {}", framePath);
-    } catch (const H5::Exception& e) {
-        LOGR("Critical HDF5 Error loading frame: {}", e.getCDetailMsg());
-        throw;
+    } else {
+        LOGR("Color file not found: {}", colorPath.string());
     }
+
+    // Ensure buffer size
+    if (host_grid_buffer.size() != gridSize * SimParams::HostGridArrayIndex::nGridArraysHost) {
+        LOGR("LoadFrameData: resizing host_grid_buffer...");
+        AllocateGridArrays(true); 
+    }
+
+    // Helper to load dataset into grid slot
+    auto load_dataset = [&](fs::path path, const char* ds_name, int grid_idx) {
+        if (!fs::exists(path)) return;
+        try {
+             H5::H5File file(path.string(), H5F_ACC_RDONLY);
+             if(H5Lexists(file.getId(), ds_name, H5P_DEFAULT) > 0) {
+                 H5::DataSet ds = file.openDataSet(ds_name);
+                 double* ptr = host_grid_buffer.data() + (size_t)grid_idx * gridSize;
+                 
+                 // Check type? Assume double or convert.
+                 // Most simulation data is double, but masks (fracture type) might be saved as uint8/float.
+                 // HDF5 usually handles conversion if compatible.
+                 ds.read(ptr, H5::PredType::NATIVE_DOUBLE);
+             }
+        } catch (...) {}
+    };
+
+    // 4. Load Fracture Status -> host_grid_buffer
+    // Datasets: "crushed", "cracked", "thickness"
+    load_dataset(fracStatPath, "crushed",   SimParams::HostGridArrayIndex::grid_idx_vis_crushed);
+    load_dataset(fracStatPath, "cracked",   SimParams::HostGridArrayIndex::grid_idx_vis_cracked);
+    load_dataset(fracStatPath, "thickness", SimParams::HostGridArrayIndex::grid_idx_vis_thickness);
+
+    // 5. Load Fracture Type
+    // Datasets: "tension", "shear", "crush"
+    load_dataset(fracTypePath, "tension", SimParams::HostGridArrayIndex::grid_idx_fracture_tension);
+    load_dataset(fracTypePath, "shear",   SimParams::HostGridArrayIndex::grid_idx_fracture_shear);
+    load_dataset(fracTypePath, "crush",   SimParams::HostGridArrayIndex::grid_idx_fracture_crush);
+
+    // 6. Load Physics
+    // Datasets: "mass" (others like sxx not in HostGridArrayIndex yet)
+    load_dataset(physicsPath, "mass", SimParams::HostGridArrayIndex::host_grid_idx_mass);
+
+    // 7. Load Strains
+    // Datasets: "Jpinv", "P", "Q", "E_eqv", "E_vm"
+    load_dataset(strainsPath, "Jpinv", SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv);
+    load_dataset(strainsPath, "P",     SimParams::HostGridArrayIndex::grid_idx_vis_P);
+    load_dataset(strainsPath, "Q",     SimParams::HostGridArrayIndex::grid_idx_vis_Q);
+    load_dataset(strainsPath, "E_eqv", SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange);
+    load_dataset(strainsPath, "E_vm",  SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises);
+    
+    LOGR("LoadFrameData: completed frame {}", frameIndex);
 }
+
 

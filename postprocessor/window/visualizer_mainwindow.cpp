@@ -434,8 +434,9 @@ void PPMainWindow::sliderValueChanged(int val)
 {
     try {
         // Load the frame data from disk
-        std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, val);
-        hsd.LoadFrameData(framePath);
+        // Load the frame data from disk
+        // std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, val);
+        hsd.LoadFrameData(val, currentFrameDirectory);
 
         representation.simulationTime = hsd.prms.SimulationTime;
         qDebug() << "time set to " << hsd.prms.SimulationTime;
@@ -572,8 +573,8 @@ void PPMainWindow::render_all_triggered()
 
         // Load the frame data from HDF5 file
         try {
-            std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, frameNum);
-            hsd.LoadFrameData(framePath);
+            // std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, frameNum);
+            hsd.LoadFrameData(frameNum, currentFrameDirectory);
             representation.simulationTime = hsd.prms.SimulationTime;
             // Update WACI time to match current frame
             hsd.waci.SetTime(hsd.prms.SimulationTime);
