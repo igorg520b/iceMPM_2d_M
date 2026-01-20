@@ -47,6 +47,9 @@ private:
     void PopulatePoints(int pointsPerCell, double thicknessFrom, double thicknessTo,
                         double probCracked, double stdDevThickness);
 
+    void PopulatePoints_RAM_Optimized(int pointsPerCell, double thicknessFrom, double thicknessTo,
+                                      double probCracked, double stdDevThickness, bool compress = true);
+
     // Poisson point generation helpers
     std::string prepare_cache_filename(int gx, int gy, int ppc);
     bool attempt_to_fill_from_cache(int gx, int gy, int ppc, std::vector<std::array<float, 2>> &buffer);

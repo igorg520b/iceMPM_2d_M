@@ -250,9 +250,6 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     ds.openAttribute("SimulationStep").read(H5::PredType::NATIVE_INT, &prms.SimulationStep);
     ds.openAttribute("SimulationTime").read(H5::PredType::NATIVE_DOUBLE, &prms.SimulationTime);
 
-    unsigned hssoa_size;
-    ds.openAttribute("HSSOA_size").read(H5::PredType::NATIVE_UINT, &hssoa_size);
-
     ds.openAttribute("ParticleArea").read(H5::PredType::NATIVE_DOUBLE, &prms.ParticleArea);
 
     int nPtsArrays;
@@ -263,12 +260,9 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     hsize_t dims[2];
     dsp.getSimpleExtentDims(dims, nullptr);
 
-    if(dims[0] != SimParams::PtArrIdx::nPtsArrays ||
-        dims[1] != hssoa_size ||
-        nPtsArrays != SimParams::PtArrIdx::nPtsArrays)
+    if(nPtsArrays != SimParams::PtArrIdx::nPtsArrays)
     {
-        LOGR("dims {} x {}; hssoa_size {}; nPtsInitial {}",
-             dims[0], dims[1], hssoa_size, prms.nPtsInitial);
+        LOGR("dims {} x {}; nPtsInitial {}", dims[0], dims[1], prms.nPtsInitial);
         throw std::runtime_error("ReadSnapshot array size mismatch");
     }
 
@@ -517,8 +511,6 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
         .write(H5::PredType::NATIVE_INT, &SimulationStep);
     dataset_pts.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace)
         .write(H5::PredType::NATIVE_DOUBLE, &SimulationTime);
-    dataset_pts.createAttribute("HSSOA_size", H5::PredType::NATIVE_UINT, att_dspace)
-        .write(H5::PredType::NATIVE_UINT, &nPts);
 
     int nPtsArrays = SimParams::PtArrIdx::nPtsArrays;
     dataset_pts.createAttribute("nPtsArrays", H5::PredType::NATIVE_INT, att_dspace)

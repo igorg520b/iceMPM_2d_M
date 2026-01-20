@@ -11,6 +11,8 @@ option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
 option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" OFF)
+option(BUILD_ADDITIONAL_TOOLS "Build helper tools" OFF)
+
 option(ENABLE_NAN_CHECKS "Perform NaN checks during the simulation" OFF)
 
 if(BUILD_GUI_VERSION OR BUILD_POSTPROCESSOR OR BUILD_PREPARER)
@@ -417,5 +419,33 @@ if(BUILD_PREPARER_CLI)
     # OpenMP support for parallel Kelvin wake computation
     target_compile_options(preparer_cli PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
     target_link_libraries(preparer_cli PRIVATE gomp)
+
+endif()
+
+
+
+if(BUILD_ADDITIONAL_TOOLS)
+    add_executable(raw_point_generator
+        _tools/point_generator_main.cpp
+        simulation/data_manager/poisson_disk_sampling.h
+    )
+
+    if(HDF5_INCLUDE_DIRS)
+        target_link_libraries(raw_point_generator PRIVATE ${HDF5_LIBRARIES})
+    else()
+        target_link_libraries(raw_point_generator PRIVATE hdf5_cpp-shared)
+    endif()
+
+    target_include_directories(raw_point_generator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_include_directories(raw_point_generator PRIVATE simulation/data_manager)
+
+    # OpenMP support for parallel Kelvin wake computation
+    target_compile_options(raw_point_generator PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+    target_link_libraries(raw_point_generator PRIVATE gomp)
+
+    target_link_libraries(raw_point_generator PRIVATE Eigen3::Eigen spdlog::spdlog)
+    target_link_libraries(raw_point_generator PRIVATE fmt::fmt)
+
+    target_include_directories(raw_point_generator PRIVATE simulation simulation/hssoa simulation/data_manager External External/rapidjson)
 
 endif()

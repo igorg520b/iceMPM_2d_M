@@ -387,8 +387,10 @@ void DataPreparer::PrepareGridAndPoints(std::string fileNameLandMask, std::strin
     PrepareGrid(projectDirectory, dimensionHorizontal, allocate_dense_grid);
 
     // 5. Populate Points (Using m_flags, m_thickness, and m_color)
-    PopulatePoints(pointsPerCell, thicknessFrom, thicknessTo, probCracked, stdDevThickness);
-    
+//    PopulatePoints(pointsPerCell, thicknessFrom, thicknessTo, probCracked, stdDevThickness);
+    PopulatePoints_RAM_Optimized(pointsPerCell, thicknessFrom, thicknessTo, probCracked, stdDevThickness);
+
+
     // Cleanup member buffers to release memory
     m_color.clear(); m_color.shrink_to_fit();
     m_flags.clear(); m_flags.shrink_to_fit();
@@ -638,4 +640,233 @@ void DataPreparer::PopulatePoints(int pointsPerCell, double thicknessFrom, doubl
     hsd.hssoa.convertToIntegerCellFormat(h);
     hsd.SaveSnapshot(0, 0.0, true, hsd.data_directory);
     LOGR("PopulatePoints completed");
+}
+
+void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thicknessFrom, double thicknessTo,
+                                     double probCracked, double stdDevThickness, bool compress)
+{
+    LOGR("PopulatePoints_RAM_Optimized: starting");
+
+    // (1) Load points from cache
+    LOGR("PopulatePoints_RAM_Optimized: preparing point buffer...");
+    std::vector<std::array<float, 2>> pt_buffer;
+    const int gx = hsd.prms.GridXTotal;
+    const int gy = hsd.prms.GridYTotal;
+
+    if (!attempt_to_fill_from_cache(gx, gy, pointsPerCell, pt_buffer)) {
+        generate_and_save_poisson(gx, gy, (float)pointsPerCell, pt_buffer);
+    }
+
+    if (pt_buffer.empty()) throw std::runtime_error("No Poisson points generated");
+
+    // (2) Calculate ParticleArea
+    const double h = hsd.prms.cellsize;
+    hsd.prms.ParticleArea = (h * h * gx * gy) / (double)pt_buffer.size();
+
+    // (3) Filter points (using existing logic)
+    LOGR("PopulatePoints_RAM_Optimized: filtering points...");
+    auto idxPt = [&](const std::array<float, 2> &pt) -> std::pair<int, int> {
+        const double scale = gx - 1;
+        return {(int)(pt[0] * scale + 0.5), (int)(pt[1] * scale + 0.5)};
+    };
+
+    auto shouldRemove = [&](const std::array<float, 2> &pt) -> bool {
+        auto [i, j] = idxPt(pt);
+        if (i <= 1 || j <= 1 || i >= (gx - 2) || j >= (gy - 2)) return true;
+
+        int img_x = i + hsd.prms.ModeledRegionOffsetX;
+        int img_y = j + hsd.prms.ModeledRegionOffsetY;
+        
+        uint8_t flags = m_flags[(size_t)img_y * m_width + img_x];
+        if (!(flags & FLAG_WATER)) return true;
+        if (!(flags & FLAG_ICE)) return true;
+        return false;
+    };
+
+    std::erase_if(pt_buffer, shouldRemove);
+    // Squeeze buffer
+    pt_buffer.shrink_to_fit();
+
+    hsd.prms.nPtsInitial = pt_buffer.size();
+    if (hsd.prms.nPtsInitial == 0) throw std::runtime_error("All points filtered out!");
+
+    LOGR("PopulatePoints_RAM_Optimized: {} points remaining", hsd.prms.nPtsInitial);
+
+    // Initial random generators
+    std::mt19937 rng(12345);
+    std::normal_distribution<float> thickness_dist(0.0f, (float)stdDevThickness);
+    std::bernoulli_distribution cracked_dist(probCracked);
+
+    // Prepare for HDF5 writing
+    std::string outputDir = hsd.data_directory + "/snapshots";
+    fs::create_directories(outputDir);
+    std::string h5_filename = outputDir + "/s00000.h5";
+    
+    LOGR("PopulatePoints_RAM_Optimized: creating HDF5 file {}", h5_filename);
+    H5::H5File file(h5_filename, H5F_ACC_TRUNC);
+
+    hsize_t nPts = hsd.prms.nPtsInitial;
+    hsize_t nArrays = SimParams::nPtsArrays;
+    hsize_t file_dims[2] = {nArrays, nPts};
+    H5::DataSpace file_dataspace(2, file_dims);
+
+    // Create Dataset
+    H5::DSetCreatPropList proplist;
+    // Chunking: optimize for writing full rows or reasonable blocks
+    // Standard was {17, 100000}. We can stick to that.
+    hsize_t chunk_dims[2] = {nArrays, std::min<hsize_t>(nPts, 100000)};
+    proplist.setChunk(2, chunk_dims);
+    proplist.setDeflate(6); // As requested implicitly by reusing SaveSnapshot logic
+
+    H5::DataSet dataset = file.createDataSet("pts_data", H5::PredType::NATIVE_DOUBLE, file_dataspace, proplist);
+
+    // Allocate small RAM buffer (4 slices)
+    // Layout: 4 rows x nPts columns (stored flat as 4*nPts)
+    // But we write it as a block of 4 arrays.
+    std::vector<double> ram_buffer(4 * nPts);
+
+    const double pointScale = (gx - 1) * h;
+    const double hinv = 1.0 / h;
+    const int ox = hsd.prms.ModeledRegionOffsetX;
+    const int oy = hsd.prms.ModeledRegionOffsetY;
+
+    // Helper to write buffer to dataset
+    auto write_batch = [&](int start_array_idx, int count) {
+        hsize_t mem_dims[2] = {(hsize_t)count, nPts};
+        H5::DataSpace mem_space(2, mem_dims);
+        
+        hsize_t file_count[2] = {(hsize_t)count, nPts};
+        hsize_t file_offset[2] = {(hsize_t)start_array_idx, 0};
+        
+        file_dataspace.selectHyperslab(H5S_SELECT_SET, file_count, file_offset);
+        dataset.write(ram_buffer.data(), H5::PredType::NATIVE_DOUBLE, mem_space, file_dataspace);
+        LOGR("Written arrays {}-{}", start_array_idx, start_array_idx + count - 1);
+    };
+
+    // --- BATCH 1: Indices 0, 1, 2, 3 (Utility, CellIdx, PosX, PosY) ---
+    LOGR("PopulatePoints_RAM_Optimized: Batch 1 (Basic Data)");
+    
+    // Pointers to rows in ram_buffer
+    double* buf_utility = ram_buffer.data() + 0 * nPts;
+    double* buf_cell    = ram_buffer.data() + 1 * nPts;
+    double* buf_posx    = ram_buffer.data() + 2 * nPts;
+    double* buf_posy    = ram_buffer.data() + 3 * nPts;
+
+    for (size_t k = 0; k < nPts; k++) {
+        std::array<float, 2> &pt = pt_buffer[k];
+        auto [i, j] = idxPt(pt); // Grid indices (approx)
+        size_t img_idx = (size_t)(j + oy) * m_width + (i + ox);
+
+        // Color and Flags (Utility)
+        uint32_t r = m_color[img_idx * 3 + 0];
+        uint32_t g = m_color[img_idx * 3 + 1];
+        uint32_t b = m_color[img_idx * 3 + 2];
+        
+        uint64_t utility = 0;
+        utility |= ((uint64_t)r << 24);
+        utility |= ((uint64_t)g << 32);
+        utility |= ((uint64_t)b << 40);
+
+        uint8_t flags = m_flags[img_idx];
+        if (flags & FLAG_CRUSHED) utility |= SimParams::status_crushed;
+        if (flags & FLAG_CRACKED) utility |= SimParams::status_cracked;
+        if (probCracked > 0.0 && cracked_dist(rng)) utility |= SimParams::status_cracked;
+        
+        buf_utility[k] = *reinterpret_cast<double*>(&utility);
+
+        // Integer Cell Index + Local Pos
+        // Simulating ConvertToIntegerCellFormat
+        double x_global = pt[0] * pointScale;
+        double y_global = pt[1] * pointScale;
+        
+        // i and j are the integer indices
+        uint64_t x_idx = (uint64_t)i;
+        uint64_t y_idx = (uint64_t)j;
+        uint64_t cell = (y_idx << 32) | x_idx;
+        buf_cell[k] = *reinterpret_cast<double*>(&cell);
+
+        // Local coord
+        double x_local = x_global * hinv - (double)x_idx;
+        double y_local = y_global * hinv - (double)y_idx;
+        buf_posx[k] = x_local;
+        buf_posy[k] = y_local;
+    }
+    write_batch(0, 4);
+
+    // --- BATCH 2: Indices 4, 5 (VelX, VelY) ---
+    LOGR("PopulatePoints_RAM_Optimized: Batch 2 (Velocities)");
+    std::fill(ram_buffer.begin(), ram_buffer.begin() + 2 * nPts, 0.0);
+    write_batch(4, 2);
+
+    // --- BATCH 3: Index 6 (Thickness) ---
+    LOGR("PopulatePoints_RAM_Optimized: Batch 3 (Thickness)");
+    // Reuse first row of buffer
+    double* buf_thick = ram_buffer.data();
+    for (size_t k = 0; k < nPts; k++) {
+        std::array<float, 2> &pt = pt_buffer[k];
+        auto [i, j] = idxPt(pt);
+        size_t img_idx = (size_t)(j + oy) * m_width + (i + ox);
+
+        uint8_t t_val = m_thickness[img_idx];
+        float t_norm = (float)t_val / 255.0f;
+        float thickness = (float)(thicknessFrom + t_norm * (thicknessTo - thicknessFrom));
+
+        if (stdDevThickness > 0.0) {
+            thickness += thickness_dist(rng);
+            thickness = std::clamp(thickness, (float)thicknessFrom, (float)thicknessTo);
+        }
+        buf_thick[k] = thickness;
+    }
+    write_batch(6, 1);
+
+    // --- BATCH 4: Indices 7-16 (Remaining) ---
+    LOGR("PopulatePoints_RAM_Optimized: Batch 4 (Remaining)");
+    // 7: idx_Jp_inv = 1.0
+    // 8: idx_glen_flow = 0.0
+    // 9: Fe00 = 1.0
+    // 10: Fe10 = 0.0
+    // 11: Fe01 = 0.0
+    // 12: Fe11 = 1.0
+    // 13-16: Bp00 = 0.0
+
+    // Group 4a: 7, 8, 9, 10
+    std::fill(ram_buffer.begin(), ram_buffer.end(), 0.0);
+    double* row0 = ram_buffer.data() + 0 * nPts; // Array 7
+    double* row1 = ram_buffer.data() + 1 * nPts; // Array 8
+    double* row2 = ram_buffer.data() + 2 * nPts; // Array 9
+    double* row3 = ram_buffer.data() + 3 * nPts; // Array 10
+    
+    std::fill(row0, row0 + nPts, 1.0); // 7: Jp_inv
+    std::fill(row2, row2 + nPts, 1.0); // 9: Fe00
+    write_batch(7, 4);
+
+    // Group 4b: 11, 12, 13, 14
+    std::fill(ram_buffer.begin(), ram_buffer.end(), 0.0);
+    row0 = ram_buffer.data() + 0 * nPts; // Array 11
+    row1 = ram_buffer.data() + 1 * nPts; // Array 12
+    row2 = ram_buffer.data() + 2 * nPts; // Array 13
+    row3 = ram_buffer.data() + 3 * nPts; // Array 14
+    
+    std::fill(row1, row1 + nPts, 1.0); // 12: Fe11
+    write_batch(11, 4);
+
+    // Group 4c: 15, 16
+    std::fill(ram_buffer.begin(), ram_buffer.begin() + 2 * nPts, 0.0);
+    write_batch(15, 2);
+
+    // Attributes
+    LOGR("PopulatePoints_RAM_Optimized: Writing attributes...");
+    H5::DataSpace att_dspace(H5S_SCALAR);
+    int step = 0;
+    double time = 0.0;
+    dataset.createAttribute("SimulationStep", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &step);
+    dataset.createAttribute("SimulationTime", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &time);
+    
+    int nPtsArrays_int = (int)nArrays;
+    dataset.createAttribute("nPtsArrays", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &nPtsArrays_int);
+    dataset.createAttribute("nPtsInitial", H5::PredType::NATIVE_INT, att_dspace).write(H5::PredType::NATIVE_INT, &hsd.prms.nPtsInitial);
+    dataset.createAttribute("ParticleArea", H5::PredType::NATIVE_DOUBLE, att_dspace).write(H5::PredType::NATIVE_DOUBLE, &hsd.prms.ParticleArea);
+
+    file.close();
+    LOGR("PopulatePoints_RAM_Optimized: completed");
 }
