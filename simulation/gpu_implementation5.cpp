@@ -265,7 +265,7 @@ void GPU_Implementation5::render_visualized_data()
     hsd.host_grid_buffer.assign(total_host_buffer_size, 0.0f);
 
     // Groups 0-5: Render Visualization Properties
-    for (int group = 0; group <= 5; ++group)
+    for (int group = 0; group <= 6; ++group)
     {
         // Clear GPU memory and render this group for all partitions
         for(GPU_Partition &p : partitions)
@@ -513,7 +513,10 @@ std::vector<std::pair<int, int>> GPU_Implementation5::getGroupSlotMapping(int gr
         // Group 5: Fracture Types
         {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension}, SimParams::HostGridArrayIndex::grid_idx_fracture_tension},
         {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_shear}, SimParams::HostGridArrayIndex::grid_idx_fracture_shear},
-        {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush}, SimParams::HostGridArrayIndex::grid_idx_fracture_crush}
+        {{5, SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush}, SimParams::HostGridArrayIndex::grid_idx_fracture_crush},
+
+        // Group 6
+        {{6, SimParams::GPUGridArrayIndex::gpu_grid_idx_glen_flow}, SimParams::HostGridArrayIndex::grid_idx_glen_flow}
     };
 
     std::vector<std::pair<int, int>> result;
@@ -560,7 +563,8 @@ void GPU_Implementation5::normalize_grid_on_host()
         SimParams::HostGridArrayIndex::grid_idx_vis_thickness,
         SimParams::HostGridArrayIndex::grid_idx_fracture_tension,
         SimParams::HostGridArrayIndex::grid_idx_fracture_shear,
-        SimParams::HostGridArrayIndex::grid_idx_fracture_crush
+        SimParams::HostGridArrayIndex::grid_idx_fracture_crush,
+        SimParams::HostGridArrayIndex::grid_idx_glen_flow
     };
 
     const size_t mass_plane_offset = grid_plane_size * SimParams::HostGridArrayIndex::host_grid_idx_mass;

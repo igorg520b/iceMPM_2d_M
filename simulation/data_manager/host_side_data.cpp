@@ -559,6 +559,7 @@ void HostSideData::LoadFrameData(int frameIndex, const std::string& framesDirect
     load_into_grid(pressurePath, "Jpinv", SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv);
     load_into_grid(pressurePath, "P",     SimParams::HostGridArrayIndex::grid_idx_vis_P);
     load_into_grid(pressurePath, "Q",     SimParams::HostGridArrayIndex::grid_idx_vis_Q);
+    load_into_grid(pressurePath, "glen_flow",     SimParams::HostGridArrayIndex::grid_idx_glen_flow);
 
     LOGR("LoadFrameData: completed frame {}", frameIndex);
 }
@@ -750,6 +751,11 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
                   save_buffer_float.begin());
         WriteDatasetHelper(file, "Jpinv", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+
+        offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_glen_flow;
+        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
+                  save_buffer_float.begin());
+        WriteDatasetHelper(file, "glen_flow", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
 
         file.close();
     }

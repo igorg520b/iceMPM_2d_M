@@ -81,7 +81,10 @@ public:
         // group 5
         gpu_grid_idx_fracture_tension = 0,
         gpu_grid_idx_fracture_shear = 1,
-        gpu_grid_idx_fracture_crush = 2
+        gpu_grid_idx_fracture_crush = 2,
+
+        // group 6
+        gpu_grid_idx_glen_flow = 0,
     };
 
 
@@ -108,7 +111,9 @@ public:
         grid_idx_fracture_shear = 16,
         grid_idx_fracture_crush = 17,
 
-        nGridArraysHost = 18
+        grid_idx_glen_flow = 18,
+
+        nGridArraysHost = 19
     };
 
     static bool IsPersistentGridArray(int idx);

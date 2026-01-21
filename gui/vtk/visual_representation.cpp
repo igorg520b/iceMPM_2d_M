@@ -372,6 +372,14 @@ void VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
+                else if (VisualizingVariable == VisOpt::grid_glen_flow) {
+                    if(!has_grid) continue;
+                    float val = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_glen_flow];
+                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
+                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
+                }
                 else if (VisualizingVariable == VisOpt::grid_ridges) {
                     if(!has_grid) continue;
                     float val = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv] - 1.0f;
@@ -433,8 +441,6 @@ void VisualRepresentation::SynchronizeTopology()
         actor_region_boundary->VisibilityOff();
     }
 
-
-
     // Update VTK raster image
     raster_scalars->SetNumberOfComponents(3);
     raster_scalars->SetArray(renderedImage.data(), renderedImage.size(), 1);
@@ -454,8 +460,6 @@ void VisualRepresentation::SynchronizeTopology()
     raster_texture->Update();
 
     // Contours logic removed
-
-
     SynchronizeValues();
     ConfigureScalarBar();
     UpdateTimeText();
@@ -732,15 +736,6 @@ void VisualRepresentation::ConfigureScalarBar()
         scalarBar->SetLabelFormat("%.1e");
         break;
 
-    case VisOpt::pt_Q:
-    case VisOpt::pt_glen_flow:
-        lut_ANSYS->SetTableRange(-range, range);
-        scalarBar->SetLookupTable(lut_ANSYS);
-        scalarBar->SetLabelFormat("%.1e");
-        break;
-
-
-
     case VisOpt::pt_thickness:
     case VisOpt::grid_Q:
     case VisOpt::grid_vnorm:
@@ -753,6 +748,9 @@ void VisualRepresentation::ConfigureScalarBar()
     case VisOpt::v_wind_norm:
     case VisOpt::vis_lat:
     case VisOpt::vis_lon:
+    case VisOpt::pt_Q:
+    case VisOpt::pt_glen_flow:
+    case VisOpt::grid_glen_flow:
         lut_ANSYS->SetTableRange(0, range);
         scalarBar->SetLookupTable(lut_ANSYS);
         scalarBar->SetLabelFormat("%.1e");
@@ -842,7 +840,7 @@ VisualRepresentation::~VisualRepresentation()
 
 void VisualRepresentation::SaveVisualizationState()
 {
-    std::string state_file = ".plateMPM_vis_state";
+    std::string state_file(state_file_name);
     try {
         std::ofstream out(state_file, std::ios::binary);
         if(!out) {
@@ -863,11 +861,21 @@ void VisualRepresentation::SaveVisualizationState()
 
 void VisualRepresentation::LoadVisualizationState()
 {
-    std::string state_file = "plateMPM_vis_state";
+    std::string state_file(state_file_name);
+    LOGR("VisualRepresentation::LoadVisualizationState()");
+
     try {
         std::ifstream in(state_file, std::ios::binary);
         if(!in) {
-            spdlog::debug("Visualization state file not found: {}", state_file);
+            LOGR("Visualization state file not found: {}", state_file);
+            ranges[(int)pt_Jp_inv] = ranges[(int)grid_Jpinv] = -1.0;
+            ranges[(int)grid_P] = ranges[(int)grid_Q] = ranges[(int)pt_P] = ranges[(int)pt_Q] = 5.75;
+            ranges[(int)grid_glen_flow] = -2.0;
+            ranges[(int)str_vonMises] = ranges[(int)str_EqvGreenLagrange] = -3.0;
+            ranges[(int)pt_thickness] = ranges[(int)grid_thickness] = 0.35;
+
+            transparency_coeffs[(int)grid_Jpinv] = transparency_coeffs[(int)pt_Jp_inv] = 1.0;
+            transparency_coeffs[(int)grid_glen_flow] = 0.9;
             return;
         }
 
@@ -876,8 +884,9 @@ void VisualRepresentation::LoadVisualizationState()
         in.read(reinterpret_cast<char*>(transparency_coeffs), sizeof(transparency_coeffs));
         in.close();
 
-        spdlog::debug("Visualization state loaded from {}", state_file);
+        LOGR("Visualization state loaded from {}", state_file);
     } catch (const std::exception& e) {
-        spdlog::debug("Error loading visualization state: {}", e.what());
+        LOGR("Error loading visualization state: {}", e.what());
+
     }
 }

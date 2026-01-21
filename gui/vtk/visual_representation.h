@@ -75,17 +75,18 @@ public:
         grid_cracked, //20
         grid_thickness, //21
         grid_fracture_type, //22
-        str_EqvGreenLagrange, //23
-        str_vonMises, //24
+        grid_glen_flow,     // 23
+        str_EqvGreenLagrange, //24
+        str_vonMises, //25
         // visualization of external currents/forces
-        v_ocean_norm, //25
-        v_wind_norm,
+        v_ocean_norm, //26
+        v_wind_norm,  // 27
         vis_lat,
         vis_lon
     };
     Q_ENUM(VisOpt)
 
-    inline static constexpr std::array<std::string_view, 29> visOptDescriptions = {
+    inline static constexpr std::array<std::string_view, 30> visOptDescriptions = {
         "", "Regions", "Status", "Color",
         "Change in Surf. Density", "Ridges",
         "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions", "Glen Flow", 
@@ -95,7 +96,7 @@ public:
 
         "In-plane Pressure P", "Deviatoric Stress Q",
         "Colors", "Ice velocity norm", "Cracked/Crushed Material",
-        "Ice Thickness", "Fracture Type",
+        "Ice Thickness", "Fracture Type", "Glen Flow",
         "Green-Lagrange Strain", "von Mises Strain",
         "Ocean Current Velocity Norm", "Wind Velocity Norm", "Latitude", "Longitude"
     };
@@ -106,9 +107,6 @@ public:
     double ranges[max_vis_opts] = {};
     double transparency_coeffs[max_vis_opts] = {};
 
-
-
-
     // actor_contours moved to top
 
     void SynchronizeTopology();
@@ -117,6 +115,8 @@ public:
     void UpdateTimeText();
 
 private:
+    constexpr static std::string_view state_file_name = "plateMPM_vis_state";
+
     ColorMap colormap;
     void SynchronizeValues();
 

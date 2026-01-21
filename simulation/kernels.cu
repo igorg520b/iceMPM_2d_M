@@ -544,6 +544,21 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_crush*pitch_g + idx_gridnode], val_crush*incM);
             }
     }
+
+    else if(group == 6)
+    {
+        const float glen_flow = (float)bpts[pt_idx + pitch * SimParams::PtArrIdx::idx_glen_flow];
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++)
+            {
+                const float Wip = ww[i+1][0]*ww[j+1][1];
+                // index of the cell takes into accout the partition's offset of the gird fragment
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const float incM = Wip*particle_mass;
+
+                atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_glen_flow*pitch_g + idx_gridnode], glen_flow*incM);
+            }
+    }
 }
 
 
