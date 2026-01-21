@@ -168,8 +168,7 @@ void VisualRepresentation::SynchronizeTopology()
     const SimParams& prms = hsd.prms;
     const std::vector<uint8_t>& grid_status = hsd.landmask_buffer;
     const std::vector<uint8_t>& original_colors = hsd.original_image_colors_rgb;
-    const std::vector<double>& grid_buffer = hsd.host_grid_buffer;
-
+    const std::vector<float>& grid_buffer = hsd.host_grid_buffer;
 
     const int width = prms.InitializationImageSizeX;
     const int height = prms.InitializationImageSizeY;

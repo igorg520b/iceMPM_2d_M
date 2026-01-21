@@ -50,7 +50,7 @@ struct GPU_Partition
 
     unsigned *host_disabled_points_count;
     unsigned get_disabled_pts() {return *host_disabled_points_count; }
-    double *host_grid_forces_summary_per_region;
+//    double *host_grid_forces_summary_per_region;
 
     // preparation
     void initialize(int device, int partition);

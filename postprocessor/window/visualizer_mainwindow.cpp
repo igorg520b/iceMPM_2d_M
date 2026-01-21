@@ -421,11 +421,11 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
     qsbFrameTo->setMaximum(countFrames-1);
     qsbFrameTo->setValue(countFrames-1);
 
-    qsbFrameFrom->setMaximum(countFrames - 1);
+    qsbFrameFrom->setMaximum(countFrames);
     qsbFrameFrom->setValue(1);
 
     // Load and display the last frame as a starting point
-    slider2->setValue(countFrames - 2);
+    slider2->setValue(countFrames);
 
     statusBar->showMessage(QString("Loaded %1 frames").arg(countFrames));
 }

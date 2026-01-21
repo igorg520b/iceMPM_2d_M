@@ -39,7 +39,7 @@ struct PartitionParams
     PartitionUtilityData *pud;          // gpu-side allocation
     unsigned *disabled_points_count;    // how many disabled pts in this partition
 
-    double *grid_forces_summary_per_region;
+    //double *grid_forces_summary_per_region;
 };
 
 #endif // PARTITION_PARAMS_H
