@@ -29,7 +29,14 @@ WindAndCurrentInterpolator::WindAndCurrentInterpolator(SimParams& params) : prms
     current_wind_first_idx = -1;
     current_wind_second_idx = -1; 
     current_wind_active_slots[0] = -1;
+    current_wind_active_slots[0] = -1;
     current_wind_active_slots[1] = -1;
+
+    // Check HDF5 Version
+    unsigned maj, min, rel;
+    H5get_libversion(&maj, &min, &rel);
+    LOGR("HDF5 Version [Compile-Time]: {}", H5_VERS_INFO);
+    LOGR("HDF5 Version [Runtime]:      {}.{}.{}" , maj, min, rel);
 }
 
 WindAndCurrentInterpolator::~WindAndCurrentInterpolator() = default;
@@ -686,6 +693,9 @@ WindAndCurrentInterpolator::RotMat WindAndCurrentInterpolator::ComputeRotation(d
 
 void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
 {
+    LOGR("LoadWindFrame: frameIdx={}, bufferSlot={}, UseWindData={}, file_wind={}", 
+         frameIdx, bufferSlot, prms.UseWindData, (void*)file_wind.get());
+
     if (!file_wind || !prms.UseWindData) return;
     
     // 1. Read Raw ERA5 Frame (Entire slice)
@@ -699,6 +709,7 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
     raw_v.resize(n_elem);
     
     try {
+        LOGR("LoadWindFrame: Opening datasets 'u' and 'v'...");
         H5::DataSet ds_u = file_wind->openDataSet("u");
         H5::DataSet ds_v = file_wind->openDataSet("v");
         // Check dims to see if 3D or 4D. User said u(time, level, lat, lon).
@@ -708,6 +719,13 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         int ndims = space.getSimpleExtentNdims();
         std::vector<hsize_t> dims_file(ndims);
         space.getSimpleExtentDims(dims_file.data(), NULL);
+
+        std::string dimStr = "";
+        for(size_t k=0; k<dims_file.size(); ++k) {
+            dimStr += std::to_string(dims_file[k]);
+            if(k < dims_file.size()-1) dimStr += ", ";
+        }
+        LOGR("LoadWindFrame: Dataset 'u' ndims={}, dims=({})", ndims, dimStr);
 
         std::vector<hsize_t> start(ndims, 0);
         std::vector<hsize_t> count(ndims, 1);
@@ -719,6 +737,7 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         count[ndims-2] = n_lat;
         count[ndims-1] = n_lon;
         
+        LOGR("LoadWindFrame: Hyperslab Select input...");
         space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
         
         // Mem space needs to match the selection (2D flattened or specific shape)
@@ -726,8 +745,11 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         hsize_t mem_dims[2] = {(hsize_t)n_lat, (hsize_t)n_lon}; 
         H5::DataSpace mem_space(2, mem_dims);
         
+        LOGR("LoadWindFrame: Reading 'u'...");
         ds_u.read(raw_u.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
+        LOGR("LoadWindFrame: Reading 'v'...");
         ds_v.read(raw_v.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
+        LOGR("LoadWindFrame: Read complete.");
         
     } catch (const H5::Exception& e) {
         LOGR("Error reading ERA5 frame {}: {}", frameIdx, e.getDetailMsg());
