@@ -401,7 +401,7 @@ void GPU_Implementation5::record_timings()
 
 void GPU_Implementation5::allocate_device_arrays()
 {
-    LOGR("GPU_Implementation5::allocate_device_arrays()");
+    LOGR("GPU_Implementation5::allocate_device_arrays();  extra_space_pts {}", hsd.prms.extra_space_pts);
 
     const unsigned &nPts = hsd.hssoa.size;
     const unsigned pts_reserve = (nPts/partitions.size()) * (1. + hsd.prms.extra_space_pts);

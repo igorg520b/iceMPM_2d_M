@@ -6,8 +6,8 @@
 "IceCompressiveThreshold":3.0e6,
 "IceTensileStrength2":3.0e6,
 "DP_phi":55,
-"waterDragEffectiveQuadratic":30e-3,
-"windDragEffectiveQuadratic":11e-6,
+"waterDragEffectiveQuadratic":15e-3,
+"windDragEffectiveQuadratic":8e-6,
 "GlenA":2e-24,
 "RidgeFormationCoeff":0.1, 
 
@@ -41,7 +41,7 @@
 "tpb_P2G":256,
 "tpb_Upd":512,
 "tpb_G2P":128,
-"nPartitions":1
+"nPartitions":2
 }
 
 

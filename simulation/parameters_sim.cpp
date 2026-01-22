@@ -159,7 +159,10 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("tpb_P2G")) tpb_P2G = doc["tpb_P2G"].GetInt();
     if(doc.HasMember("tpb_Upd")) tpb_Upd = doc["tpb_Upd"].GetInt();
     if(doc.HasMember("tpb_G2P")) tpb_G2P = doc["tpb_G2P"].GetInt();
+
     if(doc.HasMember("nPartitions")) nPartitions = doc["nPartitions"].GetUint();
+    if(nPartitions == 1) extra_space_pts = 0;
+
     if(doc.HasMember("GridHaloSize")) GridHaloSize = doc["GridHaloSize"].GetUint();
     if(doc.HasMember("HaloDiffusionThreshold")) HaloDiffusionThreshold = doc["HaloDiffusionThreshold"].GetUint();
 
@@ -184,8 +187,6 @@ void SimParams::ComputeHelperVariables()
     dt_vol_Dpinv = InitialTimeStep*ParticleArea*Dp_inv;
     vmax = 0.25*cellsize/InitialTimeStep;
 
-    if(nPartitions == 1) extra_space_pts = 0;
-
     // compute suggested time step
 //    double suggested_dt = 0.8 * cellsize * sqrt(IceDensity*ThicknessFrom/YoungsModulus);
 //    LOGR("SimParams::ComputeHelperVariables(): suggested_dt: {}", suggested_dt);
@@ -197,48 +198,51 @@ void SimParams::ComputeHelperVariables()
 
 void SimParams::Printout()
 {
-    spdlog::info(fmt::format(fmt::runtime("Simulation Parameters:")));
-    spdlog::info(fmt::format(fmt::runtime("nPartitions: {}"), nPartitions));
-    spdlog::info(fmt::format(fmt::runtime("InitialTimeStep: {}, SimulationEndTime: {}"), InitialTimeStep, SimulationEndTime));
-    spdlog::info(fmt::format(fmt::runtime("AnimationFramePeriod: {}"), AnimationFramePeriod));
-    spdlog::info(fmt::format(fmt::runtime("GridXTotal: {}, GridYTotal: {}"), GridXTotal, GridYTotal));
-    spdlog::info(fmt::format(fmt::runtime("ModeledRegionOffsetX: {}, ModeledRegionOffsetY: {}"), ModeledRegionOffsetX, ModeledRegionOffsetY));
-    spdlog::info(fmt::format(fmt::runtime("InitializationImageSizeX: {}, InitializationImageSizeY: {}"), InitializationImageSizeX, InitializationImageSizeY));
-    spdlog::info(fmt::format(fmt::runtime("DimensionHorizontal: {}"), DimensionHorizontal));
-    spdlog::info(fmt::format(fmt::runtime("SimulationStep: {}"), SimulationStep));
-    spdlog::info(fmt::format(fmt::runtime("SimulationTime: {}"), SimulationTime));
-    spdlog::info(fmt::format(fmt::runtime("UpdateEveryNthStep: {}"), UpdateEveryNthStep));
+    LOGR("");
+    LOGR("Simulation Parameters:");
+    LOGR("nPartitions: {}", nPartitions);
+    LOGR("extra_space_pts: {:.6g}", extra_space_pts);
+    LOGR("InitialTimeStep: {:.6g}, SimulationEndTime: {:.6g}", InitialTimeStep, SimulationEndTime);
+    LOGR("AnimationFramePeriod: {:.6g}", AnimationFramePeriod);
+    LOGR("GridXTotal: {}, GridYTotal: {}", GridXTotal, GridYTotal);
+    LOGR("ModeledRegionOffsetX: {}, ModeledRegionOffsetY: {}", ModeledRegionOffsetX, ModeledRegionOffsetY);
+    LOGR("InitializationImageSizeX: {}, InitializationImageSizeY: {}", InitializationImageSizeX, InitializationImageSizeY);
+    LOGR("DimensionHorizontal: {:.6g}", DimensionHorizontal);
+    LOGR("SimulationStep: {}", SimulationStep);
+    LOGR("SimulationTime: {:.6g}", SimulationTime);
+    LOGR("UpdateEveryNthStep: {}", UpdateEveryNthStep);
 
 
     // parameters
-    spdlog::info("");
-    spdlog::info(fmt::format(fmt::runtime("Parameters:")));
-    spdlog::info(fmt::format(fmt::runtime("dt_vol_Dpinv: {}, vmax: {}"), dt_vol_Dpinv, vmax));
+    LOGR("");
+    LOGR("Parameters:");
+    LOGR("dt_vol_Dpinv: {:.6g}, vmax: {:.6g}", dt_vol_Dpinv, vmax);
 
-    spdlog::info(fmt::format(fmt::runtime("lambda: {}, mu: {}, kappa: {}"), lambda, mu, kappa));
-    spdlog::info(fmt::format(fmt::runtime("ParticleArea: {}, ParticleViewSize: {}"), ParticleArea, ParticleViewSize));
-    spdlog::info(fmt::format(fmt::runtime("ParticleMass: {}"), ParticleMass));
-    spdlog::info(fmt::format(fmt::runtime("DP_phi: {}, DP_threshold_p: {}"), DP_phi, DP_threshold_p));
-    spdlog::info(fmt::format(fmt::runtime("PoissonsRatio: {}, YoungsModulus: {}"),
-                             PoissonsRatio, YoungsModulus));
-    spdlog::info(fmt::format(fmt::runtime("IceCompressiveStrength: {}, IceTensileStrength: {}, IceShearStrength: {}, IceTensileStrength2: {}, IceShearStrengthFractured: {}"),
-                             IceCompressiveStrength, IceTensileStrength, IceShearStrength, IceTensileStrength2, IceShearStrengthFractured));
-    spdlog::info(fmt::format(fmt::runtime("RidgeFormationCoeff: {}"),
-                             RidgeFormationCoeff));
+    LOGR("lambda: {:.6g}, mu: {:.6g}, kappa: {:.6g}", lambda, mu, kappa);
+    LOGR("ParticleArea: {:.6g}, ParticleViewSize: {:.6g}", ParticleArea, ParticleViewSize);
+    LOGR("ParticleMass: {:.6g}", ParticleMass);
+    LOGR("DP_phi: {:.6g}, DP_threshold_p: {:.6g}", DP_phi, DP_threshold_p);
+    LOGR("PoissonsRatio: {:.6g}, YoungsModulus: {:.6g}",
+                             PoissonsRatio, YoungsModulus);
+    LOGR("IceCompressiveStrength: {:.6g}, IceTensileStrength: {:.6g}, IceShearStrength: {:.6g}, IceTensileStrength2: {:.6g}, IceShearStrengthFractured: {:.6g}",
+                             IceCompressiveStrength, IceTensileStrength, IceShearStrength, IceTensileStrength2, IceShearStrengthFractured);
+    LOGR("RidgeFormationCoeff: {:.6g}",
+                             RidgeFormationCoeff);
     // points
-    spdlog::info("");
-    spdlog::info(fmt::format(fmt::runtime("Points:")));
-    spdlog::info(fmt::format(fmt::runtime("nPtsInitial: {}"), nPtsInitial));
+    LOGR("");
+    LOGR("Points:");
+    LOGR("nPtsInitial: {}", nPtsInitial);
 
     // grid
-    spdlog::info("");
-    spdlog::info(fmt::format(fmt::runtime("Grid:")));
-    spdlog::info(fmt::format(fmt::runtime("cellsize: {}; cellsize*InitializationImageSizeX: {}"),
-                             cellsize, cellsize * InitializationImageSizeX));
-    spdlog::info(fmt::format(fmt::runtime("Sim grid: {} x {}"), GridXTotal, GridYTotal));
-    spdlog::info(fmt::format(fmt::runtime("Original image: {} x {}"), InitializationImageSizeX, InitializationImageSizeY));
-    spdlog::info(fmt::format(fmt::runtime("Offset of the modelled region: [{}, {}]"),
-                             ModeledRegionOffsetX, ModeledRegionOffsetY));
+    LOGR("");
+    LOGR("Grid:");
+    LOGR("cellsize: {:.6g}; cellsize*InitializationImageSizeX: {:.6g}",
+                             cellsize, cellsize * InitializationImageSizeX);
+    LOGR("Sim grid: {} x {}", GridXTotal, GridYTotal);
+    LOGR("Original image: {} x {}", InitializationImageSizeX, InitializationImageSizeY);
+    LOGR("Offset of the modelled region: [{}, {}]",
+                             ModeledRegionOffsetX, ModeledRegionOffsetY);
+    LOGR("END PARAMETER PRINTOUT\n");
 }
 
 bool SimParams::IsPersistentGridArray(int idx)
