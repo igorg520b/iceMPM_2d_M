@@ -291,36 +291,23 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     // Explicitly read 'uo' and 'vo'
     // Explicitly read 'uo' and 'vo'
     auto read_strict = [&](const std::string& name, std::vector<float>& buf) {
-        LOGR("GLO12: Processing variable '{}'...", name);
         if (!file_glo12->nameExists(name)) {
              throw std::runtime_error(fmt::format("GLO12: Variable '{}' not found in file", name));
         }
 
-        LOGR("GLO12: Opening Dataset '{}'", name);
         H5::DataSet ds = file_glo12->openDataSet(name);
         H5::DataSpace space = ds.getSpace();
         int ndims = space.getSimpleExtentNdims();
         std::vector<hsize_t> dims(ndims);
         space.getSimpleExtentDims(dims.data(), NULL);
 
-        std::string dimStr = "";
-        for(size_t k=0; k<dims.size(); ++k) {
-            dimStr += std::to_string(dims[k]);
-            if(k < dims.size()-1) dimStr += ", ";
-        }
-        LOGR("GLO12: Dataset '{}' ndims={}, dims=({})", name, ndims, dimStr);
-
         std::vector<hsize_t> start(ndims, 0);
         std::vector<hsize_t> count(ndims, 1);
         
         // Assuming time is 0-th dim, lat/lon last two
-        if (ndims < 3) LOGR("WARNING: GLO12 Dataset {} has < 3 dims, assuming [time, lat, lon] structure might fail?", name);
-
         start[0] = frameIdx;
         count[ndims-2] = n_lat;
         count[ndims-1] = n_lon;
-        
-        LOGR("GLO12: Hyperslab Select: Start=({}, ...), Count=(..., {}, {})", start[0], count[ndims-2], count[ndims-1]);
         
         // Select hyperslab
         space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
@@ -328,9 +315,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
         hsize_t mem_dims[2] = {(hsize_t)n_lat, (hsize_t)n_lon};
         H5::DataSpace mem_space(2, mem_dims);
         
-        LOGR("GLO12: Reading data into buffer size {}...", buf.size());
         ds.read(buf.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
-        LOGR("GLO12: Read complete.");
         
         // Attributes for unpacking
         double fill_value = -32767.0; // Default
@@ -343,7 +328,6 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
         }
         
         // Apply filtering (Fill Value check)
-        LOGR("GLO12: Processing fill values (fill={})...", fill_value);
         float min_val = 1e9, max_val = -1e9;
         int valid_count = 0;
         for(auto& v : buf) {
@@ -364,11 +348,8 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     };
 
     // Strict Read
-    LOGR("GLO12: invoking read_strict('uo')");
     read_strict("uo", raw_u);
-    LOGR("GLO12: invoking read_strict('vo')");
     read_strict("vo", raw_v);
-    LOGR("GLO12: read_strict('vo') done");
 
     // --- INTEGRATE TIDES IF AVAILABLE ---
     if (prms.UseGLO12Tides && file_glo12_tides) {
@@ -693,9 +674,6 @@ WindAndCurrentInterpolator::RotMat WindAndCurrentInterpolator::ComputeRotation(d
 
 void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
 {
-    LOGR("LoadWindFrame: frameIdx={}, bufferSlot={}, UseWindData={}, file_wind={}", 
-         frameIdx, bufferSlot, prms.UseWindData, (void*)file_wind.get());
-
     if (!file_wind || !prms.UseWindData) return;
     
     // 1. Read Raw ERA5 Frame (Entire slice)
@@ -709,7 +687,6 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
     raw_v.resize(n_elem);
     
     try {
-        LOGR("LoadWindFrame: Opening datasets 'u' and 'v'...");
         H5::DataSet ds_u = file_wind->openDataSet("u");
         H5::DataSet ds_v = file_wind->openDataSet("v");
         // Check dims to see if 3D or 4D. User said u(time, level, lat, lon).
@@ -719,13 +696,6 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         int ndims = space.getSimpleExtentNdims();
         std::vector<hsize_t> dims_file(ndims);
         space.getSimpleExtentDims(dims_file.data(), NULL);
-
-        std::string dimStr = "";
-        for(size_t k=0; k<dims_file.size(); ++k) {
-            dimStr += std::to_string(dims_file[k]);
-            if(k < dims_file.size()-1) dimStr += ", ";
-        }
-        LOGR("LoadWindFrame: Dataset 'u' ndims={}, dims=({})", ndims, dimStr);
 
         std::vector<hsize_t> start(ndims, 0);
         std::vector<hsize_t> count(ndims, 1);
@@ -737,7 +707,6 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         count[ndims-2] = n_lat;
         count[ndims-1] = n_lon;
         
-        LOGR("LoadWindFrame: Hyperslab Select input...");
         space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
         
         // Mem space needs to match the selection (2D flattened or specific shape)
@@ -745,11 +714,8 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         hsize_t mem_dims[2] = {(hsize_t)n_lat, (hsize_t)n_lon}; 
         H5::DataSpace mem_space(2, mem_dims);
         
-        LOGR("LoadWindFrame: Reading 'u'...");
         ds_u.read(raw_u.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
-        LOGR("LoadWindFrame: Reading 'v'...");
         ds_v.read(raw_v.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
-        LOGR("LoadWindFrame: Read complete.");
         
     } catch (const H5::Exception& e) {
         LOGR("Error reading ERA5 frame {}: {}", frameIdx, e.getDetailMsg());
