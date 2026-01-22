@@ -293,8 +293,6 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
         std::vector<hsize_t> dims(ndims);
         space.getSimpleExtentDims(dims.data(), NULL);
 
-        LOGR("GLO12: Found variable '{}', dims: {}", name, fmt::join(dims, ", "));
-        
         std::vector<hsize_t> start(ndims, 0);
         std::vector<hsize_t> count(ndims, 1);
         
