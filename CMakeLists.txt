@@ -11,6 +11,7 @@ option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
 option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" OFF)
+option(BUILD_COMPRESSOR "Build the CLI compressor utility" OFF)
 
 option(ENABLE_NAN_CHECKS "Perform NaN checks during the simulation" OFF)
 
@@ -23,7 +24,7 @@ endif()
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
 find_package(Eigen3 REQUIRED NO_MODULE)
-find_package(HDF5 REQUIRED COMPONENTS CXX)
+find_package(HDF5 REQUIRED COMPONENTS CXX C)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(PNG REQUIRED)
@@ -425,3 +426,13 @@ if(BUILD_PREPARER_CLI)
 endif()
 
 
+if(BUILD_COMPRESSOR)
+    add_executable(compressor
+        compressor/core.cpp
+        compressor/core.cpp
+        compressor/main_serial.cpp
+    )
+    target_include_directories(compressor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(compressor PRIVATE ${HDF5_LIBRARIES})
+
+endif()

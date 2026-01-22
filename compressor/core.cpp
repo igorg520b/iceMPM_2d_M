@@ -134,27 +134,42 @@ bool process_frame_file(const std::string& inputFile, const std::string& outputF
             hid_t dset_new = H5Dcreate(fdst, "rgba", H5T_NATIVE_UINT8, space, H5P_DEFAULT, plist, H5P_DEFAULT);
             H5Dwrite(dset_new, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
             
-            // Attributes
-             if (H5Aexists(dset, "SimulationStep") > 0) {
-                int simStep;
-                hid_t attr = H5Aopen(dset, "SimulationStep", H5P_DEFAULT);
-                H5Aread(attr, H5T_NATIVE_INT, &simStep);
-                hid_t attr_new = H5Acreate(dset_new, "SimulationStep", H5T_NATIVE_INT, H5Screate(H5S_SCALAR), H5P_DEFAULT, H5P_DEFAULT);
-                H5Awrite(attr_new, H5T_NATIVE_INT, &simStep);
-                H5Aclose(attr); H5Aclose(attr_new);
-            }
-            if (H5Aexists(dset, "SimulationTime") > 0) {
-                double simTime;
-                hid_t attr = H5Aopen(dset, "SimulationTime", H5P_DEFAULT);
-                H5Aread(attr, H5T_NATIVE_DOUBLE, &simTime);
-                hid_t attr_new = H5Acreate(dset_new, "SimulationTime", H5T_NATIVE_DOUBLE, H5Screate(H5S_SCALAR), H5P_DEFAULT, H5P_DEFAULT);
-                H5Awrite(attr_new, H5T_NATIVE_DOUBLE, &simTime);
-                H5Aclose(attr); H5Aclose(attr_new);
-            }
-
             H5Pclose(plist); H5Dclose(dset_new); H5Sclose(space); H5Dclose(dset);
         }
     }
+
+    // Copy File-level Attributes (SimulationStep, SimulationTime) if they exist
+    // This handles attributes from 'color' directory files or any other files.
+    // Copy File-level Attributes (SimulationStep, SimulationTime) - Assumed to exist per requirement
+    if (H5Aexists(fsrc, "SimulationStep") > 0)
+    {
+        int simStep;
+        hid_t attr = H5Aopen(fsrc, "SimulationStep", H5P_DEFAULT);
+        H5Aread(attr, H5T_NATIVE_INT, &simStep);
+        H5Aclose(attr);
+
+        hid_t space = H5Screate(H5S_SCALAR);
+        hid_t attr_new = H5Acreate(fdst, "SimulationStep", H5T_NATIVE_INT, space, H5P_DEFAULT, H5P_DEFAULT);
+        H5Awrite(attr_new, H5T_NATIVE_INT, &simStep);
+        H5Aclose(attr_new);
+        H5Sclose(space);
+    }
+
+    if (H5Aexists(fsrc, "SimulationTime") > 0)
+    {
+        double simTime;
+        hid_t attr = H5Aopen(fsrc, "SimulationTime", H5P_DEFAULT);
+        H5Aread(attr, H5T_NATIVE_DOUBLE, &simTime);
+        H5Aclose(attr);
+
+        hid_t space = H5Screate(H5S_SCALAR);
+        hid_t attr_new = H5Acreate(fdst, "SimulationTime", H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, H5P_DEFAULT);
+        H5Awrite(attr_new, H5T_NATIVE_DOUBLE, &simTime);
+        H5Aclose(attr_new);
+        H5Sclose(space);
+    }
+
+
 
     H5Fclose(fdst);
     H5Fclose(fsrc);
@@ -165,7 +180,7 @@ bool process_frame_file(const std::string& inputFile, const std::string& outputF
             if (std::filesystem::exists(inputFile)) {
                 std::filesystem::remove(inputFile);
             }
-            std::filesystem::rename(outputFile, inputFile);
+            //std::filesystem::rename(outputFile, inputFile);
             // inputFile is now the compressed file
         } catch (const std::filesystem::filesystem_error& e) {
             std::cerr << "  Error overwriting file " << inputFile << ": " << e.what() << std::endl;
