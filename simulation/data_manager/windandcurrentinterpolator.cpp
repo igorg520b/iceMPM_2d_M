@@ -282,24 +282,38 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     std::vector<float> raw_u(n_elem), raw_v(n_elem);
     
     // Explicitly read 'uo' and 'vo'
+    // Explicitly read 'uo' and 'vo'
     auto read_strict = [&](const std::string& name, std::vector<float>& buf) {
+        LOGR("GLO12: Processing variable '{}'...", name);
         if (!file_glo12->nameExists(name)) {
              throw std::runtime_error(fmt::format("GLO12: Variable '{}' not found in file", name));
         }
 
+        LOGR("GLO12: Opening Dataset '{}'", name);
         H5::DataSet ds = file_glo12->openDataSet(name);
         H5::DataSpace space = ds.getSpace();
         int ndims = space.getSimpleExtentNdims();
         std::vector<hsize_t> dims(ndims);
         space.getSimpleExtentDims(dims.data(), NULL);
 
+        std::string dimStr = "";
+        for(size_t k=0; k<dims.size(); ++k) {
+            dimStr += std::to_string(dims[k]);
+            if(k < dims.size()-1) dimStr += ", ";
+        }
+        LOGR("GLO12: Dataset '{}' ndims={}, dims=({})", name, ndims, dimStr);
+
         std::vector<hsize_t> start(ndims, 0);
         std::vector<hsize_t> count(ndims, 1);
         
         // Assuming time is 0-th dim, lat/lon last two
+        if (ndims < 3) LOGR("WARNING: GLO12 Dataset {} has < 3 dims, assuming [time, lat, lon] structure might fail?", name);
+
         start[0] = frameIdx;
         count[ndims-2] = n_lat;
         count[ndims-1] = n_lon;
+        
+        LOGR("GLO12: Hyperslab Select: Start=({}, ...), Count=(..., {}, {})", start[0], count[ndims-2], count[ndims-1]);
         
         // Select hyperslab
         space.selectHyperslab(H5S_SELECT_SET, count.data(), start.data());
@@ -307,7 +321,9 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
         hsize_t mem_dims[2] = {(hsize_t)n_lat, (hsize_t)n_lon};
         H5::DataSpace mem_space(2, mem_dims);
         
+        LOGR("GLO12: Reading data into buffer size {}...", buf.size());
         ds.read(buf.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
+        LOGR("GLO12: Read complete.");
         
         // Attributes for unpacking
         double fill_value = -32767.0; // Default
@@ -320,6 +336,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
         }
         
         // Apply filtering (Fill Value check)
+        LOGR("GLO12: Processing fill values (fill={})...", fill_value);
         float min_val = 1e9, max_val = -1e9;
         int valid_count = 0;
         for(auto& v : buf) {
@@ -340,8 +357,11 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     };
 
     // Strict Read
+    LOGR("GLO12: invoking read_strict('uo')");
     read_strict("uo", raw_u);
+    LOGR("GLO12: invoking read_strict('vo')");
     read_strict("vo", raw_v);
+    LOGR("GLO12: read_strict('vo') done");
 
     // --- INTEGRATE TIDES IF AVAILABLE ---
     if (prms.UseGLO12Tides && file_glo12_tides) {
