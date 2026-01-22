@@ -99,7 +99,7 @@ void WindAndCurrentInterpolator::SetGLO12TidesPath(const std::string& filePath)
     }
     
     glo12_tides_path = filePath;
-    spdlog::info("Loading GLO12 Tides Metadata from {}", glo12_tides_path);
+    LOGR("Loading GLO12 Tides Metadata from {}", glo12_tides_path);
     file_glo12_tides = std::make_unique<H5::H5File>(glo12_tides_path, H5F_ACC_RDONLY);
     
     // We assume the grid and time structure matches existing GLO12 file for simplicity.
@@ -152,7 +152,7 @@ void WindAndCurrentInterpolator::LoadEra5Metadata()
 {
     if (era5_path.empty()) return;
     
-    spdlog::info("Loading ERA5 Metadata from {}", era5_path);
+    LOGR("Loading ERA5 Metadata from {}", era5_path);
     file_wind = std::make_unique<H5::H5File>(era5_path, H5F_ACC_RDONLY);
     
     // Load Time
@@ -167,7 +167,7 @@ void WindAndCurrentInterpolator::LoadEra5Metadata()
         
         if (era5_times.empty()) throw std::runtime_error("ERA5 time dataset empty");
         era5_start_time = era5_times[0];
-        spdlog::info("ERA5 Start Time: {}", era5_start_time);
+        LOGR("ERA5 Start Time: {}", era5_start_time);
     }
     
     // Load Latitude
@@ -190,14 +190,14 @@ void WindAndCurrentInterpolator::LoadEra5Metadata()
         ds_lon.read(era5_lons.data(), H5::PredType::NATIVE_DOUBLE);
     }
     
-    spdlog::info("ERA5 Grid: {}x{} (Lat/Lon)", era5_lats.size(), era5_lons.size());
+    LOGR("ERA5 Grid: {}x{} (Lat/Lon)", era5_lats.size(), era5_lons.size());
 }
 
 void WindAndCurrentInterpolator::LoadGLO12Metadata()
 {
     if (glo12_path.empty()) return;
 
-    spdlog::info("Loading GLO12 Metadata from {}", glo12_path);
+    LOGR("Loading GLO12 Metadata from {}", glo12_path);
     file_glo12 = std::make_unique<H5::H5File>(glo12_path, H5F_ACC_RDONLY);
 
     // Load Time (try 'time', then 'time_counter')
@@ -230,7 +230,7 @@ void WindAndCurrentInterpolator::LoadGLO12Metadata()
         // 7305 days * 24 * 3600 = 631,152,000 seconds
         const long long OFFSET_1950_TO_1970 = 631152000;
         
-        spdlog::info("GLO12: Converting 'Hours since 1950' to Unix Timestamps");
+        LOGR("GLO12: Converting 'Hours since 1950' to Unix Timestamps");
         for(int i=0; i<glo12_num_frames; ++i) {
              double hours_since_1950 = buf[i];
              // Convert to seconds since 1950
@@ -239,10 +239,10 @@ void WindAndCurrentInterpolator::LoadGLO12Metadata()
              glo12_times[i] = seconds_since_1950 - OFFSET_1950_TO_1970;
         }
         glo12_start_time = glo12_times[0];
-        spdlog::info("GLO12 Start Time: {} (seconds-ish)", glo12_start_time);
+        LOGR("GLO12 Start Time: {} (seconds-ish)", glo12_start_time);
 
     } catch (const H5::Exception& e) {
-        spdlog::error("GLO12 Error loading time: {}", e.getDetailMsg());
+        LOGR("GLO12 Error loading time: {}", e.getDetailMsg());
         throw;
     }
 
@@ -258,13 +258,13 @@ void WindAndCurrentInterpolator::LoadGLO12Metadata()
         space.getSimpleExtentDims(dims, NULL);
         out_vec.resize(dims[0]);
         ds.read(out_vec.data(), H5::PredType::NATIVE_DOUBLE);
-        spdlog::info("GLO12 Loaded {} from '{}', size {}", label, name, dims[0]);
+        LOGR("GLO12 Loaded {} from '{}', size {}", label, name, dims[0]);
     };
 
     load_coord_strict("latitude", glo12_lats, "Latitude");
     load_coord_strict("longitude", glo12_lons, "Longitude");
 
-    spdlog::info("GLO12 Grid: {}x{} (Lat/Lon)", glo12_lats.size(), glo12_lons.size());
+    LOGR("GLO12 Grid: {}x{} (Lat/Lon)", glo12_lats.size(), glo12_lons.size());
 }
 
 void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
@@ -293,7 +293,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
         std::vector<hsize_t> dims(ndims);
         space.getSimpleExtentDims(dims.data(), NULL);
 
-        spdlog::info("GLO12: Found variable '{}', dims: {}", name, fmt::join(dims, ", "));
+        LOGR("GLO12: Found variable '{}', dims: {}", name, fmt::join(dims, ", "));
         
         std::vector<hsize_t> start(ndims, 0);
         std::vector<hsize_t> count(ndims, 1);
@@ -338,7 +338,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
                     valid_count++;
                 }
         }
-        spdlog::info("GLO12: Read '{}' frame {}, valid pts: {}/{}, Range: [{}, {}]", name, frameIdx, valid_count, buf.size(), min_val, max_val);
+        LOGR("GLO12: Read '{}' frame {}, valid pts: {}/{}, Range: [{}, {}]", name, frameIdx, valid_count, buf.size(), min_val, max_val);
     };
 
     // Strict Read
@@ -394,7 +394,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
                     if (std::abs(v) > 1e30) is_fill = true;
                     if (is_fill) v = 0.0f;
                 }
-                spdlog::info("GLO12 Tides: Read '{}' frame {}", name, frameIdx);
+                LOGR("GLO12 Tides: Read '{}' frame {}", name, frameIdx);
              };
 
              read_tide("utide", raw_utide);
@@ -406,10 +406,10 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
                  raw_u[k] += raw_utide[k];
                  raw_v[k] += raw_vtide[k];
              }
-             spdlog::info("GLO12: Added Tidal Currents to Frame {}", frameIdx);
+             LOGR("GLO12: Added Tidal Currents to Frame {}", frameIdx);
 
          } catch (const std::exception& e) {
-             spdlog::error("GLO12 Tides Error (Frame {}): {}", frameIdx, e.what());
+             LOGR("GLO12 Tides Error (Frame {}): {}", frameIdx, e.what());
              // Fallback? Assuming we want to proceed with non-tidal current if tides fail?
              // Or throw? User wants integration, so erroring is probably safer to alert them.
              throw; 
@@ -429,7 +429,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     
     // Log GLO12 Bounds
     if (n_lat > 0 && n_lon > 0) {
-        spdlog::info("GLO12 Bounds: Lat[{} .. {}], Lon[{} .. {}]", 
+        LOGR("GLO12 Bounds: Lat[{} .. {}], Lon[{} .. {}]",
             glo12_lats.front(), glo12_lats.back(), glo12_lons.front(), glo12_lons.back());
     }
 
@@ -526,7 +526,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
             if(f > max_v) max_v = f;
         }
     }
-    spdlog::info("GLO12: Frame {} INTERPOLATED Grid Stats: NonZero {}/{}, Range [{}, {}] (OVERRIDDEN to 5.0)", 
+    LOGR("GLO12: Frame {} INTERPOLATED Grid Stats: NonZero {}/{}, Range [{}, {}] (OVERRIDDEN to 5.0)",
         frameIdx, nonzero, gridSize, (max_v < min_v ? 0.0f : min_v), (max_v < min_v ? 0.0f : max_v));
 }
 
@@ -571,7 +571,7 @@ void WindAndCurrentInterpolator::LoadOceanFrame(int frameIdx, int bufferSlot)
         ds_vy.read(ocean_vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
 
     } catch (const H5::Exception& e) {
-        spdlog::error("HDF5 Error loading flow frame: {}", e.getDetailMsg());
+        LOGR("HDF5 Error loading flow frame: {}", e.getDetailMsg());
         throw std::runtime_error("Failed to load flow field frame from HDF5");
     }
 }
@@ -712,7 +712,7 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
         ds_v.read(raw_v.data(), H5::PredType::NATIVE_FLOAT, mem_space, space);
         
     } catch (const H5::Exception& e) {
-        spdlog::error("Error reading ERA5 frame {}: {}", frameIdx, e.getDetailMsg());
+        LOGR("Error reading ERA5 frame {}: {}", frameIdx, e.getDetailMsg());
         throw; // Re-throw to terminate or be caught by higher-level handler
     }
     
@@ -1044,7 +1044,7 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
              current_ocean_first_idx = f_first;
              current_ocean_second_idx = f_second;
              
-             spdlog::info("Loading GLO12 Frames {} and {}", f_first, f_second);
+             LOGR("Loading GLO12 Frames {} and {}", f_first, f_second);
              
              UpdateRingBufferSlots(f_first, f_second, ocean_slot_frames, current_ocean_active_slots,
                 [&](int f, int s){ LoadGLO12Frame(f, s); });
@@ -1083,7 +1083,7 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
              current_wind_first_idx = w_first;
              current_wind_second_idx = w_second;
              
-             spdlog::info("Loading Wind Frames {} and {}; using Ring Buffer logic", w_first, w_second);
+             LOGR("Loading Wind Frames {} and {}; using Ring Buffer logic", w_first, w_second);
              
              UpdateRingBufferSlots(w_first, w_second, wind_slot_frames, current_wind_active_slots,
                 [&](int f, int s){ LoadWindFrame(f, s); });
