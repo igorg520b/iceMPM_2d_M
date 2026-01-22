@@ -19,7 +19,11 @@
 #include <vtkActor2D.h>
 #include <vtkUnsignedCharArray.h>
 #include <vtkImageData.h>
-#include <vtkContourFilter.h>
+#include <vtkStructuredGrid.h>
+#include <vtkHedgeHog.h>
+#include <vtkStreamTracer.h>
+#include <vtkTubeFilter.h>
+#include <vtkFloatArray.h>
 
 #include "colormap.h"
 
@@ -36,6 +40,10 @@ public:
     vtkNew<vtkActor> actor_points;
     vtkNew<vtkActor> raster_actor;
     vtkNew<vtkActor> actor_region_boundary;  // boundary lines for regions visualization
+    
+    // New actors for flow visualization
+    vtkNew<vtkActor> actor_vectors;      // For HedgeHog (Vector Field)
+    vtkNew<vtkActor> actor_streamlines;  // For Streamlines
 
     vtkNew<vtkTextActor> actorText;
     vtkNew<vtkTextActor> actorTextTitle;
@@ -81,12 +89,14 @@ public:
         // visualization of external currents/forces
         v_ocean_norm, //26
         v_wind_norm,  // 27
+        ocean_streamlines, //28
+        wind_streamlines,  // 29
         vis_lat,
         vis_lon
     };
     Q_ENUM(VisOpt)
 
-    inline static constexpr std::array<std::string_view, 30> visOptDescriptions = {
+    inline static constexpr std::array<std::string_view, 32> visOptDescriptions = {
         "", "Regions", "Status", "Color",
         "Change in Surf. Density", "Ridges",
         "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions", "Glen Flow", 
@@ -98,7 +108,9 @@ public:
         "Colors", "Ice velocity norm", "Cracked/Crushed Material",
         "Ice Thickness", "Fracture Type", "Glen Flow",
         "Green-Lagrange Strain", "von Mises Strain",
-        "Ocean Current Velocity Norm", "Wind Velocity Norm", "Latitude", "Longitude"
+        "Ocean Current Velocity Norm", "Wind Velocity Norm", 
+        "Ocean Streamlines", "Wind Streamlines",
+        "Latitude", "Longitude"
     };
 
 
@@ -142,6 +154,19 @@ private:
     vtkNew<vtkPlaneSource> raster_plane;
     vtkNew<vtkTexture> raster_texture;
     vtkNew<vtkPolyDataMapper> raster_mapper;
+    
+    // Flow Visualization Infrastructure
+    vtkNew<vtkStructuredGrid> flow_grid;
+    vtkNew<vtkFloatArray> flow_vectors;
+
+    // HedgeHog
+    vtkNew<vtkHedgeHog> hedgehog;
+    vtkNew<vtkPolyDataMapper> hedgehog_mapper;
+
+    // Streamlines
+    vtkNew<vtkPlaneSource> seed_plane;
+    vtkNew<vtkStreamTracer> streamer;
+    vtkNew<vtkPolyDataMapper> stream_mapper;
 };
 
 #endif

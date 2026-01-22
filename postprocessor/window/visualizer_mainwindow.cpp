@@ -49,6 +49,10 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     renderer->AddActor(representation.scalarBarBgActor);
     renderer->AddActor(representation.raster_actor);
     renderer->AddActor(representation.actor_region_boundary);
+    
+    // Flow Vis Actors
+    renderer->AddActor(representation.actor_vectors);
+    renderer->AddActor(representation.actor_streamlines);
 
     renderer->AddActor(representation.scalarBar);
     renderer->AddActor(representation.actorText);
@@ -73,7 +77,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     // Transparency spinner
     toolBar->addWidget(new QLabel(" Transparency:"));
     qdsbTransparency = new QDoubleSpinBox(this);
-    qdsbTransparency->setRange(0.0, 1.0);
+    qdsbTransparency->setRange(0.0, 1000.0);
     qdsbTransparency->setSingleStep(0.1);
     qdsbTransparency->setValue(1.0);
     qdsbTransparency->setDecimals(1);

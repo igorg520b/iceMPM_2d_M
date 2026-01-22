@@ -120,8 +120,34 @@ VisualRepresentation::VisualRepresentation(HostSideData& data) : hsd(data)
     scalarBarBgActor->GetProperty()->SetOpacity(0.8);
     scalarBarBgActor->SetLayerNumber(2);
 
-    // Contours actor setup - REMOVED
+    // Flow Visualization Setup
+    flow_vectors->SetNumberOfComponents(3);
+    flow_vectors->SetName("flow_vectors");
+    flow_grid->GetPointData()->SetVectors(flow_vectors);
 
+    // HedgeHog
+    hedgehog->SetInputData(flow_grid);
+    hedgehog->SetVectorModeToUseVector();
+    hedgehog->SetScaleFactor(1.0); // Dynamic update later?
+    hedgehog_mapper->SetInputConnection(hedgehog->GetOutputPort());
+    actor_vectors->SetMapper(hedgehog_mapper);
+    actor_vectors->GetProperty()->SetColor(1.0, 1.0, 1.0); // White vectors
+    actor_vectors->GetProperty()->SetLineWidth(1.0);
+    actor_vectors->VisibilityOff();
+
+    // Streamlines
+    streamer->SetInputData(flow_grid);
+    streamer->SetIntegrationDirectionToBoth();
+    streamer->SetComputeVorticity(false);
+    
+    // Direct PolyData mapping (no tubes)
+    stream_mapper->SetInputConnection(streamer->GetOutputPort());
+    stream_mapper->ScalarVisibilityOff(); // Solid color
+    
+    actor_streamlines->SetMapper(stream_mapper);
+    actor_streamlines->GetProperty()->SetColor(0.2, 0.2, 0.2); // Dark Grey/Black
+    actor_streamlines->GetProperty()->SetLineWidth(2.0); // Default thickness
+    actor_streamlines->VisibilityOff();
 
     actorText->SetLayerNumber(1);
     actorTextTitle->SetLayerNumber(1);
@@ -196,11 +222,58 @@ void VisualRepresentation::SynchronizeTopology()
 
     const bool has_grid = !grid_buffer.empty();
 
+    // Flow Vis Logic
+    bool show_vectors = (VisualizingVariable == VisOpt::v_ocean_norm || VisualizingVariable == VisOpt::v_wind_norm);
+    bool show_streamlines = (VisualizingVariable == VisOpt::ocean_streamlines || VisualizingVariable == VisOpt::wind_streamlines);
+    bool is_ocean = (VisualizingVariable == VisOpt::v_ocean_norm || VisualizingVariable == VisOpt::ocean_streamlines);
+    bool is_wind = (VisualizingVariable == VisOpt::v_wind_norm || VisualizingVariable == VisOpt::wind_streamlines);
+
+    if (show_vectors || show_streamlines) {
+        flow_grid->SetDimensions(gx, gy, 1);
+        flow_vectors->SetNumberOfTuples(gx * gy);
+        
+        // Initialize points if needed (assuming static grid for simpler implementation)
+        // If grid changes size, this logic might need check.
+        if (flow_grid->GetNumberOfPoints() != gx * gy) {
+            vtkNew<vtkPoints> gp;
+            gp->SetNumberOfPoints(gx * gy);
+            for (int j = 0; j < gy; j++) {
+                for (int i = 0; i < gx; i++) {
+                    // VTK structured grid ordering: i moves fastest
+                    vtkIdType vtk_idx = i + j * gx;
+                    gp->SetPoint(vtk_idx, (ox + i) * h, (oy + j) * h, 0.0);
+                }
+            }
+            flow_grid->SetPoints(gp);
+        }
+    }
+
+    actor_vectors->VisibilityOff();
+    actor_streamlines->VisibilityOff();
+
 
     for (int i = 0; i < gx; i++) {
         for (int j = 0; j < gy; j++) {
             const size_t grid_idx = (size_t)j + (size_t)i * gy;
             const size_t render_idx = ((i + ox) + (j + oy) * width) * 3;
+
+            // ... (Region/Background Logic) ...
+            
+            // Flow Data Collection
+            if (show_vectors || show_streamlines) {
+                float vx = 0, vy = 0;
+                if (is_ocean) {
+                    auto [uv, vv] = hsd.waci.GetOceanValue(i, j);
+                    vx = uv; vy = vv;
+                } else if (is_wind) {
+                    auto [uv, vv] = hsd.waci.GetWindValue(i, j);
+                    vx = uv; vy = vv;
+                }
+                
+                vtkIdType vtk_idx = i + j * gx;
+                flow_vectors->SetTuple3(vtk_idx, vx, vy, 0.0);
+            }
+            // End Flow Data Collection
 
             if (grid_status[grid_idx] == SimParams::MAX_REGIONS)
             {
@@ -243,7 +316,7 @@ void VisualRepresentation::SynchronizeTopology()
                 else if (VisualizingVariable == VisOpt::grid_colors) {
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
                 }
-                if (VisualizingVariable == VisOpt::grid_mass) {
+                else if (VisualizingVariable == VisOpt::grid_mass) {
                     if(!has_grid) continue;
                     double val = grid_buffer[grid_idx + gridSize * SimParams::HostGridArrayIndex::host_grid_idx_mass];
                     const float mix = alpha * (1. - transparency);
@@ -396,13 +469,13 @@ void VisualRepresentation::SynchronizeTopology()
                     std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
                 }
-                else if (VisualizingVariable == VisOpt::v_ocean_norm) {
+                else if (VisualizingVariable == VisOpt::v_ocean_norm || VisualizingVariable == VisOpt::ocean_streamlines) {
                     auto [vx, vy] = hsd.waci.GetOceanValue(i, j);
                     double val = std::sqrt(vx * vx + vy * vy);
                     std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
                     for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
                 }
-                else if (VisualizingVariable == VisOpt::v_wind_norm) {
+                else if (VisualizingVariable == VisOpt::v_wind_norm || VisualizingVariable == VisOpt::wind_streamlines) {
                     auto [vx, vy] = hsd.waci.GetWindValue(i, j);
                     double val = std::sqrt(vx * vx + vy * vy);
                     // use same colormap as v_norm for consistency
@@ -434,11 +507,58 @@ void VisualRepresentation::SynchronizeTopology()
         }
     }
 
-    // Draw rectangle boundary of modeled area (if applicable)
-    if (VisualizingVariable == VisOpt::regions || VisualizingVariable == VisOpt::none) {
-        SetupRegionBoundary(gx, gy, ox, oy, h);
+    // Update Actors
+    if (show_vectors) {
+        // Subsampling logic: Target ~50 vectors horizontally
+        int stride = std::max(1, gx / 50);
+        
+        // Apply stride mask (zero out vectors not on stride)
+        for(int j=0; j<gy; j++) {
+            for(int i=0; i<gx; i++) {
+                if(i % stride != 0 || j % stride != 0) {
+                     // Set vector to 0,0,0
+                     flow_vectors->SetTuple3(i + j*gx, 0.0, 0.0, 0.0);
+                }
+            }
+        }
+
+        flow_vectors->Modified();
+        
+        // Scale by transparency control (user requested)
+        // Using transparency_coeffs which is controlled by transparency spinner
+        double scale_control = transparency_coeffs[(int)VisualizingVariable]; 
+        // Base scale factor logic
+        hedgehog->SetScaleFactor(h * 5.0 * scale_control); 
+        
+        hedgehog->Update();
+        actor_vectors->VisibilityOn();
+        actor_streamlines->VisibilityOff();
+    } else if (show_streamlines) {
+        flow_vectors->Modified();
+        streamer->SetMaximumPropagation(width * h * 1.5); // Increased propagation
+        streamer->SetInitialIntegrationStep(h * 0.2);
+        
+        // Seed Plane Setup
+        // Should cover the visual area with reduced density seeds (3x less than 25x25 -> ~15x15)
+        seed_plane->SetOrigin(-h / 2, -h / 2, 0.0);
+        seed_plane->SetPoint1((width - 0.5) * h, -h / 2, 0.0);
+        seed_plane->SetPoint2(-h / 2, (height - 0.5) * h, 0.0);
+        seed_plane->SetResolution(15, 15); 
+        
+        streamer->SetSourceConnection(seed_plane->GetOutputPort());
+        
+        streamer->Update();
+
+        // Control line width (thickness) using transparency_coeffs
+        double thickness_control = transparency_coeffs[(int)VisualizingVariable];
+        // Direct map as requested
+        actor_streamlines->GetProperty()->SetLineWidth(thickness_control);
+        
+        actor_streamlines->VisibilityOn();
+        actor_vectors->VisibilityOff();
     } else {
-        actor_region_boundary->VisibilityOff();
+        actor_vectors->VisibilityOff();
+        actor_streamlines->VisibilityOff();
     }
 
     // Update VTK raster image
@@ -746,6 +866,8 @@ void VisualRepresentation::ConfigureScalarBar()
     case VisOpt::grid_mass:
     case VisOpt::v_ocean_norm:
     case VisOpt::v_wind_norm:
+    case VisOpt::ocean_streamlines:
+    case VisOpt::wind_streamlines:
     case VisOpt::vis_lat:
     case VisOpt::vis_lon:
     case VisOpt::pt_Q:
@@ -874,8 +996,15 @@ void VisualRepresentation::LoadVisualizationState()
             ranges[(int)str_vonMises] = ranges[(int)str_EqvGreenLagrange] = -3.0;
             ranges[(int)pt_thickness] = ranges[(int)grid_thickness] = 0.35;
 
+            ranges[(int)v_wind_norm] = 1.25;
+            transparency_coeffs[(int)v_wind_norm] = 0.6;
+
+            ranges[(int)v_ocean_norm] = -0.25;
+            transparency_coeffs[(int)v_ocean_norm] = 100.;
+
             transparency_coeffs[(int)grid_Jpinv] = transparency_coeffs[(int)pt_Jp_inv] = 1.0;
             transparency_coeffs[(int)grid_glen_flow] = 0.9;
+
             return;
         }
 

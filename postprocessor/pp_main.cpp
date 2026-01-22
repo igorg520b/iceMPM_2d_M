@@ -39,8 +39,17 @@ int main(int argc, char *argv[])
 
     if(args.size() >= 1)
     {
-        QString parametersFile = args[0];
-        w.LoadParametersFile(parametersFile);
+        QString parametersPath = args[0];
+        
+        // Check if the argument is a directory
+        std::filesystem::path path(parametersPath.toStdString());
+        if (std::filesystem::is_directory(path)) {
+            path = path / "simulation.json";
+            parametersPath = QString::fromStdString(path.string());
+            std::cout << "Directory provided, using config: " << parametersPath.toStdString() << std::endl;
+        }
+
+        w.LoadParametersFile(parametersPath);
 
         // If explicit frames directory is provided, use it
         if (parser.isSet(framesDirectoryOption))

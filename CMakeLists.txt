@@ -57,6 +57,7 @@ FetchContent_MakeAvailable(PBrowser)
       RenderingLabel
       IOImage
       ViewsQt
+      FiltersFlowPaths
     )
     find_package(Qt5 COMPONENTS Widgets REQUIRED)
     add_compile_definitions(QT_NO_KEYWORDS)
@@ -238,6 +239,7 @@ if(BUILD_POSTPROCESSOR)
       RenderingLabel
       IOImage
       ViewsQt
+      FiltersFlowPaths
     )
     find_package(Qt5 COMPONENTS Widgets REQUIRED)
     add_compile_definitions(QT_NO_KEYWORDS)
@@ -330,6 +332,7 @@ if(BUILD_PREPARER)
     RenderingAnnotation
     RenderingLabel
     ViewsQt
+    FiltersFlowPaths
     )
 
     add_executable(preparer
