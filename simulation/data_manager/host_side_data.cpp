@@ -247,11 +247,26 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     H5::H5File file(fileNameSnapshotHDF5, H5F_ACC_RDONLY);
     H5::DataSet ds = file.openDataSet("pts_data");
 
+    // Get dimensions from file to determine actual point count
+    H5::DataSpace dsp = ds.getSpace();
+    hsize_t dims[2];
+    dsp.getSimpleExtentDims(dims, nullptr);
+
     // Read attributes
     ds.openAttribute("nPtsInitial").read(H5::PredType::NATIVE_INT, &prms.nPtsInitial);
 
-    // Allocate host arrays based on nPtsInitial
-    const size_t requested_capacity = (size_t)(double(prms.nPtsInitial) * (1. + prms.extra_space_pts));
+    // Ensure we allocate enough space for what's in the file, even if it exceeds nPtsInitial
+    size_t pts_in_file = dims[1];
+    size_t required_for_file = (size_t)(pts_in_file * (1.0 + prms.extra_space_pts));
+
+    // Also respect the standard heuristic based on nPtsInitial
+    size_t standard_heuristic = (size_t)(double(prms.nPtsInitial) * (1.0 + prms.extra_space_pts));
+
+    const size_t requested_capacity = std::max(required_for_file, standard_heuristic);
+    
+    LOGR("ReadPointsFromSnapshot: nPtsInitial={}, file_pts={}. Allocating capacity={}", 
+         prms.nPtsInitial, pts_in_file, requested_capacity);
+
     hssoa.Allocate(requested_capacity);
 
     ds.openAttribute("SimulationStep").read(H5::PredType::NATIVE_INT, &prms.SimulationStep);
@@ -262,10 +277,7 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     int nPtsArrays;
     ds.openAttribute("nPtsArrays").read(H5::PredType::NATIVE_INT, &nPtsArrays);
 
-    // Get dimensions from file
-    H5::DataSpace dsp = ds.getSpace();
-    hsize_t dims[2];
-    dsp.getSimpleExtentDims(dims, nullptr);
+    // Dimensions already read above into 'dims'
 
     if(nPtsArrays != SimParams::PtArrIdx::nPtsArrays)
     {
