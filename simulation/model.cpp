@@ -93,7 +93,7 @@ bool Model::Step()
     // snapshot is synchronous, frame save is async
     bool saveSnapshot = ((sim_data.prms.SimulationStep / sim_data.prms.UpdateEveryNthStep) % sim_data.prms.SnapshotPeriod == 0) ||
                         (sim_data.prms.SimulationTime >= sim_data.prms.SimulationEndTime);
-    if(saveSnapshot) sim_data.SaveSnapshot(sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, false, sim_data.output_directory);  // synchronous
+    if(saveSnapshot) sim_data.SaveSnapshot(sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, false, sim_data.snapshot_directory);  // synchronous
 
     m_save_future = std::async(std::launch::async, &HostSideData::SaveFrame, &sim_data,
                               sim_data.prms.SimulationStep, sim_data.prms.SimulationTime);
@@ -158,7 +158,7 @@ void Model::PrintTimingTable()
 }
 
 
-void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName)
+void Model::LoadParameterFile(std::string fileName)
 {
     LOGR("Model::LoadParameterFile {}", fileName);
 
@@ -172,7 +172,7 @@ void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFi
     std::map<std::string, std::string> parseResult = sim_data.prms.ParseFile(fileName);
     sim_data.SimulationTitle = parseResult["SimulationTitle"];
 
-    // Setup output directory alongside the JSON file
+    // Setup output directory (using jsonFileDir / "output")
     std::filesystem::path outputDir = jsonFileDir / "output";
     std::filesystem::path logDir = outputDir / "logs";
     std::filesystem::create_directories(logDir);
@@ -188,33 +188,27 @@ void Model::LoadParameterFile(std::string fileName, std::string resumeSnapshotFi
     std::filesystem::path gridPath = jsonFileDir / parseResult["GridData"];
     sim_data.LoadGridDataFromFile(gridPath.string());
 
-    // Store the data directory (where grid.h5, grid_flow.h5, and initial snapshot are located)
-    std::filesystem::path dataDir = gridPath.parent_path();
-    sim_data.data_directory = dataDir.string();
+    // Cleaned up directory management
+    sim_data.data_directory = jsonFileDir.string();
+    sim_data.output_directory = outputDir.string();
+    sim_data.snapshot_directory = (jsonFileDir / "snapshots").string();
 
-    // Setup output directory (same location as JSON, in "output" subdirectory)
+    // Create directories
+    std::filesystem::create_directories(sim_data.output_directory);
+    std::filesystem::create_directories(sim_data.snapshot_directory);
+
     std::filesystem::path framesDir = outputDir / "frames";
     std::filesystem::create_directories(framesDir);
-    sim_data.output_directory = outputDir.string();
 
-    // Load points from snapshot
-    // First, try to load from the snapshots subdirectory (where plate_preparer saves s00000.h5)
-    std::filesystem::path snapshotPath = dataDir / "snapshots" / "s00000.h5";  // Initial snapshot from plate_preparer
-
-    // If that doesn't exist, check if a custom snapshot is specified in config
-    if (!std::filesystem::exists(snapshotPath)) {
-        if (!resumeSnapshotFileName.empty()) {
-            snapshotPath = resumeSnapshotFileName;
-        } else if (parseResult.find("Snapshot") != parseResult.end()) {
-            snapshotPath = parseResult["Snapshot"];
-        } else {
-            throw std::runtime_error(fmt::format("No snapshot found at {} and no custom snapshot specified", snapshotPath.string()));
-        }
-
-        // Resolve relative paths for custom snapshots
-        if (!snapshotPath.is_absolute()) {
+    // Load points from snapshot - STRICT CHECKING
+    std::filesystem::path snapshotPath;
+    if (parseResult.count("Snapshot")) {
+        snapshotPath = parseResult["Snapshot"];
+        if (snapshotPath.is_relative()) {
             snapshotPath = jsonFileDir / snapshotPath;
         }
+    } else {
+        throw std::runtime_error("Starting simulation requires 'Snapshot' parameter in .json file");
     }
 
     if (!std::filesystem::exists(snapshotPath)) {

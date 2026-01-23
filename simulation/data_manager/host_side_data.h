@@ -34,7 +34,8 @@ public:
 
     std::string SimulationTitle;
     std::string data_directory;  // directory where grid.h5, grid_flow.h5, and initial snapshot are located
-    std::string output_directory;  // directory where frames and snapshots will be saved
+    std::string output_directory;  // directory where frames will be saved
+    std::string snapshot_directory; // directory where snapshots will be saved
 
     // host-side simulation data
     std::vector<uint8_t> landmask_buffer;       // land (0), modeled area (255), cropped region only

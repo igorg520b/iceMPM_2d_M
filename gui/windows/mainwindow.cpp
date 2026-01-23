@@ -289,8 +289,7 @@ void MainWindow::load_parameter_triggered()
 {
     QString qFileName = QFileDialog::getOpenFileName(this, "Load Parameters", QDir::currentPath(), "JSON Files (*.json)");
     if(qFileName.isNull())return;
-    QString tmp;
-    LoadParameterFile(qFileName, tmp);
+    LoadParameterFile(qFileName);
 }
 
 
@@ -348,10 +347,10 @@ void MainWindow::background_worker_paused()
 }
 
 
-void MainWindow::LoadParameterFile(QString qFileName, QString resumeSnapshot)
+void MainWindow::LoadParameterFile(QString qFileName)
 {
-    qDebug() << "MainWindow::LoadParameterFile " << qFileName << " ;resume file: " << resumeSnapshot;
-    model.LoadParameterFile(qFileName.toStdString(), resumeSnapshot.toStdString());
+    qDebug() << "MainWindow::LoadParameterFile " << qFileName;
+    model.LoadParameterFile(qFileName.toStdString());
 
     this->setWindowTitle(qFileName);
     pbrowser->setActiveObject(params);

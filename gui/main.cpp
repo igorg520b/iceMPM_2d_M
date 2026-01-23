@@ -27,12 +27,6 @@ int main(int argc, char *argv[])
     parser.addVersionOption();
     parser.addPositionalArgument("parameters", QCoreApplication::translate("main", "JSON parameter file"));
 
-    QCommandLineOption resumeOption(
-        QStringList() << "r" << "resume", // Option names: -r, --resume
-        QCoreApplication::translate("main", "Resume simulation from the specified state file <filename>."), // Description
-        QCoreApplication::translate("main", "filename") // Value name expected by the option
-        );
-    parser.addOption(resumeOption); // Add the option to the parser
     parser.process(a);
 
     const QStringList args = parser.positionalArguments();
@@ -40,12 +34,6 @@ int main(int argc, char *argv[])
 
     if(args.size() >= 1)
     {
-        QString resumeFilename;
-        if (parser.isSet(resumeOption))
-        {
-            resumeFilename = parser.value(resumeOption);
-        }
-
         QString parameters_file = args[0];
 
         // Check if the provided path is a directory
@@ -55,7 +43,7 @@ int main(int argc, char *argv[])
             parameters_file = QDir(parameters_file).filePath("simulation.json");
         }
 
-        w.LoadParameterFile(parameters_file, resumeFilename);
+        w.LoadParameterFile(parameters_file);
     }
 
     w.resize(1800,1000);

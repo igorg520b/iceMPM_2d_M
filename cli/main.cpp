@@ -16,13 +16,11 @@ int main(int argc, char** argv)
 {
     // parse options
     std::string parameter_filename;
-    std::string resume_filename; // Defaults to empty
 
     cxxopts::Options options("Ice MPM", "CLI version of MPM simulation");
     options.add_options()
         // Define options and link them to variables
         ("parameter", "Parameter file (JSON, required)", cxxopts::value<std::string>(parameter_filename))
-        ("r,resume", "Resume from snapshot file <filename>", cxxopts::value<std::string>(resume_filename))
         ("g,generate-points", "Generate initial points and exit")
         ("s,snapshot-only", "Generate initial snapshot and exit");
 
@@ -47,12 +45,12 @@ int main(int argc, char** argv)
     if (result.count("generate-points"))
     {
         LOGR("Only generating points");
-        model.LoadParameterFile(parameter_filename, resume_filename);
+        model.LoadParameterFile(parameter_filename);
         return 0; // Exit successfully as requested
     }
 
 
-    model.LoadParameterFile(parameter_filename, resume_filename);
+    model.LoadParameterFile(parameter_filename);
 
     if(result.count("snapshot-only"))
     {

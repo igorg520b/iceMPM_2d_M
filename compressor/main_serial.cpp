@@ -43,11 +43,11 @@ int main(int argc, char* argv[]) {
         // Ensure output directory exists only if we are NOT purely overwriting in place?
         // Actually, even in overwrite mode, we write to a temp (or similar) but here we follow the plan:
         // Compress to outDir then move. So outDir MUST exist.
-        std::string mkdir_cmd = "mkdir -p " + outDir;
+        std::string mkdir_cmd = "mkdir -p \"" + outDir + "\"";
         system(mkdir_cmd.c_str());
     } else {
          // Also create it for the temporary compressed files
-        std::string mkdir_cmd = "mkdir -p " + outDir;
+        std::string mkdir_cmd = "mkdir -p \"" + outDir + "\"";
         system(mkdir_cmd.c_str());
     }
 
@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
             }
 
             // Create output subdir
-            std::string mkdir_cmd = "mkdir -p " + subOutDir;
+            std::string mkdir_cmd = "mkdir -p \"" + subOutDir + "\"";
             system(mkdir_cmd.c_str());
 
             std::string outputFile = subOutDir + "/" + filename;

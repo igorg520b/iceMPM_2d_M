@@ -377,20 +377,11 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
          SimulationStep, SimulationTime, compress ? " (compressed)" : "");
 
     // Determine output directory
-    fs::path targetPath;
-    if (!output_directory.empty())
-    {
-        // Save to output/snapshots when called from simulation (output_directory is JSON-relative output/)
-        fs::path snapshotsDir = fs::path(output_directory) / "snapshots";
-        targetPath = snapshotsDir;
+    if (output_directory.empty()) {
+        throw std::runtime_error("SaveSnapshot called with empty output_directory");
     }
-    else
-    {
-        // Default behavior: save to output/SimulationTitle/snapshots (used by preparer for initial snapshot)
-        fs::path outputDir = "output";
-        fs::path snapshotsDir = "snapshots";
-        targetPath = outputDir / SimulationTitle / snapshotsDir;
-    }
+
+    fs::path targetPath = output_directory;
     fs::create_directories(targetPath);
 
     // Save current state

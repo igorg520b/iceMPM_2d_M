@@ -840,7 +840,8 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
 
     // Save
     LOGR("PopulatePoints: Saving s00000.h5 via HSSOA...");
-    hsd.SaveSnapshot(0, 0.0, true, hsd.data_directory);
+    std::string snapDir = (std::filesystem::path(hsd.data_directory) / "snapshots").string();
+    hsd.SaveSnapshot(0, 0.0, true, snapDir);
 
     LOGR("PopulatePoints_RAM_Optimized (New) completed");
 }

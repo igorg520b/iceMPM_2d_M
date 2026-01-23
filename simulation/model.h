@@ -41,7 +41,7 @@ public:
     ~Model();
 
     // initialize the simulation from a parameter file
-    void LoadParameterFile(std::string fileName, std::string resumeSnapshotFileName);
+    void LoadParameterFile(std::string fileName);
 
     void Prepare();        // invoked once, at simulation start
     bool Step();           // either invoked by Worker or via GUI

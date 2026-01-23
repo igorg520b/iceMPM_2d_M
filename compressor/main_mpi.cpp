@@ -56,12 +56,12 @@ int main(int argc, char* argv[]) {
 
     // Only master process creates directory structure
     if (world_rank == 0) {
-        std::string mkdir_cmd = "mkdir -p " + outDir;
+        std::string mkdir_cmd = "mkdir -p \"" + outDir + "\"";
         system(mkdir_cmd.c_str());
         
         // Create subdirectories
         for (const auto& sub : SUBCATEGORIES) {
-            std::string subOutCmd = "mkdir -p " + outDir + "/" + sub;
+            std::string subOutCmd = "mkdir -p \"" + outDir + "/" + sub + "\"";
             system(subOutCmd.c_str());
         }
 

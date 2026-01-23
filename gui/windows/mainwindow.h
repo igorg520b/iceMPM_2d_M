@@ -69,7 +69,7 @@ public:
     ~MainWindow();
     void closeEvent( QCloseEvent* event ) override;
     Model model;
-    void LoadParameterFile(QString qFileName, QString resumeSnapshot);    // return file name of the point cloud
+    void LoadParameterFile(QString qFileName);    // return file name of the point cloud
 
 private Q_SLOTS:
     void quit_triggered();
