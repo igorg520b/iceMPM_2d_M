@@ -408,7 +408,7 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
 
     // Configure slider
     slider2->setEnabled(true);
-    slider2->setMaximum(countFrames - 1);
+    slider2->setMaximum(countFrames);
 
     // Configure slider tracking based on grid size
     if (hsd.prms.GridXTotal > GRID_SIZE_TRACKING_THRESHOLD) {
@@ -422,8 +422,8 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
     }
 
     // Setup frame range controls
-    qsbFrameTo->setMaximum(countFrames-1);
-    qsbFrameTo->setValue(countFrames-1);
+    qsbFrameTo->setMaximum(countFrames);
+    qsbFrameTo->setValue(countFrames);
 
     qsbFrameFrom->setMaximum(countFrames);
     qsbFrameFrom->setValue(1);
