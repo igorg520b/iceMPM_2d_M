@@ -205,7 +205,7 @@ void Model::LoadParameterFile(std::string fileName)
     if (parseResult.count("Snapshot")) {
         snapshotPath = parseResult["Snapshot"];
         if (snapshotPath.is_relative()) {
-            snapshotPath = jsonFileDir / snapshotPath;
+            snapshotPath = jsonFileDir / "snapshots" / snapshotPath;
         }
     } else {
         throw std::runtime_error("Starting simulation requires 'Snapshot' parameter in .json file");
