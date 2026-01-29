@@ -39,7 +39,7 @@ struct ProxyPoint
     bool getFractureCompressionShear();
     bool getFractureCrush();
 
-    int getCellIndex(int GridY);  // index of the grid cell at the point's location
+    long long getCellIndex(int GridY);  // index of the grid cell at the point's location
     unsigned getCellX();
 
     // other

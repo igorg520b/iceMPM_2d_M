@@ -299,9 +299,9 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     ds.read(hssoa.host_buffer, H5::PredType::NATIVE_DOUBLE, memspace, dsp);
     LOGR("ReadPointsFromSnapshot: read successfully; GridYTotal {}", prms.GridYTotal);
 
-    hssoa.RemoveDisabledAndSort(prms.GridYTotal);
+//    hssoa.RemoveDisabledAndSort(prms.GridYTotal);
 
-    FillModelledAreaWithBlueColor();
+//    FillModelledAreaWithBlueColor();
 
     LOGR("ReadPointsFromSnapshot; hssoa capacity {}; size {}", hssoa.capacity, hssoa.size);
 }

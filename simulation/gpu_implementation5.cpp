@@ -406,7 +406,20 @@ void GPU_Implementation5::allocate_device_arrays()
     const unsigned &nPts = hsd.hssoa.size;
     const unsigned pts_reserve = (nPts/partitions.size()) * (1. + hsd.prms.extra_space_pts);
 
-    for(GPU_Partition &p : partitions) p.allocate(pts_reserve, hsd.prms.GridXTotal);
+    // Calculate standardized grid allocation size based on partition width
+    unsigned max_partition_gridX = 0;
+    for(const GPU_Partition &p : partitions) {
+        max_partition_gridX = std::max(max_partition_gridX, (unsigned)p.pparams.partition_gridX);
+    }
+    
+    constexpr float additional_grid_space = 0.5f;   // add a bit more space in case of reallocation
+    unsigned grid_alloc_size = (unsigned)(max_partition_gridX * (1. + additional_grid_space));
+    grid_alloc_size = std::min(grid_alloc_size, (unsigned)hsd.prms.GridXTotal);
+    
+    LOGR("Optimized grid allocation: max_partition_gridX={}, allocating {} (Total: {})", 
+         max_partition_gridX, grid_alloc_size, hsd.prms.GridXTotal);
+
+    for(GPU_Partition &p : partitions) p.allocate(pts_reserve, grid_alloc_size);
     LOGR("allocate_device_arrays done");
     std::cout << std::endl;
 }

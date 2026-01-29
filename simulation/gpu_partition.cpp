@@ -87,6 +87,46 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     LOGR("alloc P{0:}-{1:} alloc; subgrid {2:}x{3:}; sub-pts {4:}; offsetX {5:}; gridX {6:}",
          pparams.PartitionID, Device, gx_requested, gy, n_points_capacity, pparams.gridX_offset, pparams.partition_gridX);
 
+    // Estimate GPU memory usage
+    size_t est_grid_bytes = 0;
+    
+    // Grid buffers (approximate pitch as width)
+    size_t est_grid_layer = sizeof(double) * gy * (gx_requested + 2*halo);
+    est_grid_bytes += est_grid_layer * SimParams::GPUGridArrayIndex::nGridArraysGPU;
+    
+    // Forcing buffers
+    size_t est_forcing_layer = sizeof(float) * gy * (gx_requested + 2*halo);
+    est_grid_bytes += est_forcing_layer * SimParams::nGridForcingArrays;
+    
+    // Grid regions
+    est_grid_bytes += sizeof(uint8_t) * gy * (gx_requested + 2*halo);
+    
+    // Halo transfer buffers
+    size_t est_halo_transfer = SimParams::GPUGridArrayIndex::nGridArraysGPU * sizeof(double) * 2 * prms.GridHaloSize * prms.GridYTotal;
+    est_grid_bytes += est_halo_transfer * 2;
+    
+    // Points buffers
+    size_t est_pts_bytes = 0;
+    size_t est_pts_layer = sizeof(double) * n_points_capacity;
+    est_pts_bytes += est_pts_layer * SimParams::PtArrIdx::nPtsArrays;
+    
+    // Point transfer buffers
+    if(prms.nPartitions > 1) {
+        size_t pt_trans_cap = (size_t)(prms.points_transfer_buffer_fraction * n_points_capacity);
+        pt_trans_cap = std::max((size_t)100, pt_trans_cap);
+        size_t est_pt_transfer = sizeof(double) * SimParams::PtArrIdx::nPtsArrays * pt_trans_cap;
+        est_pts_bytes += est_pt_transfer * 4;
+    }
+    
+    double est_gb_grid = (double)est_grid_bytes / 1e9;
+    double est_gb_pts = (double)est_pts_bytes / 1e9;
+    double est_gb_total = est_gb_grid + est_gb_pts;
+
+    LOGR("Estimated GPU Memory Allocation (PID {}):", pparams.PartitionID);
+    LOGR("  Grid Arrays:   {:.3f} GB", est_gb_grid);
+    LOGR("  Point Arrays:  {:.3f} GB", est_gb_pts);
+    LOGR("  Total:         {:.3f} GB", est_gb_total);
+
     // grid
     size_t total_allocated = 0; // count what we allocated
 
@@ -168,28 +208,7 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
          pparams.PartitionID, Device, gx_requested, gy, gx_requested*gy,
          pparams.pitch_grid, n_points_capacity, pparams.pitch_pts);
 
-    // Memory usage summary calculation
-    size_t mem_grid_arrays = 0;
-    mem_grid_arrays += pparams.pitch_grid * sizeof(double) * SimParams::GPUGridArrayIndex::nGridArraysGPU;
-    mem_grid_arrays += pparams.pitch_grid_forcing * sizeof(float) * SimParams::nGridForcingArrays;
-    mem_grid_arrays += grid_regions_size;
-    mem_grid_arrays += transfer_buffer_size * 2;                  // halo_transfer_buffer
 
-    size_t mem_point_arrays = 0;
-    mem_point_arrays += pparams.pitch_pts * sizeof(double) * SimParams::PtArrIdx::nPtsArrays;
-    if(prms.nPartitions > 1) {
-        size_t transfer_buffer_alloc_size = sizeof(double)*SimParams::PtArrIdx::nPtsArrays*pparams.point_transfer_buffer_capacity;
-        mem_point_arrays += transfer_buffer_alloc_size * 4;
-    }
-
-    double gb_grid = (double)mem_grid_arrays / 1e9;
-    double gb_pts = (double)mem_point_arrays / 1e9;
-    double gb_total = gb_grid + gb_pts;
-
-    LOGR("Memory Allocation Summary (PID {}):", pparams.PartitionID);
-    LOGR("  Grid Arrays:   {:.3f} GB", gb_grid);
-    LOGR("  Point Arrays:  {:.3f} GB", gb_pts);
-    LOGR("  Total:         {:.3f} GB", gb_total);
 }
 
 
@@ -248,6 +267,14 @@ void GPU_Partition::check_error_code()
 void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, int point_idx_offset)
 {
     LOGR("PID {}, transfer_points_from_soa_to_device; offset {}", pparams.PartitionID, point_idx_offset);
+
+    if (pparams.partition_gridX > pparams.gridX_alloc_capacity)
+    {
+        LOGR("PID {}; partition_gridX ({}) > gridX_alloc_capacity ({}); throwing exception",
+             pparams.PartitionID, pparams.partition_gridX, pparams.gridX_alloc_capacity);
+        throw std::runtime_error("GPU_Partition: grid allocation exceeded");
+    }
+
     CUDA_CHECK(cudaSetDevice(Device));
 
     // transfer the partition region of points from HSSOA to device

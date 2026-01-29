@@ -161,12 +161,12 @@ bool ProxyPoint::getFractureCrush()
     return (val & SimParams::fracture_crush);
 }
 
-int ProxyPoint::getCellIndex(int GridY)
+long long ProxyPoint::getCellIndex(int GridY)
 {
     uint64_t cell = getValueUInt64(SimParams::PtArrIdx::integer_cell_idx);
-    uint64_t x_idx = cell & 0xffffffff;
-    uint64_t y_idx = (cell >> 32);
-    return x_idx*GridY + y_idx;
+    long long x_idx = (long long)(cell & 0xffffffff);
+    long long y_idx = (long long)(cell >> 32);
+    return x_idx * (long long)GridY + y_idx;
 }
 
 unsigned ProxyPoint::getCellX()

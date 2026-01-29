@@ -10,8 +10,9 @@ option(BUILD_CLI_VERSION "Build CLI version" ON)
 option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
-option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" OFF)
+option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" ON)
 option(BUILD_COMPRESSOR "Build the CLI compressor utility" OFF)
+option(BUILD_ADDITIONAL_UTILITIES "Build additional utilities" ON)
 
 option(ENABLE_NAN_CHECKS "Perform NaN checks during the simulation" OFF)
 
@@ -434,5 +435,26 @@ if(BUILD_COMPRESSOR)
     )
     target_include_directories(compressor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
     target_link_libraries(compressor PRIVATE ${HDF5_LIBRARIES})
+
+endif()
+
+
+
+if(BUILD_ADDITIONAL_UTILITIES)
+
+    add_executable(verify_sort
+        _utilities/main_verify_sort.cpp
+
+        simulation/parameters_sim.h
+        simulation/parameters_sim.cpp
+
+        simulation/hssoa/host_side_soa.h
+        simulation/hssoa/host_side_soa.cpp
+        simulation/hssoa/proxypoint2d.h
+        simulation/hssoa/proxypoint2d.cpp
+    )
+    target_include_directories(verify_sort PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
+    target_include_directories(verify_sort PRIVATE _utilities simulation simulation/hssoa simulation/data_manager)
+    target_link_libraries(verify_sort PRIVATE ${HDF5_LIBRARIES} spdlog::spdlog Eigen3::Eigen fmt::fmt)
 
 endif()

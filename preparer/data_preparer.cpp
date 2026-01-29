@@ -699,6 +699,13 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     std::normal_distribution<double> thickness_dist((double)thicknessFrom, (double)stdDevThickness); // check types
     std::bernoulli_distribution cracked_dist(probCracked);
 
+    // Checks for generic badness (NaNs, Infs)
+    for (size_t k = 0; k < pt_buffer.size(); ++k) {
+        if (!std::isfinite(pt_buffer[k][0]) || !std::isfinite(pt_buffer[k][1])) {
+             throw std::runtime_error(fmt::format("PopulatePoints: Point {} is NaN/Inf: ({}, {})", k, pt_buffer[k][0], pt_buffer[k][1]));
+        }
+    }
+
     // --- Transform and Sort pt_buffer ---
     LOGR("PopulatePoints: Transforming and Sorting points in RAM...");
     
@@ -761,6 +768,13 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         // Global Integer Cell Index
         int i_global = (int)(u_global + 0.5f);
         int j_global = (int)(v_global + 0.5f);
+
+        if (i_global < 0 || i_global >= hsd.prms.GridXTotal || 
+            j_global < 0 || j_global >= hsd.prms.GridYTotal) {
+            LOGR("FATAL: Point {} out of bounds! Global: ({:.3f}, {:.3f}) -> Int: ({}, {}) Grid: {}x{}",
+                 k, u_global, v_global, i_global, j_global, hsd.prms.GridXTotal, hsd.prms.GridYTotal);
+            throw std::runtime_error("Point Global Index Out of Bounds");
+        }
         
         // Image Index for property lookup
         // i_global is relative to ModeledRegionOffset
@@ -794,7 +808,7 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         uint64_t x_idx_global = (uint64_t)i_global;
         uint64_t y_idx_global = (uint64_t)j_global;
         uint64_t cell = (y_idx_global << 32) | x_idx_global;
-        ptr_cell[k] = *reinterpret_cast<double*>(&cell);    
+        ptr_cell[k] = *reinterpret_cast<double*>(&cell);
 
         // Normalized Local Position [-0.5, 0.5)
         double x_local_norm = u_global - (double)i_global; 
