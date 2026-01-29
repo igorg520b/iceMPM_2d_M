@@ -535,6 +535,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     }
     LOGR("GLO12: Frame {} INTERPOLATED Grid Stats: NonZero {}/{}, Range [{}, {}] (OVERRIDDEN to 5.0)",
         frameIdx, nonzero, gridSize, (max_v < min_v ? 0.0f : min_v), (max_v < min_v ? 0.0f : max_v));
+    spdlog::default_logger()->flush();
 }
 
 

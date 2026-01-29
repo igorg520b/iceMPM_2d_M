@@ -221,6 +221,7 @@ void Model::LoadParameterFile(std::string fileName)
     sim_data.AllocatePointArrays();
     gpu.SplitIntoPartitionsAndTransferToDevice();
 
+
     // Load flow field data (mandatory)
     if(parseResult.count("CurrentVelocityData"))
     {
@@ -248,6 +249,9 @@ void Model::LoadParameterFile(std::string fileName)
         sim_data.waci.SetGLO12TidesPath(glo12TidesPath.string());
     }
 
+    LOGR("Model::LoadParameterFile() about to invoke waci.SetTime");
+    spdlog::default_logger()->flush();
+
     sim_data.waci.SetTime(sim_data.prms.SimulationTime);
     gpu.update_ocean_current_field(sim_data.waci);
     gpu.update_wind_field(sim_data.waci);
@@ -259,6 +263,7 @@ void Model::LoadParameterFile(std::string fileName)
     LOGR("  Particle data: {:.3f} GB", sim_data.allocated_bytes[1] / 1e9);
     LOGR("  Total:        {:.3f} GB", (sim_data.allocated_bytes[0] + sim_data.allocated_bytes[1]) / 1e9);
     LOGR("");
+    spdlog::default_logger()->flush();
 
     // Final GPU preparation and rendering
     Prepare();
@@ -267,6 +272,7 @@ void Model::LoadParameterFile(std::string fileName)
     gpu.transfer_from_device();
 
     LOGR("LoadParameterFile completed successfully");
+    spdlog::default_logger()->flush();
 }
 
 

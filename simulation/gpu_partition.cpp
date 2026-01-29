@@ -339,6 +339,7 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 
     LOGR("PID {}; transfer_grid_data_to_device; transfer_width {} (src_x {} → dst_x {})",
          pparams.PartitionID, transfer_width, offset_host, offset_gpu);
+    spdlog::default_logger()->flush();
 }
 
 
@@ -392,6 +393,7 @@ void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator 
     LOGR("PID {}; update_ocean_current_field; offset{}; size {}; transfer_width {} (src_x_wac {} → dst_x {})",
          pparams.PartitionID, pparams.gridX_offset, pparams.partition_gridX,
          transfer_width, offset_wac, offset_gpu);
+    spdlog::default_logger()->flush();
 }
 
 void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
@@ -445,6 +447,7 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
     LOGR("PID {}; update_wind_field; offset{}; size {}; transfer_width {} (src_x_wac {} → dst_x {})",
          pparams.PartitionID, pparams.gridX_offset, pparams.partition_gridX,
          transfer_width, offset_wac, offset_gpu);
+    spdlog::default_logger()->flush();
 }
 
 

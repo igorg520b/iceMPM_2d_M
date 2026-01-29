@@ -439,6 +439,7 @@ void GPU_Implementation5::transfer_to_device()
         points_uploaded += p.pparams.count_pts;
     }
     LOGR("transfer_ponts_to_device() done; transferred points {}", points_uploaded);
+    spdlog::default_logger()->flush();
 }
 
 
@@ -702,6 +703,9 @@ void GPU_Implementation5::reset_timings()
 
 void GPU_Implementation5::update_ocean_current_field(const WindAndCurrentInterpolator &wac)
 {
+    LOGR("GPU_Implementation5::update_ocean_current_field");
+    spdlog::default_logger()->flush();
+
     for(GPU_Partition &p : partitions)
     {
         p.update_ocean_current_field(wac);
