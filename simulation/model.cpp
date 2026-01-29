@@ -12,6 +12,7 @@ bool Model::Step()
     LOGR("step {} ({}) started; sim_time {:>6.3}; host pts {}; cap {}",
                  sim_data.prms.SimulationStep, sim_data.prms.AnimationFrameNumber(),
          sim_data.prms.SimulationTime, sim_data.hssoa.size, sim_data.hssoa.capacity);
+    spdlog::default_logger()->flush();
 
     gpu.reset_timings();
     // gpu.clear_force_accumulator(); // currently don't record forces
