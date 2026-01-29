@@ -284,11 +284,12 @@ void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, size_
     double* const src = hssoa.host_buffer + point_idx_offset;
     const size_t width = pparams.count_pts * sizeof(double);
     const size_t height = SimParams::PtArrIdx::nPtsArrays;
-    LOGR("PID {}: invoking cudaMemcpy2DAsync; spitch {}; dpitch {}; width {}; heigth {}", pparams.PartitionID,
+    LOGR("PID {}: invoking cudaMemcpy2D; spitch {}; dpitch {}; width {}; heigth {}", pparams.PartitionID,
          spitch, dpitch, width, height);
-    CUDA_CHECK(cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, cudaMemcpyHostToDevice, streamCompute));
+    CUDA_CHECK(cudaMemcpy2D(dst, dpitch, src, spitch, width, height, cudaMemcpyHostToDevice));
 
     CUDA_CHECK(cudaMemset(pparams.disabled_points_count, 0, sizeof(unsigned)));
+    CUDA_CHECK(cudaDeviceSynchronize());
     LOGR("PID{}: transfer_points_from_soa_to_device done", pparams.PartitionID);
 }
 
@@ -306,7 +307,7 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 
     // Clear the entire GPU buffer including halos
     const size_t grid_regions_size = sizeof(uint8_t) * gy * (pparams.gridX_alloc_capacity + 2 * halo);
-    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid_regions, 0, grid_regions_size, streamCompute));
+    CUDA_CHECK(cudaMemset(pparams.buffer_grid_regions, 0, grid_regions_size));
 
     IntInterval gpuBufferInterval((int)pparams.gridX_offset - halo,
                                   pparams.gridX_offset + pparams.partition_gridX + halo);
@@ -324,7 +325,7 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
     const uint8_t* src = gpu->hsd.landmask_buffer.data() + (size_t)gy * (size_t)offset_host;
     uint8_t* dst = pparams.buffer_grid_regions + (size_t)gy * (size_t)offset_gpu;
 
-    CUDA_CHECK(cudaMemcpyAsync(dst, src, transfer_size, cudaMemcpyHostToDevice, streamCompute));
+    CUDA_CHECK(cudaMemcpy(dst, src, transfer_size, cudaMemcpyHostToDevice));
 
     LOGR("PID {}; transfer_grid_data_to_device; transfer_width {} (src_x {} → dst_x {})",
          pparams.PartitionID, transfer_width, offset_host, offset_gpu);

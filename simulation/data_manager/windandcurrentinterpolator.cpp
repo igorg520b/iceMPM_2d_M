@@ -423,9 +423,10 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     }
 
     // Interpolate to Grid
+    // Interpolate to Grid
     const int& gx = prms.GridXTotal;
     const int& gy = prms.GridYTotal;
-    int gridSize = gx * gy;
+    size_t gridSize = (size_t)gx * (size_t)gy;
     
     // Resize buffer if not already
     ocean_vx_frame_buffer[bufferSlot].resize(gridSize);
@@ -444,7 +445,7 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     #pragma omp parallel for
     for (int j = 0; j < gy; ++j) {
         for (int i = 0; i < gx; ++i) {
-            int grid_idx = j + i*gy;
+            size_t grid_idx = (size_t)j + (size_t)i * (size_t)gy;
             
             int global_x = i + prms.ModeledRegionOffsetX;
             int global_y_grid = j + prms.ModeledRegionOffsetY;
@@ -557,7 +558,7 @@ void WindAndCurrentInterpolator::LoadOceanFrame(int frameIdx, int bufferSlot)
 
     const int& gx = prms.GridXTotal;
     const int& gy = prms.GridYTotal;
-    int gridSize = gx * gy;
+    size_t gridSize = (size_t)gx * (size_t)gy;
     ocean_vx_frame_buffer[bufferSlot].resize(gridSize);
     ocean_vy_frame_buffer[bufferSlot].resize(gridSize);
 
@@ -725,7 +726,7 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
     // 2. Interpolate to Simulation Grid
     const int& gx = prms.GridXTotal;
     const int& gy = prms.GridYTotal;
-    int gridSize = gx * gy;
+    size_t gridSize = (size_t)gx * (size_t)gy;
     wind_vx_frame_buffer[bufferSlot].resize(gridSize);
     wind_vy_frame_buffer[bufferSlot].resize(gridSize);
     
@@ -736,7 +737,7 @@ void WindAndCurrentInterpolator::LoadWindFrame(int frameIdx, int bufferSlot)
     #pragma omp parallel for
     for (int j = 0; j < gy; ++j) {
         for (int i = 0; i < gx; ++i) {
-            int grid_idx = j + i*gy;
+            size_t grid_idx = (size_t)j + (size_t)i * (size_t)gy;
             
             // Global pixel coordinates
             // Assuming InitializationImageSize aligns with projection size logic
