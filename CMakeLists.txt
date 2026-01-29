@@ -454,7 +454,7 @@ if(BUILD_ADDITIONAL_UTILITIES)
         simulation/hssoa/proxypoint2d.cpp
     )
     target_include_directories(verify_sort PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
-    target_include_directories(verify_sort PRIVATE _utilities simulation simulation/hssoa simulation/data_manager)
+    target_include_directories(verify_sort PRIVATE _utilities simulation simulation/hssoa simulation/data_manager External)
     target_link_libraries(verify_sort PRIVATE ${HDF5_LIBRARIES} spdlog::spdlog Eigen3::Eigen fmt::fmt)
 
 
