@@ -267,6 +267,10 @@ void GPU_Partition::check_error_code()
 void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, size_t point_idx_offset)
 {
     LOGR("PID {}, transfer_points_from_soa_to_device; offset {}", pparams.PartitionID, point_idx_offset);
+    spdlog::default_logger()->flush();
+
+    if (hssoa.host_buffer == nullptr) throw std::runtime_error("hssoa.host_buffer is null");
+    if (pparams.buffer_pts == nullptr) throw std::runtime_error("pparams.buffer_pts is null");
 
     if (pparams.partition_gridX > pparams.gridX_alloc_capacity)
     {
@@ -291,6 +295,7 @@ void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, size_
     CUDA_CHECK(cudaMemset(pparams.disabled_points_count, 0, sizeof(unsigned)));
     CUDA_CHECK(cudaDeviceSynchronize());
     LOGR("PID{}: transfer_points_from_soa_to_device done", pparams.PartitionID);
+    spdlog::default_logger()->flush();
 }
 
 
@@ -300,6 +305,11 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 {
     CUDA_CHECK(cudaSetDevice(Device));
     LOGR("GPU_Partition::transfer_grid_data_to_device");
+    spdlog::default_logger()->flush();
+
+    if (gpu == nullptr) throw std::runtime_error("gpu ptr is null");
+    if (gpu->hsd.landmask_buffer.data() == nullptr) throw std::runtime_error("landmask_buffer data is null");
+    if (pparams.buffer_grid_regions == nullptr) throw std::runtime_error("buffer_grid_regions is null");
 
     const int &gy = prms.GridYTotal;
     const unsigned &halo = prms.GridHaloSize;
