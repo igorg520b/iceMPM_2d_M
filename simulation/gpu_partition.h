@@ -37,6 +37,7 @@ class GPU_Implementation5;
 
 struct GPU_Partition
 {
+    GPU_Partition() = delete;
     GPU_Partition(const SimParams &params);
     ~GPU_Partition();
 

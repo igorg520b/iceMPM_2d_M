@@ -137,6 +137,14 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     pparams.pitch_grid /= sizeof(double); // assume that this divides without remainder
     pparams.gridX_alloc_capacity = gx_requested;
 
+    // for testing
+    size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
+
+    LOGR("P {}; invoking cudaMemset {}; elem_count {}", pparams.PartitionID, totalBufferSize, pparams.pitch_grid);
+    spdlog::default_logger()->flush();
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
+    // end testing
+
     // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
     const size_t grid_forcing_requested = sizeof(float) * gy * (gx_requested + 2*halo);
     CUDA_CHECK(cudaMallocPitch(&pparams.buffer_grid_forcing, &pparams.pitch_grid_forcing, grid_forcing_requested, SimParams::nGridForcingArrays));
@@ -703,7 +711,12 @@ void GPU_Partition::render_visualized_data(int group)
     // Render visualization data for specified group (the kernel treats grid buffer as single-precision float)
     // Clear all GPU array slots before this group
     size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
-    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
+
+    LOGR("P {}; G {} invoking cudaMemset {}; elem_count {}", pparams.PartitionID, group, totalBufferSize, pparams.pitch_grid);
+    spdlog::default_logger()->flush();
+
+//    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
+    CUDA_CHECK(cudaMemset(pparams.buffer_grid, 0, totalBufferSize));
 
     LOGR("P {}; G {} GPU_Partition::render_visualized_data", pparams.PartitionID, group);
     spdlog::default_logger()->flush();
