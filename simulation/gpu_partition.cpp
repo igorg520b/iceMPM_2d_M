@@ -217,7 +217,7 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
 
 
 
-void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const int point_idx_offset)
+void GPU_Partition::transfer_from_device(HostSideSOA &hssoa, const size_t point_idx_offset)
 {
     CUDA_CHECK(cudaSetDevice(Device));
 
@@ -264,7 +264,7 @@ void GPU_Partition::check_error_code()
 
 
 
-void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, int point_idx_offset)
+void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, size_t point_idx_offset)
 {
     LOGR("PID {}, transfer_points_from_soa_to_device; offset {}", pparams.PartitionID, point_idx_offset);
 
@@ -318,11 +318,11 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
     int offset_gpu = gpuInHost.offset_within(gpuBufferInterval);
     int offset_host = gpuInHost.offset_within(hostInterval);
 
-    const size_t transfer_size = transfer_width * gy * sizeof(uint8_t);
+    const size_t transfer_size = (size_t)transfer_width * (size_t)gy * sizeof(uint8_t);
 
     // Set source and destination pointers
-    const uint8_t* src = gpu->hsd.landmask_buffer.data() + gy * offset_host;
-    uint8_t* dst = pparams.buffer_grid_regions + gy * offset_gpu;
+    const uint8_t* src = gpu->hsd.landmask_buffer.data() + (size_t)gy * (size_t)offset_host;
+    uint8_t* dst = pparams.buffer_grid_regions + (size_t)gy * (size_t)offset_gpu;
 
     CUDA_CHECK(cudaMemcpyAsync(dst, src, transfer_size, cudaMemcpyHostToDevice, streamCompute));
 
@@ -352,13 +352,13 @@ void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator 
     int offset_gpu = gpuInWAC.offset_within(gpuBufferInterval);
     int offset_wac = gpuInWAC.offset_within(wacInterval);
 
-    const size_t transfer_size = transfer_width * gy * sizeof(float);
+    const size_t transfer_size = (size_t)transfer_width * (size_t)gy * sizeof(float);
 
     // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
     {
-        const float* src_vx = wac.GetOceanDataPointer(frame, 0) + gy * offset_wac;
-        const float* src_vy = wac.GetOceanDataPointer(frame, 1) + gy * offset_wac;
+        const float* src_vx = wac.GetOceanDataPointer(frame, 0) + (size_t)gy * (size_t)offset_wac;
+        const float* src_vy = wac.GetOceanDataPointer(frame, 1) + (size_t)gy * (size_t)offset_wac;
 
         // Determine destination indices based on frame using GridForcingFramesIndex
         size_t idx_vx = SimParams::GridForcingFramesIndex::grid_idx_current_vx_frame0;
@@ -369,8 +369,8 @@ void GPU_Partition::update_ocean_current_field(const WindAndCurrentInterpolator 
             idx_vy = SimParams::GridForcingFramesIndex::grid_idx_current_vy_frame1;
         }
 
-        float* dst_vx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vx + gy * offset_gpu;
-        float* dst_vy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vy + gy * offset_gpu;
+        float* dst_vx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vx + (size_t)gy * (size_t)offset_gpu;
+        float* dst_vy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_vy + (size_t)gy * (size_t)offset_gpu;
 
         CUDA_CHECK(cudaMemcpyAsync(dst_vx, src_vx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
         CUDA_CHECK(cudaMemcpyAsync(dst_vy, src_vy, transfer_size, cudaMemcpyHostToDevice, streamCompute));
@@ -403,7 +403,7 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
     int offset_gpu = gpuInWAC.offset_within(gpuBufferInterval);
     int offset_wac = gpuInWAC.offset_within(wacInterval);
 
-    const size_t transfer_size = transfer_width * gy * sizeof(float);
+    const size_t transfer_size = (size_t)transfer_width * (size_t)gy * sizeof(float);
 
     // Transfer frames (vx, vy) to grid_forcing_buffer
     for(int frame = 0; frame < 2; ++frame)
@@ -411,8 +411,8 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
         const float* src_wvx = wac.GetWindDataPointer(frame, 0);
         const float* src_wvy = wac.GetWindDataPointer(frame, 1);
         
-        src_wvx += gy * offset_wac;
-        src_wvy += gy * offset_wac;
+        src_wvx += (size_t)gy * (size_t)offset_wac;
+        src_wvy += (size_t)gy * (size_t)offset_wac;
 
         size_t idx_wvx = SimParams::GridForcingFramesIndex::grid_idx_wind_vx_frame0;
         size_t idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame0;
@@ -422,8 +422,8 @@ void GPU_Partition::update_wind_field(const WindAndCurrentInterpolator &wac)
             idx_wvy = SimParams::GridForcingFramesIndex::grid_idx_wind_vy_frame1;
         }
 
-        float* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + gy * offset_gpu;
-        float* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + gy * offset_gpu;
+        float* dst_wvx = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvx + (size_t)gy * (size_t)offset_gpu;
+        float* dst_wvy = pparams.buffer_grid_forcing + pparams.pitch_grid_forcing * idx_wvy + (size_t)gy * (size_t)offset_gpu;
 
         CUDA_CHECK(cudaMemcpyAsync(dst_wvx, src_wvx, transfer_size, cudaMemcpyHostToDevice, streamCompute));
         CUDA_CHECK(cudaMemcpyAsync(dst_wvy, src_wvy, transfer_size, cudaMemcpyHostToDevice, streamCompute));

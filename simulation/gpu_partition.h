@@ -55,14 +55,14 @@ struct GPU_Partition
     // preparation
     void initialize(int device, int partition);
     void allocate(const unsigned n_points_capacity, const unsigned grid_x_capacity);
-    void transfer_points_from_soa_to_device(HostSideSOA &hssoa, int point_idx_offset);
+    void transfer_points_from_soa_to_device(HostSideSOA &hssoa, size_t point_idx_offset);
     void transfer_grid_data_to_device(GPU_Implementation5* gpu);
     void update_constants();
 
     void update_ocean_current_field(const WindAndCurrentInterpolator &wac);
     void update_wind_field(const WindAndCurrentInterpolator &wac);
 
-    void transfer_from_device(HostSideSOA &hssoa, const int point_idx_offset);
+    void transfer_from_device(HostSideSOA &hssoa, const size_t point_idx_offset);
 
     // simulation cycle
     void reset_grid();

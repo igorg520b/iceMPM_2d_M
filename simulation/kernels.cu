@@ -87,7 +87,7 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
             const Eigen::Vector2d dpos((i-pos[0])*h, (j-pos[1])*h);
 
             // index of the cell takes into accout the partition's offset of the gird fragment
-            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
 
             const double incM = Wip*particle_mass;
             atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_mass*pparams.pitch_grid + idx_gridnode], incM);
@@ -265,7 +265,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
             double weight = ww[i+1][0]*ww[j+1][1];
 
             // grid node index within the 3x3 loop
-            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+            const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
 
             Eigen::Vector2d node_velocity;  // normal in-plane velocity
             node_velocity[0] = bgrid[SimParams::grid_idx_px*pitch_grid + idx_gridnode];
@@ -418,7 +418,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
                 const float incM = Wip*particle_mass;
                 const Eigen::Vector2f incV = incM*velocity;
 
@@ -445,7 +445,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
 
                 const float incM = Wip*particle_mass;
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_r*pitch_g + idx_gridnode], rR*incM);
@@ -471,7 +471,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
                 const float incM = Wip*particle_mass;
 
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_Jpinv*pitch_g + idx_gridnode], Jp_inv*incM);
@@ -497,7 +497,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
                 const float incM = Wip*particle_mass;
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_pts_density*pitch_g + idx_gridnode], Wip);
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_strain_EqvGreenLagrange*pitch_g + idx_gridnode], str_EqvGreenLagrange*incM);
@@ -516,7 +516,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
                 const float incM = Wip*particle_mass;
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_vis_thickness*pitch_g + idx_gridnode], thickness*incM);
                 // Determine status from utility flags read at kernel start
@@ -536,7 +536,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
                 const float incM = Wip*particle_mass;
                 // Determine fracture status
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_fracture_tension*pitch_g + idx_gridnode], val_tension*incM);
@@ -553,7 +553,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
             {
                 const float Wip = ww[i+1][0]*ww[j+1][1];
                 // index of the cell takes into accout the partition's offset of the gird fragment
-                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*gridY;
+                const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
                 const float incM = Wip*particle_mass;
 
                 atomicAdd(&bgrid[SimParams::GPUGridArrayIndex::gpu_grid_idx_glen_flow*pitch_g + idx_gridnode], glen_flow*incM);
