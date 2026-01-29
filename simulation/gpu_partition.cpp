@@ -705,9 +705,14 @@ void GPU_Partition::render_visualized_data(int group)
     size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
     CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
 
+    LOGR("P {}; G {} GPU_Partition::render_visualized_data", pparams.PartitionID, group);
+    spdlog::default_logger()->flush();
+
     // Render particle results into visualization arrays for this group
     partition_kernel_render_results<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams, group);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("render visualized data");
+
+    cudaStreamSynchronize(streamCompute); // for debugging
 }
 
 

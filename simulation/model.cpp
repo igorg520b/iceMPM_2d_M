@@ -268,9 +268,11 @@ void Model::LoadParameterFile(std::string fileName)
 
     // Final GPU preparation and rendering
     Prepare();
-    LOGR("LoadParameterFile - invoking gpu.render_visualized_data();");
+    LOGR("LoadParameterFile - invoking gpu.render_visualized_data()");
     spdlog::default_logger()->flush();
     gpu.render_visualized_data();
+    LOGR("LoadParameterFile - invoking gpu.transfer_from_device()");
+    spdlog::default_logger()->flush();
     gpu.transfer_from_device();
 
     LOGR("LoadParameterFile completed successfully");
