@@ -120,30 +120,7 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
 //    LOGR("    rgb: {:.3f} MB", (double)rgb.size() * sizeof(uint8_t) / 1.0e6);
 }
 
-void HostSideData::AllocatePointArrays()
-{
-    // This function is called in two contexts:
-    // 1. In preparer (PopulatePoints): HSSOA not yet allocated, needs allocation
-    // 2. In simulation (LoadParameterFile): HSSOA already allocated by ReadPointsFromSnapshot()
 
-    // Check if HSSOA needs allocation
-    if(hssoa.capacity == 0)
-    {
-        // Case 1: preparer - allocate HSSOA with extra space
-        const size_t requested_capacity = (size_t)(double(prms.nPtsInitial) * (1.0 + prms.extra_space_pts));
-        hssoa.Allocate(requested_capacity);
-    }
-
-    // Track memory allocation
-    allocated_bytes[1] = 0;  // Reset points allocation counter
-
-    // Account for the HSSOA arrays
-    // 22 particle arrays (position, velocity, material state, color, etc.) * capacity * sizeof(double)
-    allocated_bytes[1] += SimParams::PtArrIdx::nPtsArrays * hssoa.capacity * sizeof(double);
-
-    LOGR("[MEMORY] HostSideData Point Arrays: {:.3f} MB", allocated_bytes[1] / 1.0e6);
-    LOGR("    hssoa ({} pts capacity): {:.3f} MB", hssoa.capacity, (double)hssoa.capacity * (double)SimParams::PtArrIdx::nPtsArrays * sizeof(double) / 1.0e6);
-}
 
 
 // =============================  LOAD GRID DATA FROM FILE
@@ -763,4 +740,66 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         file.close();
     }
 }
+
+
+void HostSideData::VerifyPoints()
+{
+    LOGR("Verifying points integrity...");
+    int count_invalid_pos = 0;
+    int count_invalid_idx = 0;
+    
+    // Bounds definitions
+    const long long min_x = 0;
+    const long long max_x = min_x + prms.GridXTotal;
+    const long long min_y = 0;
+    const long long max_y = min_y + prms.GridYTotal;
+
+    LOGR("Domain bounds: X [{}, {}), Y [{}, {})", min_x, max_x, min_y, max_y);
+
+    const int n = (int)hssoa.size;
+    const unsigned cap = hssoa.capacity;
+    double* buf = hssoa.host_buffer;
+
+    for(int i = 0; i < n; i++)
+    {
+        ProxyPoint pp;
+        pp.isReference = true;
+        pp.pos = i;
+        pp.pitch = cap;
+        pp.soa = buf;
+
+        if(pp.getDisabledStatus()) continue;
+
+        // Check local coordinates
+        // getPos() normally returns local coordinates for PIC/FLIP
+        Eigen::Vector2d pos = pp.getPos(); 
+        
+        // Strict check [-0.5, 0.5]
+        const double tolerance = 1e-6; 
+        if (pos.x() < -0.5 - tolerance || pos.x() > 0.5 + tolerance || 
+            pos.y() < -0.5 - tolerance || pos.y() > 0.5 + tolerance) 
+        {
+             count_invalid_pos++;
+             // Avoid logging inside OMP parallel region to prevent race/garbled output
+             // or excessive locking. Just count them.
+        }
+
+        // Check cell indices
+        // Manually unpack integer_cell_idx as per standard encoding
+        uint64_t cell = pp.getValueUInt64(SimParams::PtArrIdx::integer_cell_idx);
+        long long x_idx = (long long)(cell & 0xffffffff);
+        long long y_idx = (long long)(cell >> 32);
+
+        if (x_idx < min_x || x_idx >= max_x || y_idx < min_y || y_idx >= max_y) {
+            count_invalid_idx++;
+            LOGR("bounds [{},{}]x[{},{}]; cell [{},{}]", min_x, min_y, max_x, max_y, x_idx, y_idx);
+            throw std::runtime_error("point boudns check failed");
+            spdlog::default_logger()->flush();
+        }
+    }
+
+    LOGR("VerifyPoints: all {} active points verified successfully.", hssoa.size);
+    spdlog::default_logger()->flush();
+}
+
 

@@ -50,13 +50,13 @@ public:
     size_t allocated_bytes[2] = {0, 0};
 
     void AllocateGridArrays(bool allocate_dense_grid = true);
-    void AllocatePointArrays();
 
     void LoadGridDataFromFile(const std::string& gridFilePath);
 
     void FillModelledAreaWithBlueColor();
 
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
+    void VerifyPoints();
     void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "");
 //    void SaveFrame_Old(int SimulationStep, double SimulationTime);
     void SaveFrame(const int SimulationStep, const double SimulationTime); // New split-saving implementation

@@ -704,28 +704,28 @@ void GPU_Partition::render_visualized_data(int group)
 {
     CUDA_CHECK(cudaSetDevice(Device));
 
-    const int &n = pparams.count_pts;
-    const int &tpb = prms.tpb_P2G;
-    const int blocksPerGrid = (n + tpb - 1) / tpb;
-
     // Render visualization data for specified group (the kernel treats grid buffer as single-precision float)
     // Clear all GPU array slots before this group
     size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
 
-    LOGR("P {}; G {} invoking cudaMemset {}; elem_count {}", pparams.PartitionID, group, totalBufferSize, pparams.pitch_grid);
-    spdlog::default_logger()->flush();
+//    LOGR("P {}; G {} invoking cudaMemset {}; elem_count {}", pparams.PartitionID, group, totalBufferSize, pparams.pitch_grid);
+//    spdlog::default_logger()->flush();
 
-//    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
-    CUDA_CHECK(cudaMemset(pparams.buffer_grid, 0, totalBufferSize));
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
+//    CUDA_CHECK(cudaMemset(pparams.buffer_grid, 0, totalBufferSize));
 
     LOGR("P {}; G {} GPU_Partition::render_visualized_data", pparams.PartitionID, group);
     spdlog::default_logger()->flush();
 
     // Render particle results into visualization arrays for this group
+    const int &n = pparams.count_pts;
+    const int &tpb = prms.tpb_P2G;
+    const int blocksPerGrid = (n + tpb - 1) / tpb;
+
     partition_kernel_render_results<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams, group);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("render visualized data");
 
-    cudaStreamSynchronize(streamCompute); // for debugging
+    CUDA_CHECK(cudaStreamSynchronize(streamCompute)); // for debugging
 }
 
 

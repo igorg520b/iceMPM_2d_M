@@ -217,10 +217,11 @@ void Model::LoadParameterFile(std::string fileName)
     }
     LOGR("Loading snapshot from: {}", snapshotPath.string());
     sim_data.ReadPointsFromSnapshot(snapshotPath.string());
+    sim_data.VerifyPoints();
 
     // Allocate point arrays and transfer to GPU partitions
-    sim_data.AllocatePointArrays();
     gpu.SplitIntoPartitionsAndTransferToDevice();
+
 
 
     // Load flow field data (mandatory)
