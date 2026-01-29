@@ -10,9 +10,9 @@ option(BUILD_CLI_VERSION "Build CLI version" ON)
 option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
-option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" ON)
+option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" OFF)
 option(BUILD_COMPRESSOR "Build the CLI compressor utility" OFF)
-option(BUILD_ADDITIONAL_UTILITIES "Build additional utilities" ON)
+option(BUILD_ADDITIONAL_UTILITIES "Build additional utilities" OFF)
 
 option(ENABLE_NAN_CHECKS "Perform NaN checks during the simulation" OFF)
 
