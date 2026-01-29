@@ -14,8 +14,23 @@ struct ProxyPoint
     double data[nArrays];    // local copy of the data when isReference==true
 
     ProxyPoint() { isReference = false; }
+    ProxyPoint(unsigned pos, double *soa, unsigned pitch);
 
-    ProxyPoint(const ProxyPoint &other);
+    ProxyPoint(const ProxyPoint &other) {
+        // Essential Change for Swap-by-Value: Preserve Reference Nature!
+        // If other is a Reference, we become a Reference to the same data (Handle Copy).
+        // If other is a Value, we become a Value Copy.
+        isReference = other.isReference;
+        if (isReference) {
+             pos = other.pos;
+             soa = other.soa;
+             pitch = other.pitch;
+             // Do NOT copy data[], we point to SOA.
+        } else {
+             // Deep copy of data
+             for(int i=0; i<nArrays; ++i) data[i] = other.data[i];
+        }
+    }
     ProxyPoint& operator=(const ProxyPoint &other);
 
     // access data
@@ -44,6 +59,23 @@ struct ProxyPoint
 
     // other
     void ConvertToIntegerCellFormat(double h);
+
+    friend void swap(ProxyPoint a, ProxyPoint b) {
+        // We must perform a deep swap of the underlying data in the SOA.
+        // 'a' and 'b' are local proxies acting as references to the SOA slots.
+        
+        // Use default constructor to create a value-holding proxy (isReference=false)
+        ProxyPoint temp; 
+        
+        // Snapshot a's data into temp
+        temp = a;
+        
+        // Write b's data into a's SOA slot
+        a = b;
+        
+        // Write temp's data (original a) into b's SOA slot
+        b = temp;
+    }
 };
 
 #endif

@@ -1,11 +1,12 @@
 #include "proxypoint2d.h"
 
 // ====================================================== ProxyPoint
-ProxyPoint::ProxyPoint(const ProxyPoint &other)
+ProxyPoint::ProxyPoint(unsigned pos, double *soa, unsigned pitch)
+    : pos(pos), pitch(pitch), soa(soa), isReference(true)
 {
-    isReference = false;
-    *this = other;
 }
+
+
 
 ProxyPoint& ProxyPoint::operator=(const ProxyPoint &other)
 {

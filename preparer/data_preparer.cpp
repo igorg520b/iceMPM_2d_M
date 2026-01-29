@@ -737,6 +737,30 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         return idx_a < idx_b;
     });
 
+    // VERIFY RAM SORT
+    LOGR("PopulatePoints: Verifying RAM Sort...");
+    long long ram_violations = 0;
+    for(size_t k=1; k<pt_buffer.size(); ++k) {
+         int ia = (int)(pt_buffer[k-1][0] + 0.5f);
+         int ja = (int)(pt_buffer[k-1][1] + 0.5f);
+         int ib = (int)(pt_buffer[k][0] + 0.5f);
+         int jb = (int)(pt_buffer[k][1] + 0.5f);
+         long long idx_a = ja + (long long)ia * GridYTotal;
+         long long idx_b = jb + (long long)ib * GridYTotal;
+         if (idx_a > idx_b) {
+             LOGR("RAM Sort Violation at {}! {} > {}", k, idx_a, idx_b);
+             ram_violations++;
+             if (ram_violations > 5) break;
+         }
+    }
+    if (ram_violations > 0) throw std::runtime_error("RAM Sort Failed");
+
+    if (!pt_buffer.empty()) {
+        int ia = (int)(pt_buffer[0][0] + 0.5f);
+        int ja = (int)(pt_buffer[0][1] + 0.5f);
+        LOGR("First Point in RAM Buffer: ({}, {}) -> idx {}", ia, ja, ja + (long long)ia * GridYTotal);
+    }
+
     // --- Allocate HSSOA ---
     hsd.hssoa.Allocate(hsd.prms.nPtsInitial);
     hsd.hssoa.size = hsd.prms.nPtsInitial;
@@ -805,10 +829,16 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         ptr_utility[k] = *reinterpret_cast<double*>(&utility);
 
         // Global Cell Indices
-        uint64_t x_idx_global = (uint64_t)i_global;
-        uint64_t y_idx_global = (uint64_t)j_global;
-        uint64_t cell = (y_idx_global << 32) | x_idx_global;
-        ptr_cell[k] = *reinterpret_cast<double*>(&cell);
+        *reinterpret_cast<uint64_t*>(ptr_cell + k) = ((uint64_t)j_global << 32) | (uint64_t)i_global;
+
+        // Verify immediately
+        uint64_t cell_check = *reinterpret_cast<uint64_t*>(ptr_cell + k);
+        long long x_check = (long long)(cell_check & 0xffffffff);
+        long long y_check = (long long)(cell_check >> 32);
+        if (x_check != i_global || y_check != j_global) {
+             throw std::runtime_error(fmt::format("Cell packing failed! Input ({}, {}), Unpacked ({}, {})", 
+                        i_global, j_global, x_check, y_check));
+        }
 
         // Normalized Local Position [-0.5, 0.5)
         double x_local_norm = u_global - (double)i_global; 
@@ -851,6 +881,32 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     // Sort
     LOGR("PopulatePoints: Sorting points...");
     hsd.hssoa.RemoveDisabledAndSort(hsd.prms.GridYTotal);
+
+    // VERIFY SOA SORT
+    LOGR("PopulatePoints: Verifying SOA Sort...");
+    if (hsd.hssoa.size > 0) {
+        long long soa_violations = 0;
+        SOAIterator it = hsd.hssoa.begin();
+        long long prev_idx = (*it).getCellIndex(hsd.prms.GridYTotal);
+        ++it;
+        int k=1;
+        for (; it != hsd.hssoa.end(); ++it, ++k) {
+             long long curr_idx = (*it).getCellIndex(hsd.prms.GridYTotal);
+             if (curr_idx < prev_idx) {
+                 LOGR("SOA Sort Violation at {}! {} < {}", k, curr_idx, prev_idx);
+                 soa_violations++;
+                 if (soa_violations > 5) break; 
+             }
+             prev_idx = curr_idx;
+        }
+        if (soa_violations > 0) throw std::runtime_error("SOA Sort Failed");
+        
+        // Log first point in SOA
+        SOAIterator it0 = hsd.hssoa.begin();
+        long long idx0 = (*it0).getCellIndex(hsd.prms.GridYTotal);
+        unsigned x0 = (*it0).getCellX(); // helper method
+        LOGR("First Point in SOA: idx {} (x={}, y={})", idx0, x0, idx0 - (long long)x0 * hsd.prms.GridYTotal);
+    }
 
     // Save
     LOGR("PopulatePoints: Saving s00000.h5 via HSSOA...");

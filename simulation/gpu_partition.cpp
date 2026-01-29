@@ -708,8 +708,8 @@ void GPU_Partition::render_visualized_data(int group)
     // Clear all GPU array slots before this group
     size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
 
-//    LOGR("P {}; G {} invoking cudaMemset {}; elem_count {}", pparams.PartitionID, group, totalBufferSize, pparams.pitch_grid);
-//    spdlog::default_logger()->flush();
+    LOGR("P {}; G {} invoking cudaMemset {}; elem_count {}", pparams.PartitionID, group, totalBufferSize, pparams.pitch_grid);
+    spdlog::default_logger()->flush();
 
     CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
 //    CUDA_CHECK(cudaMemset(pparams.buffer_grid, 0, totalBufferSize));
@@ -726,6 +726,14 @@ void GPU_Partition::render_visualized_data(int group)
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("render visualized data");
 
     CUDA_CHECK(cudaStreamSynchronize(streamCompute)); // for debugging
+    //for debugging
+//    CUDA_CHECK(cudaMemcpyFromSymbol(&error_code, gpu_error_indicator, sizeof(error_code), 0,
+//                                         cudaMemcpyDeviceToHost));
+//    if(error_code)
+//    {
+//        LOGR("P{}; render error code {}", pparams.PartitionID, error_code);
+//        spdlog::default_logger()->flush();
+//    }
 }
 
 

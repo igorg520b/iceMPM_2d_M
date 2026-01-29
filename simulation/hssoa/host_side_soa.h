@@ -19,9 +19,9 @@ public:
     using value_type = ProxyPoint;
     using difference_type = int;
     using pointer = ProxyPoint*;
-    using reference = ProxyPoint&;
+    using reference = ProxyPoint; 
 
-    ProxyPoint m_point;
+    // ProxyPoint m_point; // removed
 
     SOAIterator(unsigned pos, double *soa_data, unsigned pitch);
     SOAIterator(const SOAIterator& other);
@@ -29,19 +29,41 @@ public:
     SOAIterator() {};
 
 
-    bool operator<(const SOAIterator& t) const {return (m_point.pos<t.m_point.pos && m_point.soa==t.m_point.soa);}
-    bool operator==(const SOAIterator& t)const{return (m_point.pos == t.m_point.pos && m_point.soa==t.m_point.soa);}
-    bool operator!=(const SOAIterator& t)const{return (m_point.pos != t.m_point.pos || m_point.soa!=t.m_point.soa);}
+    bool operator<(const SOAIterator& t) const {return (pos<t.pos && soa==t.soa);}
+    bool operator==(const SOAIterator& t)const{return (pos == t.pos && soa==t.soa);}
+    bool operator!=(const SOAIterator& t)const{return (pos != t.pos || soa!=t.soa);}
 
-    SOAIterator& operator+=(difference_type n) { m_point.pos+=n; return (*this); }
-    SOAIterator& operator-=(difference_type n) { m_point.pos-=n; return (*this); }
-    SOAIterator& operator++() { ++m_point.pos; return (*this); }
-    SOAIterator& operator--() { --m_point.pos; return (*this); }
-    SOAIterator operator+(const difference_type& m) {SOAIterator r=*this;r.m_point.pos+=m;return r;}
-    SOAIterator operator-(const difference_type& m) {SOAIterator r=*this;r.m_point.pos-=m;return r;}
-    difference_type operator-(const SOAIterator& rawIterator){return m_point.pos-rawIterator.m_point.pos;}
-    reference operator*() {return m_point;}
-    pointer operator->() {return &m_point;}
+    SOAIterator& operator+=(difference_type n) { pos+=n; return (*this); }
+    SOAIterator& operator-=(difference_type n) { pos-=n; return (*this); }
+    SOAIterator& operator++() { ++pos; return (*this); }
+    SOAIterator& operator--() { --pos; return (*this); }
+    SOAIterator operator+(const difference_type& m) const {SOAIterator r=*this;r.pos+=m;return r;}
+    SOAIterator operator-(const difference_type& m) const {SOAIterator r=*this;r.pos-=m;return r;}
+    difference_type operator-(const SOAIterator& rawIterator) const {return pos-rawIterator.pos;}
+
+    ProxyPoint operator*() const {
+        return ProxyPoint(pos, soa, pitch);
+    }
+    
+    struct ArrowProxy {
+        ProxyPoint p;
+        ProxyPoint* operator->() { return &p; }
+    };
+    ArrowProxy operator->() const { return ArrowProxy{operator*()}; }
+
+    // Members
+    unsigned pos;
+    double *soa;
+    unsigned pitch;
+
+    friend void iter_swap(const SOAIterator& a, const SOAIterator& b) {
+        // Explicitly construct references (avoiding Copy Ctor which would make them Values)
+        ProxyPoint pa(a.pos, a.soa, a.pitch);
+        ProxyPoint pb(b.pos, b.soa, b.pitch);
+        
+        using std::swap;
+        swap(pa, pb);
+    }
 };
 
 

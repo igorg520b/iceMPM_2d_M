@@ -44,13 +44,18 @@ void verify_sort(const std::string& snapshot_path) {
 
     // Read Grid Dimensions
     int GridYTotal = 0;
+    int GridXTotal = 0;
     try {
         H5::H5File grid_file(grid_path.string(), H5F_ACC_RDONLY);
         H5::DataSet ds_landmask = grid_file.openDataSet("landmask");
         H5::Attribute attr_gy = ds_landmask.openAttribute("GridYTotal");
         attr_gy.read(H5::PredType::NATIVE_INT, &GridYTotal);
+
+        H5::Attribute attr_gx = ds_landmask.openAttribute("GridXTotal");
+        attr_gx.read(H5::PredType::NATIVE_INT, &GridXTotal);
+
         grid_file.close();
-        std::cout << "Read GridYTotal: " << GridYTotal << std::endl;
+        std::cout << "Read GridXTotal: " << GridXTotal << ", GridYTotal: " << GridYTotal << std::endl;
     } catch (const H5::Exception& e) {
         throw std::runtime_error(std::string("Failed to read GridYTotal from grid.h5: ") + e.getCDetailMsg());
     }
@@ -110,6 +115,13 @@ void verify_sort(const std::string& snapshot_path) {
         
         uint64_t x_idx = cell_data & 0xffffffff;
         uint64_t y_idx = (cell_data >> 32);
+
+        if (x_idx < 1 || x_idx > (uint64_t)(GridXTotal - 2) || y_idx < 1 || y_idx > (uint64_t)(GridYTotal - 2)) {
+             std::string msg = "Invalid grid index at point " + std::to_string(i) + 
+                               ": x=" + std::to_string(x_idx) + ", y=" + std::to_string(y_idx) + 
+                               ". Allowed: x[1, " + std::to_string(GridXTotal - 2) + "], y[1, " + std::to_string(GridYTotal - 2) + "]";
+             throw std::runtime_error(msg);
+        }
         
         int64_t cell_index = (int64_t)x_idx * (int64_t)GridYTotal + (int64_t)y_idx;
         

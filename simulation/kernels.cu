@@ -420,8 +420,7 @@ __global__ void partition_kernel_render_results(const PartitionParams pparams, i
                 // index of the cell takes into accout the partition's offset of the gird fragment
                 const size_t idx_gridnode = (j+cell_i[1]) + (i+cell_i[0]-gridX_offset+halo)*(size_t)gridY;
 
-                if(idx_gridnode >= (size_t)gridY*(pparams.partition_gridX+2*halo))
-                    gpu_error_indicator |= error_code_point_left_area;
+                // if(idx_gridnode >= (size_t)gridY*(pparams.partition_gridX+2*halo)) gpu_error_indicator |= error_code_point_left_area;
 
 
                 const float incM = Wip*particle_mass;
