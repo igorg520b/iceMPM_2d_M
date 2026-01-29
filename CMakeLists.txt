@@ -457,4 +457,12 @@ if(BUILD_ADDITIONAL_UTILITIES)
     target_include_directories(verify_sort PRIVATE _utilities simulation simulation/hssoa simulation/data_manager)
     target_link_libraries(verify_sort PRIVATE ${HDF5_LIBRARIES} spdlog::spdlog Eigen3::Eigen fmt::fmt)
 
+
+    add_executable(verify_omp
+    _utilities/main_verify_omp.cpp
+    )
+    target_compile_options(verify_omp PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
+    target_link_libraries(verify_omp PRIVATE gomp)
+
+
 endif()
