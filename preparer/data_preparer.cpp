@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <fmt/format.h>
 #include <fmt/std.h>
+#include <cstring>
 
 // Helper includes
 #include <png.h>
@@ -765,20 +766,21 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
     hsd.hssoa.Allocate(hsd.prms.nPtsInitial);
     hsd.hssoa.size = hsd.prms.nPtsInitial;
 
-    unsigned capacity = hsd.hssoa.capacity;
+    uint64_t capacity = hsd.hssoa.capacity;
     double* host_buffer = hsd.hssoa.host_buffer;
 
     // Pointers to arrays
-    double* ptr_utility = host_buffer + SimParams::PtArrIdx::idx_utility_data * capacity;
-    double* ptr_cell    = host_buffer + SimParams::PtArrIdx::integer_cell_idx * capacity;
-    double* ptr_posx    = host_buffer + SimParams::PtArrIdx::posx * capacity;
-    double* ptr_posy    = host_buffer + SimParams::PtArrIdx::posy * capacity;
-    double* ptr_velx    = host_buffer + SimParams::PtArrIdx::velx * capacity;
-    double* ptr_vely    = host_buffer + SimParams::PtArrIdx::vely * capacity;
-    double* ptr_thick   = host_buffer + SimParams::PtArrIdx::idx_thickness * capacity;
-    double* ptr_Jpinv   = host_buffer + SimParams::PtArrIdx::idx_Jp_inv * capacity;
-    double* ptr_Fe00    = host_buffer + SimParams::PtArrIdx::Fe00 * capacity;
-    double* ptr_Fe11    = host_buffer + (SimParams::PtArrIdx::Fe00 + SimParams::dim + 1) * capacity;
+    // Use size_t cast for multiplication to ensure 64-bit arithmetic
+    double* ptr_utility = host_buffer + (size_t)SimParams::PtArrIdx::idx_utility_data * (size_t)capacity;
+    double* ptr_cell    = host_buffer + (size_t)SimParams::PtArrIdx::integer_cell_idx * (size_t)capacity;
+    double* ptr_posx    = host_buffer + (size_t)SimParams::PtArrIdx::posx * (size_t)capacity;
+    double* ptr_posy    = host_buffer + (size_t)SimParams::PtArrIdx::posy * (size_t)capacity;
+    double* ptr_velx    = host_buffer + (size_t)SimParams::PtArrIdx::velx * (size_t)capacity;
+    double* ptr_vely    = host_buffer + (size_t)SimParams::PtArrIdx::vely * (size_t)capacity;
+    double* ptr_thick   = host_buffer + (size_t)SimParams::PtArrIdx::idx_thickness * (size_t)capacity;
+    double* ptr_Jpinv   = host_buffer + (size_t)SimParams::PtArrIdx::idx_Jp_inv * (size_t)capacity;
+    double* ptr_Fe00    = host_buffer + (size_t)SimParams::PtArrIdx::Fe00 * (size_t)capacity;
+    double* ptr_Fe11    = host_buffer + ((size_t)SimParams::PtArrIdx::Fe00 + (size_t)SimParams::dim + 1) * (size_t)capacity;
 
     LOGR("PopulatePoints: Filling HSSOA...");
 
@@ -829,7 +831,12 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         ptr_utility[k] = *reinterpret_cast<double*>(&utility);
 
         // Global Cell Indices
-        *reinterpret_cast<uint64_t*>(ptr_cell + k) = ((uint64_t)j_global << 32) | (uint64_t)i_global;
+        uint64_t cell_packed = ((uint64_t)j_global << 32) | (uint64_t)i_global;
+        *reinterpret_cast<uint64_t*>(ptr_cell + k) = cell_packed;
+
+        if(k==0) {
+            LOGR("Gen Point 0: ({}, {}) -> Hex 0x{:016x}", i_global, j_global, cell_packed);
+        }
 
         // Verify immediately
         uint64_t cell_check = *reinterpret_cast<uint64_t*>(ptr_cell + k);
@@ -838,6 +845,12 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         if (x_check != i_global || y_check != j_global) {
              throw std::runtime_error(fmt::format("Cell packing failed! Input ({}, {}), Unpacked ({}, {})", 
                         i_global, j_global, x_check, y_check));
+        }
+
+        //int gx = hsd.prms.GridXTotal, gy = hsd.prms.GridYTotal;
+        if (x_check < 1 || y_check < 1 || x_check > hsd.prms.GridXTotal-2 || y_check > hsd.prms.GridYTotal-2) {
+            throw std::runtime_error(fmt::format("Cell packing failed! Input ({}, {}), Unpacked ({}, {})",
+                                                 i_global, j_global, x_check, y_check));
         }
 
         // Normalized Local Position [-0.5, 0.5)
@@ -905,13 +918,14 @@ void DataPreparer::PopulatePoints_RAM_Optimized(int pointsPerCell, double thickn
         SOAIterator it0 = hsd.hssoa.begin();
         long long idx0 = (*it0).getCellIndex(hsd.prms.GridYTotal);
         unsigned x0 = (*it0).getCellX(); // helper method
-        LOGR("First Point in SOA: idx {} (x={}, y={})", idx0, x0, idx0 - (long long)x0 * hsd.prms.GridYTotal);
+        LOGR("First Point in SOA: idx {} (x={}, y={}) Hex 0x{:016x}", idx0, x0, idx0 - (long long)x0 * hsd.prms.GridYTotal, (*it0).getValueUInt64(SimParams::PtArrIdx::integer_cell_idx));
     }
 
     // Save
     LOGR("PopulatePoints: Saving s00000.h5 via HSSOA...");
     std::string snapDir = (std::filesystem::path(hsd.data_directory) / "snapshots").string();
     hsd.SaveSnapshot(0, 0.0, true, snapDir);
+//    hsd.SaveSnapshot(0, 0.0, false, snapDir);
 
     LOGR("PopulatePoints_RAM_Optimized (New) completed");
 }

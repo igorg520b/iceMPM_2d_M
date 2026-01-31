@@ -9,12 +9,12 @@ struct ProxyPoint
 {
     constexpr static unsigned nArrays = SimParams::PtArrIdx::nPtsArrays;  // count of arrays in SOA
     bool isReference = false;
-    unsigned pos, pitch;    // element # and capacity of each array in SOA
+    uint64_t pos, pitch;    // element # and capacity of each array in SOA
     double *soa;            // reference to SOA (assume contiguous space of size nArrays*pitch)
     double data[nArrays];    // local copy of the data when isReference==true
 
     ProxyPoint() { isReference = false; }
-    ProxyPoint(unsigned pos, double *soa, unsigned pitch);
+    ProxyPoint(uint64_t pos, double *soa, uint64_t pitch);
 
     ProxyPoint(const ProxyPoint &other) {
         // Essential Change for Swap-by-Value: Preserve Reference Nature!
@@ -36,8 +36,6 @@ struct ProxyPoint
     // access data
     double getValue(size_t valueIdx);   // valueIdx < nArrays
     void setValue(size_t valueIdx, double value);
-    uint32_t getValueInt(size_t valueIdx);
-    void setValueInt(size_t valueIdx, uint32_t value);
     uint64_t getValueUInt64(size_t valueIdx);
     void setValueUInt64(size_t valueIdx, uint64_t value);
     Eigen::Matrix2f getTensor(size_t valueIdx);
@@ -48,7 +46,6 @@ struct ProxyPoint
     bool getCrushedStatus();
     bool getCrackedStatus();
     bool getDisabledStatus();
-    uint16_t getGrain();
 
     bool getFractureTension();
     bool getFractureCompressionShear();

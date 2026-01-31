@@ -106,10 +106,10 @@ void GPU_Implementation5::split_hssoa_into_partitions()
         {
             SOAIterator it2 = hsd.hssoa.begin() + (j);
             // Store partition index in the lower 16 bits of utility_data
-            uint32_t util = it2->getValueInt(SimParams::PtArrIdx::idx_utility_data);
-            util &= 0xFFFF0000; // Clear lower 16 bits
+            uint64_t util = it2->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            util &= 0xFFFFFFFFFFFF0000; // Clear lower 16 bits
             util |= (uint16_t)partition_idx; // Set partition index
-            it2->setValueInt(SimParams::PtArrIdx::idx_utility_data, util);
+            it2->setValueUInt64(SimParams::PtArrIdx::idx_utility_data, util);
         }
 
         nPointsProcessed += p.pparams.count_pts;

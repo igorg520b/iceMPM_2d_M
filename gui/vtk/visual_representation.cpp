@@ -804,7 +804,7 @@ void VisualRepresentation::SynchronizeValues()
     } else if (VisualizingVariable == VisOpt::pt_partitions) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
-            uint32_t util = s->getValueInt(SimParams::PtArrIdx::idx_utility_data);
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
             uint16_t partition_idx = util & 0xFFFF;
 
             std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, partition_idx / 8.0);

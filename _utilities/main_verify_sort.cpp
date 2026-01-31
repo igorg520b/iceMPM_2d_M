@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <cstring>
 
 #include "host_side_soa.h"
 #include "parameters_sim.h"
@@ -88,6 +89,17 @@ void verify_sort(const std::string& snapshot_path) {
         ds.read(host_buffer.data(), H5::PredType::NATIVE_DOUBLE);
         snap_file.close();
         std::cout << "Read " << nPts << " points." << std::endl;
+
+        if (nPts > 0) {
+            // Print first point info
+            size_t cell_idx_offset = (size_t)SimParams::PtArrIdx::integer_cell_idx * nPts;
+            double val0 = host_buffer[cell_idx_offset]; // index 0
+            uint64_t u64_0 = *reinterpret_cast<uint64_t*>(&val0);
+             uint64_t x0 = u64_0 & 0xffffffff;
+            uint64_t y0 = (u64_0 >> 32);
+            std::cout << "Verify Point 0: Hex 0x" << std::hex << std::setw(16) << std::setfill('0') << u64_0 << std::dec 
+                      << " (x=" << x0 << ", y=" << y0 << ")" << std::endl;
+        }
         
     } catch (const H5::Exception& e) {
         throw std::runtime_error(std::string("Failed to read snapshot: ") + e.getCDetailMsg());
@@ -109,7 +121,6 @@ void verify_sort(const std::string& snapshot_path) {
     
     for (int i = 0; i < nPts; ++i) {
         // Read uint64_t from double buffer
-        // Note: bit casting from double to uint64_t
         double val_dbl = host_buffer[cell_idx_array_offset + i];
         uint64_t cell_data = *reinterpret_cast<uint64_t*>(&val_dbl);
         
@@ -117,10 +128,11 @@ void verify_sort(const std::string& snapshot_path) {
         uint64_t y_idx = (cell_data >> 32);
 
         if (x_idx < 1 || x_idx > (uint64_t)(GridXTotal - 2) || y_idx < 1 || y_idx > (uint64_t)(GridYTotal - 2)) {
-             std::string msg = "Invalid grid index at point " + std::to_string(i) + 
-                               ": x=" + std::to_string(x_idx) + ", y=" + std::to_string(y_idx) + 
-                               ". Allowed: x[1, " + std::to_string(GridXTotal - 2) + "], y[1, " + std::to_string(GridYTotal - 2) + "]";
-             throw std::runtime_error(msg);
+             std::stringstream ss;
+             ss << "Invalid grid index at point " << i << ": x=" << x_idx << ", y=" << y_idx << 
+                   ". Allowed: x[1, " << (GridXTotal - 2) << "], y[1, " << (GridYTotal - 2) << "]" <<
+                   ". Raw Hex: 0x" << std::hex << std::setw(16) << std::setfill('0') << cell_data;
+             throw std::runtime_error(ss.str());
         }
         
         int64_t cell_index = (int64_t)x_idx * (int64_t)GridYTotal + (int64_t)y_idx;
@@ -135,6 +147,7 @@ void verify_sort(const std::string& snapshot_path) {
              std::cerr << "Sort violation at point " << i << ": current cell " << cell_index << " < prev " << previous_cell_idx << std::endl;
              std::cerr << "  Prev Point " << i-1 << ": idx=" << previous_cell_idx << " (x=" << prev_x << ", y=" << prev_y << ")" << std::endl;
              std::cerr << "  Curr Point " << i << ": idx=" << cell_index << " (x=" << x_idx << ", y=" << y_idx << ")" << std::endl;
+             std::cerr << "  Curr Raw Hex: 0x" << std::hex << std::setw(16) << std::setfill('0') << cell_data << std::dec << std::endl;
              
              std::cerr << "Stopping after first violation." << std::endl;
              unsorted_count++;

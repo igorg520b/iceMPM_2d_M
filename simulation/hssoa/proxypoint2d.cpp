@@ -1,7 +1,8 @@
 #include "proxypoint2d.h"
+#include <cstring>
 
 // ====================================================== ProxyPoint
-ProxyPoint::ProxyPoint(unsigned pos, double *soa, unsigned pitch)
+ProxyPoint::ProxyPoint(uint64_t pos, double *soa, uint64_t pitch)
     : pos(pos), pitch(pitch), soa(soa), isReference(true)
 {
 }
@@ -15,11 +16,11 @@ ProxyPoint& ProxyPoint::operator=(const ProxyPoint &other)
         // distribute into soa
         if(other.isReference)
         {
-            for(int i=0;i<nArrays;i++) soa[pos + i*pitch] = other.soa[other.pos + i*other.pitch];
+            for(size_t i=0; i<nArrays; i++) soa[pos + i*(size_t)pitch] = other.soa[other.pos + i*(size_t)other.pitch];
         }
         else
         {
-            for(int i=0;i<nArrays;i++) soa[pos + i*pitch] = other.data[i];
+            for(size_t i=0; i<nArrays; i++) soa[pos + i*(size_t)pitch] = other.data[i];
         }
     }
     else
@@ -27,11 +28,11 @@ ProxyPoint& ProxyPoint::operator=(const ProxyPoint &other)
         // local copy
         if(other.isReference)
         {
-            for(int i=0;i<nArrays;i++) data[i] = other.soa[other.pos + i*other.pitch];
+            for(size_t i=0; i<nArrays; i++) data[i] = other.soa[other.pos + i*(size_t)other.pitch];
         }
         else
         {
-            for(int i=0;i<nArrays;i++) data[i] = other.data[i];
+            for(size_t i=0; i<nArrays; i++) data[i] = other.data[i];
         }
     }
     return *this;
@@ -58,7 +59,7 @@ Eigen::Vector2d ProxyPoint::getVelocity()
 double ProxyPoint::getValue(size_t valueIdx)
 {
     if(isReference)
-        return soa[pos + pitch*valueIdx];
+        return soa[pos + (size_t)pitch*valueIdx];
     else
         return data[valueIdx];
 }
@@ -81,31 +82,15 @@ Eigen::Matrix2f ProxyPoint::getTensor(size_t valueIdx)
 void ProxyPoint::setValue(size_t valueIdx, double value)
 {
     if(isReference)
-        soa[pos + pitch*valueIdx] = value;
+        soa[pos + (size_t)pitch*valueIdx] = value;
     else
         data[valueIdx] = value;
-}
-
-uint32_t ProxyPoint::getValueInt(size_t valueIdx)
-{
-    if(isReference)
-        return *reinterpret_cast<uint32_t*>(&soa[pos + pitch*valueIdx]);
-    else
-        return *reinterpret_cast<uint32_t*>(&data[valueIdx]);
-}
-
-void ProxyPoint::setValueInt(size_t valueIdx, uint32_t value)
-{
-    if(isReference)
-        *reinterpret_cast<uint32_t*>(&soa[pos + pitch*valueIdx]) = value;
-    else
-        *reinterpret_cast<uint32_t*>(&data[valueIdx]) = value;
 }
 
 uint64_t ProxyPoint::getValueUInt64(size_t valueIdx)
 {
     if(isReference)
-        return *reinterpret_cast<uint64_t*>(&soa[pos + pitch*valueIdx]);
+        return *reinterpret_cast<uint64_t*>(&soa[pos + (size_t)pitch*valueIdx]);
     else
         return *reinterpret_cast<uint64_t*>(&data[valueIdx]);
 }
@@ -113,7 +98,7 @@ uint64_t ProxyPoint::getValueUInt64(size_t valueIdx)
 void ProxyPoint::setValueUInt64(size_t valueIdx, uint64_t value)
 {
     if(isReference)
-        *reinterpret_cast<uint64_t*>(&soa[pos + pitch*valueIdx]) = value;
+        *reinterpret_cast<uint64_t*>(&soa[pos + (size_t)pitch*valueIdx]) = value;
     else
         *reinterpret_cast<uint64_t*>(&data[valueIdx]) = value;
 }
@@ -121,44 +106,39 @@ void ProxyPoint::setValueUInt64(size_t valueIdx, uint64_t value)
 
 bool ProxyPoint::getCrushedStatus()
 {
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    uint64_t val = getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
     return (val & SimParams::status_crushed);
 }
 
 bool ProxyPoint::getCrackedStatus()
 {
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    uint64_t val = getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
     return (val & SimParams::status_cracked);
 }
 
 bool ProxyPoint::getDisabledStatus()
 {
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    uint64_t val = getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
     return (val & SimParams::status_disabled);
 }
 
 
-uint16_t ProxyPoint::getGrain()
-{
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
-    return (val & 0xffff);
-}
 
 bool ProxyPoint::getFractureTension()
 {
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    uint64_t val = getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
     return (val & SimParams::fracture_tension);
 }
 
 bool ProxyPoint::getFractureCompressionShear()
 {
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    uint64_t val = getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
     return (val & SimParams::fracture_compression_shear);
 }
 
 bool ProxyPoint::getFractureCrush()
 {
-    uint32_t val = getValueInt(SimParams::PtArrIdx::idx_utility_data);
+    uint64_t val = getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
     return (val & SimParams::fracture_crush);
 }
 

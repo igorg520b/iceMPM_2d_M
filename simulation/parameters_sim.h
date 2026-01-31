@@ -36,14 +36,14 @@ public:
     constexpr static int ModelledAreaIndicator = 255;
 
     // Status flags (bit masks for utility_data)
-    constexpr static uint32_t status_crushed = 0x10000;
-    constexpr static uint32_t status_cracked = 0x20000;
-    constexpr static uint32_t status_disabled = 0x40000;
+    constexpr static uint64_t status_crushed = 0x10000;
+    constexpr static uint64_t status_cracked = 0x20000;
+    constexpr static uint64_t status_disabled = 0x40000;
 
     // status flags for types of fracture (recorded for visualization)
-    constexpr static uint32_t fracture_tension = 0x80000; // bit 19
-    constexpr static uint32_t fracture_compression_shear = 0x100000; // bit 20
-    constexpr static uint32_t fracture_crush = 0x200000; // bit 21 (22 and 23 are free)
+    constexpr static uint64_t fracture_tension = 0x80000; // bit 19
+    constexpr static uint64_t fracture_compression_shear = 0x100000; // bit 20
+    constexpr static uint64_t fracture_crush = 0x200000; // bit 21 (22 and 23 are free)
 
     // GPU allocation
     constexpr static double points_transfer_buffer_fraction = 0.07;  // % of points that could "fly over" during a given cycle

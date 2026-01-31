@@ -38,7 +38,7 @@ void HostSideSOA::convertToIntegerCellFormat(double h)
 void HostSideSOA::RemoveDisabledAndSort(int GridY)
 {
     LOGR("RemoveDisabledAndSort; nPtsArrays {}", (int)SimParams::PtArrIdx::nPtsArrays);
-    unsigned size_before = size;
+    uint64_t size_before = size;
     SOAIterator it_result = std::remove_if(begin(), end(), [](ProxyPoint p){return p.getDisabledStatus();});
     size = it_result.pos;
     LOGR("RemoveDisabledAndSort: {} removed; new size {}", size_before-size, size);
@@ -55,54 +55,22 @@ void HostSideSOA::RemoveDisabledAndSort(int GridY)
 
     if (!sorted) {
         LOGR("std::is_sorted FAILED");
+        throw std::runtime_error("Critical Error: HostSideSOA::RemoveDisabledAndSort failed to sort points.");
     }
 
-        
-        // 2. Detailed manual check
-        unsigned violations = 0;
-        unsigned k = 0;
-        for(SOAIterator it = begin(); it != end(); ++it, ++k)
-        {
-            SOAIterator next_it = it;
-            ++next_it;
-            if (next_it == end()) break;
-
-            long long idx_curr = (*it).getCellIndex(GridY);
-            long long idx_next = (*next_it).getCellIndex(GridY);
-
-            if (idx_curr > idx_next) {
-                // Decode components
-                unsigned x_curr = (*it).getCellX();
-                long long y_curr = idx_curr - (long long)x_curr * GridY;
-                
-                unsigned x_next = (*next_it).getCellX();
-                long long y_next = idx_next - (long long)x_next * GridY;
-
-                LOGR("Sort Violation at pos {}: idx {} (x{}, y{}) > idx {} (x{}, y{})", 
-                     k, idx_curr, x_curr, y_curr, idx_next, x_next, y_next);
-                
-                violations++;
-                if (violations > 10) break;
-            }
-        }
-        if(!sorted || violations)
-        {
-            throw std::runtime_error("Critical Error: HostSideSOA::RemoveDisabledAndSort failed to sort points.");
-
-        }
         
     LOGR("RemoveDisabledAndSort done");
 }
 
 
 
-void HostSideSOA::Allocate(int pts_capacity)
+void HostSideSOA::Allocate(uint64_t pts_capacity)
 {
     LOGR("HostSideSOA::Allocate; pts {}", pts_capacity);
     capacity = pts_capacity;
     size = 0;
-    size_t allocation_size = sizeof(double)*capacity*SimParams::PtArrIdx::nPtsArrays;
-    size_t allocation_elems = capacity*SimParams::PtArrIdx::nPtsArrays;
+    size_t allocation_size = sizeof(double) * (size_t)capacity * (size_t)SimParams::PtArrIdx::nPtsArrays;
+    size_t allocation_elems = (size_t)capacity * (size_t)SimParams::PtArrIdx::nPtsArrays;
 
     delete[] host_buffer;
     host_buffer = new double[allocation_elems];
@@ -131,7 +99,7 @@ void HostSideSOA::Allocate(int pts_capacity)
 
 // ==================================================== SOAIterator
 
-SOAIterator::SOAIterator(unsigned pos, double *soa_data, unsigned pitch)
+SOAIterator::SOAIterator(uint64_t pos, double *soa_data, uint64_t pitch)
     : pos(pos), soa(soa_data), pitch(pitch)
 {
 }
