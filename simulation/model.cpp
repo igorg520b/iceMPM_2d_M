@@ -33,7 +33,6 @@ bool Model::Step()
             auto [ocean_changed, wind_changed] = sim_data.waci.SetTime(simulation_time);
             if(ocean_changed) gpu.update_ocean_current_field(sim_data.waci);
             if(wind_changed) gpu.update_wind_field(sim_data.waci);
-            frames_changed = ocean_changed || wind_changed;
         }
 
         gpu.update_nodes(simulation_time);
