@@ -60,6 +60,9 @@ private:
     std::future<void> m_save_future;
 
     void PrintTimingTable();
+    
+    int scheduled_termination_step = -1;
+    bool CheckExternalInstructions(bool& squeeze_required);
 };
 
 #endif

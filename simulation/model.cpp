@@ -58,12 +58,26 @@ bool Model::Step()
     if(m_save_future.valid()) m_save_future.get();
     gpu.render_visualized_data();
 
+    bool external_termination = false;
+
     {
         std::lock_guard<std::mutex> lg(lock_data_for_GUI);
         gpu.transfer_from_device();
 
         // Normalize timings and check for squeeze conditions
         bool squeeze_required = false;
+
+        // Check external instructions
+        if(CheckExternalInstructions(squeeze_required))
+        {
+            external_termination = true;
+        }
+        if(scheduled_termination_step != -1 && sim_data.prms.SimulationStep >= scheduled_termination_step)
+        {
+            external_termination = true;
+            LOGR("Scheduled termination at step {} reached", scheduled_termination_step);
+        }
+
         for(GPU_Partition &p : gpu.partitions)
         {
             p.normalize_timings(count_unupdated_steps);
@@ -93,12 +107,15 @@ bool Model::Step()
 
     // snapshot is synchronous, frame save is async
     bool saveSnapshot = ((sim_data.prms.SimulationStep / sim_data.prms.UpdateEveryNthStep) % sim_data.prms.SnapshotPeriod == 0) ||
-                        (sim_data.prms.SimulationTime >= sim_data.prms.SimulationEndTime);
+                        (sim_data.prms.SimulationTime >= sim_data.prms.SimulationEndTime) || 
+                        external_termination;
+
     if(saveSnapshot) sim_data.SaveSnapshot(sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, false, sim_data.snapshot_directory);  // synchronous
 
     m_save_future = std::async(std::launch::async, &HostSideData::SaveFrame, &sim_data,
                               sim_data.prms.SimulationStep, sim_data.prms.SimulationTime);
 
+    if (external_termination) return false;
     return (sim_data.prms.SimulationTime < sim_data.prms.SimulationEndTime && !gpu.error_code && sim_data.hssoa.size);
 }
 
@@ -281,3 +298,37 @@ void Model::LoadParameterFile(std::string fileName)
 }
 
 
+bool Model::CheckExternalInstructions(bool& squeeze_required)
+{
+    std::filesystem::path instructPath = std::filesystem::path(sim_data.data_directory) / "instruct.txt";
+    if (!std::filesystem::exists(instructPath)) return false;
+
+    std::ifstream ifs(instructPath);
+    std::string command;
+    ifs >> command;
+    
+    bool terminate = false;
+    
+    if (command == "terminate") {
+        int step = -1;
+        if (ifs >> step) {
+            scheduled_termination_step = step;
+            LOGR("Instruction: terminate at step {}", step);
+        } else {
+            terminate = true;
+            LOGR("Instruction: terminate immediately");
+        }
+    } else if (command == "sort") {
+        squeeze_required = true;
+        LOGR("Instruction: sort (squeeze) forced");
+    }
+    
+    ifs.close();
+    try {
+        std::filesystem::remove(instructPath);
+    } catch(const std::filesystem::filesystem_error& e) {
+        LOGR("Error deleting instruct.txt: {}", e.what());
+    }
+    
+    return terminate;
+}
