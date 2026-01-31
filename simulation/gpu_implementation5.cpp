@@ -601,9 +601,8 @@ void GPU_Implementation5::normalize_grid_on_host()
 
 void GPU_Implementation5::transfer_grid_group_to_host(int group)
 {
-    LOGR("GPU_Implementation5::transfer_grid_group_to_host", group);
-    spdlog::default_logger()->flush();
-
+//    LOGR("GPU_Implementation5::transfer_grid_group_to_host", group);
+//    spdlog::default_logger()->flush();
 
     // Note that during rendering and this transfer we treat grid data as 'float'
     const size_t gx_total = hsd.prms.GridXTotal;
