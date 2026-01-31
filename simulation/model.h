@@ -61,7 +61,7 @@ private:
 
     void PrintTimingTable();
     
-    int scheduled_termination_step = -1;
+    int scheduled_termination_frame = -1;
     bool CheckExternalInstructions(bool& squeeze_required);
 };
 

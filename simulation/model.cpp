@@ -72,10 +72,10 @@ bool Model::Step()
         {
             external_termination = true;
         }
-        if(scheduled_termination_step != -1 && sim_data.prms.SimulationStep >= scheduled_termination_step)
+        if(scheduled_termination_frame != -1 && sim_data.prms.AnimationFrameNumber() >= scheduled_termination_frame)
         {
             external_termination = true;
-            LOGR("Scheduled termination at step {} reached", scheduled_termination_step);
+            LOGR("Scheduled termination at frame {} reached", scheduled_termination_frame);
         }
 
         for(GPU_Partition &p : gpu.partitions)
@@ -234,7 +234,7 @@ void Model::LoadParameterFile(std::string fileName)
     }
     LOGR("Loading snapshot from: {}", snapshotPath.string());
     sim_data.ReadPointsFromSnapshot(snapshotPath.string());
-    sim_data.VerifyPoints();
+    // sim_data.VerifyPoints();
 
     // Allocate point arrays and transfer to GPU partitions
     gpu.SplitIntoPartitionsAndTransferToDevice();
@@ -310,10 +310,10 @@ bool Model::CheckExternalInstructions(bool& squeeze_required)
     bool terminate = false;
     
     if (command == "terminate") {
-        int step = -1;
-        if (ifs >> step) {
-            scheduled_termination_step = step;
-            LOGR("Instruction: terminate at step {}", step);
+        int frame = -1;
+        if (ifs >> frame) {
+            scheduled_termination_frame = frame;
+            LOGR("Instruction: terminate at frame {}", frame);
         } else {
             terminate = true;
             LOGR("Instruction: terminate immediately");

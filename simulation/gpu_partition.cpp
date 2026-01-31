@@ -137,14 +137,6 @@ void GPU_Partition::allocate(const unsigned n_points_capacity, const unsigned gx
     pparams.pitch_grid /= sizeof(double); // assume that this divides without remainder
     pparams.gridX_alloc_capacity = gx_requested;
 
-    // for testing
-    size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
-
-    LOGR("P {}; invoking cudaMemset {}; elem_count {}", pparams.PartitionID, totalBufferSize, pparams.pitch_grid);
-    spdlog::default_logger()->flush();
-    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
-    // end testing
-
     // grid forcing buffer (separate allocation for forcing frames: vx, vy, eta for 2 frames)
     const size_t grid_forcing_requested = sizeof(float) * gy * (gx_requested + 2*halo);
     CUDA_CHECK(cudaMallocPitch(&pparams.buffer_grid_forcing, &pparams.pitch_grid_forcing, grid_forcing_requested, SimParams::nGridForcingArrays));
@@ -298,10 +290,9 @@ void GPU_Partition::transfer_points_from_soa_to_device(HostSideSOA &hssoa, size_
     const size_t height = SimParams::PtArrIdx::nPtsArrays;
     LOGR("PID {}: invoking cudaMemcpy2D; spitch {}; dpitch {}; width {}; heigth {}", pparams.PartitionID,
          spitch, dpitch, width, height);
-    CUDA_CHECK(cudaMemcpy2D(dst, dpitch, src, spitch, width, height, cudaMemcpyHostToDevice));
-
-    CUDA_CHECK(cudaMemset(pparams.disabled_points_count, 0, sizeof(unsigned)));
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, cudaMemcpyHostToDevice, streamCompute));
+    CUDA_CHECK(cudaMemsetAsync(pparams.disabled_points_count, 0, sizeof(unsigned), streamCompute));
+//    CUDA_CHECK(cudaDeviceSynchronize());
     LOGR("PID{}: transfer_points_from_soa_to_device done", pparams.PartitionID);
     spdlog::default_logger()->flush();
 }
@@ -325,7 +316,7 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
 
     // Clear the entire GPU buffer including halos
     const size_t grid_regions_size = sizeof(uint8_t) * gy * (pparams.gridX_alloc_capacity + 2 * halo);
-    CUDA_CHECK(cudaMemset(pparams.buffer_grid_regions, 0, grid_regions_size));
+    CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid_regions, 0, grid_regions_size, streamCompute));
 
     IntInterval gpuBufferInterval((int)pparams.gridX_offset - halo,
                                   pparams.gridX_offset + pparams.partition_gridX + halo);
@@ -343,7 +334,7 @@ void GPU_Partition::transfer_grid_data_to_device(GPU_Implementation5* gpu)
     const uint8_t* src = gpu->hsd.landmask_buffer.data() + (size_t)gy * (size_t)offset_host;
     uint8_t* dst = pparams.buffer_grid_regions + (size_t)gy * (size_t)offset_gpu;
 
-    CUDA_CHECK(cudaMemcpy(dst, src, transfer_size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpyAsync(dst, src, transfer_size, cudaMemcpyHostToDevice, streamCompute));
 
     LOGR("PID {}; transfer_grid_data_to_device; transfer_width {} (src_x {} → dst_x {})",
          pparams.PartitionID, transfer_width, offset_host, offset_gpu);
@@ -708,14 +699,7 @@ void GPU_Partition::render_visualized_data(int group)
     // Clear all GPU array slots before this group
     size_t totalBufferSize = (size_t)SimParams::GPUGridArrayIndex::nGridArraysGPU * pparams.pitch_grid * sizeof(double);
 
-    LOGR("P {}; G {} invoking cudaMemset {}; elem_count {}", pparams.PartitionID, group, totalBufferSize, pparams.pitch_grid);
-    spdlog::default_logger()->flush();
-
     CUDA_CHECK(cudaMemsetAsync(pparams.buffer_grid, 0, totalBufferSize, streamCompute));
-//    CUDA_CHECK(cudaMemset(pparams.buffer_grid, 0, totalBufferSize));
-
-    LOGR("P {}; G {} GPU_Partition::render_visualized_data", pparams.PartitionID, group);
-    spdlog::default_logger()->flush();
 
     // Render particle results into visualization arrays for this group
     const int &n = pparams.count_pts;
@@ -725,15 +709,7 @@ void GPU_Partition::render_visualized_data(int group)
     partition_kernel_render_results<<<blocksPerGrid, tpb, 0, streamCompute>>>(pparams, group);
     if(cudaGetLastError() != cudaSuccess) throw std::runtime_error("render visualized data");
 
-    CUDA_CHECK(cudaStreamSynchronize(streamCompute)); // for debugging
-    //for debugging
-//    CUDA_CHECK(cudaMemcpyFromSymbol(&error_code, gpu_error_indicator, sizeof(error_code), 0,
-//                                         cudaMemcpyDeviceToHost));
-//    if(error_code)
-//    {
-//        LOGR("P{}; render error code {}", pparams.PartitionID, error_code);
-//        spdlog::default_logger()->flush();
-//    }
+//    CUDA_CHECK(cudaStreamSynchronize(streamCompute)); // for debugging
 }
 
 

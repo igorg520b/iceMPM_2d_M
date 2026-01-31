@@ -24,16 +24,6 @@ std::pair<Eigen::Vector2d, Eigen::Vector2d> HostSideSOA::getBlockDimensions()
 }
 
 
-void HostSideSOA::convertToIntegerCellFormat(double h)
-{
-    for(SOAIterator it = begin(); it!=end(); ++it)
-    {
-        ProxyPoint p = *it;
-        p.ConvertToIntegerCellFormat(h);
-    }
-}
-
-
 
 void HostSideSOA::RemoveDisabledAndSort(int GridY)
 {

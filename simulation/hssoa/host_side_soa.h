@@ -55,15 +55,6 @@ public:
     uint64_t pos;
     double *soa;
     uint64_t pitch;
-
-    friend void iter_swap(const SOAIterator& a, const SOAIterator& b) {
-        // Explicitly construct references (avoiding Copy Ctor which would make them Values)
-        ProxyPoint pa(a.pos, a.soa, a.pitch);
-        ProxyPoint pb(b.pos, b.soa, b.pitch);
-        
-        using std::swap;
-        swap(pa, pb);
-    }
 };
 
 
@@ -87,10 +78,6 @@ public:
     double* getPointerToLine(int idxLine) {return host_buffer + capacity*idxLine;}
 
     std::pair<Eigen::Vector2d, Eigen::Vector2d> getBlockDimensions();
-    void convertToIntegerCellFormat(double h);
-
-    // debugging / testing
-
 };
 
 #endif // HOSTSIDESOA_H

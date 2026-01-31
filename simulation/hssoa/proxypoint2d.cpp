@@ -158,22 +158,6 @@ unsigned ProxyPoint::getCellX()
 }
 
 
-void ProxyPoint::ConvertToIntegerCellFormat(double h)
-{
-    const double hinv = 1.0f/h;
-    double x = getValue(SimParams::PtArrIdx::posx);
-    double y = getValue(SimParams::PtArrIdx::posx+1);
-    uint64_t x_idx = (uint64_t)(x*hinv + 0.5);
-    uint64_t y_idx = (uint64_t)(y*hinv + 0.5);
-    uint64_t cell = (y_idx << 32) | x_idx;
-    setValueUInt64(SimParams::PtArrIdx::integer_cell_idx, cell);
-
-    x = x*hinv - (double)x_idx;
-    y = y*hinv - (double)y_idx;
-    setValue(SimParams::PtArrIdx::posx, x);
-    setValue(SimParams::PtArrIdx::posx+1, y);
-}
-
 Eigen::Vector2d ProxyPoint::getPos(double cellsize)
 {
     uint64_t cell = getValueUInt64(SimParams::PtArrIdx::integer_cell_idx);
