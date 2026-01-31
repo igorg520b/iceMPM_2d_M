@@ -5,6 +5,40 @@
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
+#include <sys/sysinfo.h>
+
+static size_t get_available_memory_bytes()
+{
+    struct sysinfo info;
+    if (sysinfo(&info) != 0) return 0;
+    return static_cast<size_t>(info.freeram) * info.mem_unit;
+}
+
+template<typename T>
+static std::vector<T> checked_alloc(size_t n,
+                                    const std::string& dset_name,
+                                    int world_rank)
+{
+    size_t bytes = n * sizeof(T);
+    size_t avail = get_available_memory_bytes();
+
+    if (avail > 0 && bytes > avail * 8 / 10) {
+        std::cerr << "[Rank " << world_rank << "] ERROR: "
+                  << "Insufficient memory for dataset '" << dset_name << "'\n"
+                  << "  Requested: " << bytes / (1024.0 * 1024.0) << " MB\n"
+                  << "  Available: " << avail / (1024.0 * 1024.0) << " MB\n";
+        MPI_Abort(MPI_COMM_WORLD, 2);
+    }
+
+    try {
+        return std::vector<T>(n);
+    } catch (const std::bad_alloc&) {
+        std::cerr << "[Rank " << world_rank << "] FATAL: std::bad_alloc for dataset '"
+                  << dset_name << "' (" << bytes / (1024.0 * 1024.0) << " MB)\n";
+        MPI_Abort(MPI_COMM_WORLD, 3);
+    }
+}
+
 
 // --- Datasets Definitions ---
 
@@ -70,7 +104,10 @@ bool process_frame_file(const std::string& inputFile, const std::string& outputF
         hid_t space = H5Dget_space(dsetg);
         hssize_t npoints = H5Sget_simple_extent_npoints(space);
 
-        std::vector<float> buf(npoints);
+//        std::vector<float> buf(npoints);
+        std::vector<float> buf =
+            checked_alloc<float>(npoints, name, 0);
+
         H5Dread(dsetg, H5T_NATIVE_FLOAT, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
 
         hsize_t chunk_dims[2] = {256, 256};
@@ -98,7 +135,11 @@ bool process_frame_file(const std::string& inputFile, const std::string& outputF
         hid_t space = H5Dget_space(dset);
         hssize_t npoints = H5Sget_simple_extent_npoints(space);
 
-        std::vector<uint8_t> buf(npoints);
+        // std::vector<uint8_t> buf(npoints);
+
+        std::vector<uint8_t> buf =
+            checked_alloc<uint8_t>(npoints, name, 0);
+
         H5Dread(dset, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
 
         // Use similar compression for these 2D uint8 maps
@@ -123,7 +164,9 @@ bool process_frame_file(const std::string& inputFile, const std::string& outputF
         if (dset >= 0) {
             hid_t space = H5Dget_space(dset);
             hssize_t npoints = H5Sget_simple_extent_npoints(space);
-            std::vector<uint8_t> buf(npoints);
+            //std::vector<uint8_t> buf(npoints);
+            std::vector<uint8_t> buf = checked_alloc<uint8_t>(npoints, "rgba", 0);
+
             H5Dread(dset, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
             
             hsize_t chunk_dims[3] = {128, 128, 4}; // RGBA is depth 4
