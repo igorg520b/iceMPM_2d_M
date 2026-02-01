@@ -246,14 +246,16 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     ds.openAttribute("SimulationTime").read(H5::PredType::NATIVE_DOUBLE, &prms.SimulationTime);
 
     ds.openAttribute("ParticleArea").read(H5::PredType::NATIVE_DOUBLE, &prms.ParticleArea);
-    int readGridY;
-    ds.openAttribute("GridYTotal").read(H5::PredType::NATIVE_INT, &readGridY);
-    if(prms.GridYTotal != 0) {
-        if(prms.GridYTotal != readGridY) {
-             throw std::runtime_error(fmt::format("ReadPointsFromSnapshot GridYTotal mismatch: expected {}, got {}", prms.GridYTotal, readGridY));
+    if (H5Aexists(ds.getId(), "GridYTotal") > 0) {
+        int readGridY;
+        ds.openAttribute("GridYTotal").read(H5::PredType::NATIVE_INT, &readGridY);
+        if(prms.GridYTotal != 0) {
+            if(prms.GridYTotal != readGridY) {
+                 throw std::runtime_error(fmt::format("ReadPointsFromSnapshot GridYTotal mismatch: expected {}, got {}", prms.GridYTotal, readGridY));
+            }
         }
+        prms.GridYTotal = readGridY;
     }
-    prms.GridYTotal = readGridY;
 
     int nPtsArrays;
     ds.openAttribute("nPtsArrays").read(H5::PredType::NATIVE_INT, &nPtsArrays);
