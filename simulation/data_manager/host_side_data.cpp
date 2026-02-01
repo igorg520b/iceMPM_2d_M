@@ -270,7 +270,7 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
                 throw std::runtime_error(fmt::format("ReadPointsFromSnapshot GridXTotal mismatch: expected {}, got {}", prms.GridXTotal, readGridX));
             }
         }
-        prms.GridYTotal = readGridY;
+        prms.GridXTotal = readGridX;
     }
 
     int nPtsArrays;
