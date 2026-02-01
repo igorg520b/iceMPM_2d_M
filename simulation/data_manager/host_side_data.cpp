@@ -26,11 +26,7 @@
 #include <fmt/format.h>
 #include <fmt/std.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
 
 namespace fs = std::filesystem;
 
@@ -250,6 +246,14 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     ds.openAttribute("SimulationTime").read(H5::PredType::NATIVE_DOUBLE, &prms.SimulationTime);
 
     ds.openAttribute("ParticleArea").read(H5::PredType::NATIVE_DOUBLE, &prms.ParticleArea);
+    int readGridY;
+    ds.openAttribute("GridYTotal").read(H5::PredType::NATIVE_INT, &readGridY);
+    if(prms.GridYTotal != 0) {
+        if(prms.GridYTotal != readGridY) {
+             throw std::runtime_error(fmt::format("ReadPointsFromSnapshot GridYTotal mismatch: expected {}, got {}", prms.GridYTotal, readGridY));
+        }
+    }
+    prms.GridYTotal = readGridY;
 
     int nPtsArrays;
     ds.openAttribute("nPtsArrays").read(H5::PredType::NATIVE_INT, &nPtsArrays);
@@ -361,7 +365,7 @@ void HostSideData::SaveForces(const int frame)
 */
 
 
-void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory)
+void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory, const std::string& prefix, int force_frame_index)
 {
     LOGR("SaveSnapshot: step {}, time {}{}",
          SimulationStep, SimulationTime, compress ? " (compressed)" : "");
@@ -375,8 +379,11 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
     fs::create_directories(targetPath);
 
     // Save current state
-    const int frame = SimulationStep / prms.UpdateEveryNthStep;
-    std::string baseName = fmt::format(fmt::runtime("s{:05d}.h5"), frame);
+    int frame; 
+    if(force_frame_index >= 0) frame = force_frame_index;
+    else frame = SimulationStep / prms.UpdateEveryNthStep;
+
+    std::string baseName = fmt::format(fmt::runtime("{}{:05d}.h5"), prefix, frame);
     fs::path fullPath = targetPath / baseName;
     H5::H5File file(fullPath.string(), H5F_ACC_TRUNC);
 
@@ -427,6 +434,9 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
         .write(H5::PredType::NATIVE_INT, &prms.nPtsInitial);
     dataset_pts.createAttribute("ParticleArea", H5::PredType::NATIVE_DOUBLE, att_dspace)
         .write(H5::PredType::NATIVE_DOUBLE, &prms.ParticleArea);
+
+    dataset_pts.createAttribute("GridYTotal", H5::PredType::NATIVE_INT, att_dspace)
+        .write(H5::PredType::NATIVE_INT, &prms.GridYTotal);
 
     LOGR("SaveSnapshot done");
 }
