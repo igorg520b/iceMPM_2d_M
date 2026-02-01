@@ -27,6 +27,10 @@ public:
     HostSideData();
     ~HostSideData() = default;
 
+    // Optimization: Dual mode
+    bool isVisualizationMode = false;
+    void SetVisualizationMode(bool enabled);
+
     SimParams prms;
     HostSideSOA hssoa;                        // host-side points
     std::vector<float> host_grid_buffer;     // host-side grid (only used for visualization, so it is single precision)
@@ -57,7 +61,7 @@ public:
 
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void VerifyPoints();
-    void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "", const std::string& prefix = "s", int force_frame_index = -1);
+    void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "", const std::string& prefix = "f", int force_frame_index = -1);
 //    void SaveFrame_Old(int SimulationStep, double SimulationTime);
     void SaveFrame(const int SimulationStep, const double SimulationTime); // New split-saving implementation
 

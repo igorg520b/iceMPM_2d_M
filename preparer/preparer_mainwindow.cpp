@@ -298,8 +298,7 @@ void MainWindow::LoadParameterFile(QString fileName)
                                 hsd.prms.ModeledRegionOffsetX, hsd.prms.ModeledRegionOffsetY,
                                 hsd.prms.InitializationImageSizeX, hsd.prms.InitializationImageSizeY,
                                 projectDir);
-            // Set HDF5 path in WACI
-            hsd.waci.SetHDF5Path(projectDir + "/grid_flow.h5");
+
             // Initialize WACI with first frame at time t=0
             hsd.waci.SetTime(0.0);
             spdlog::info("Preparer: Flow field generated successfully and initialized to t=0");

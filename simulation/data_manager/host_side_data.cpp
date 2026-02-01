@@ -34,6 +34,12 @@ namespace fs = std::filesystem;
 HostSideData::HostSideData() : waci(prms)
 {
     prms.Reset();
+    isVisualizationMode = false;
+}
+
+void HostSideData::SetVisualizationMode(bool enabled)
+{
+    isVisualizationMode = enabled;
 }
 
 void HostSideData::FillModelledAreaWithBlueColor()
@@ -256,6 +262,16 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
         }
         prms.GridYTotal = readGridY;
     }
+    if (H5Aexists(ds.getId(), "GridXTotal") > 0) {
+        int readGridX;
+        ds.openAttribute("GridXTotal").read(H5::PredType::NATIVE_INT, &readGridX);
+        if(prms.GridXTotal != 0) {
+            if(prms.GridXTotal != readGridX) {
+                throw std::runtime_error(fmt::format("ReadPointsFromSnapshot GridXTotal mismatch: expected {}, got {}", prms.GridXTotal, readGridX));
+            }
+        }
+        prms.GridYTotal = readGridY;
+    }
 
     int nPtsArrays;
     ds.openAttribute("nPtsArrays").read(H5::PredType::NATIVE_INT, &nPtsArrays);
@@ -439,6 +455,8 @@ void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool 
 
     dataset_pts.createAttribute("GridYTotal", H5::PredType::NATIVE_INT, att_dspace)
         .write(H5::PredType::NATIVE_INT, &prms.GridYTotal);
+    dataset_pts.createAttribute("GridXTotal", H5::PredType::NATIVE_INT, att_dspace)
+        .write(H5::PredType::NATIVE_INT, &prms.GridXTotal);
 
     LOGR("SaveSnapshot done");
 }

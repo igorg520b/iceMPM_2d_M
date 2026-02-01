@@ -199,7 +199,7 @@ void Model::LoadParameterFile(std::string fileName)
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     auto lg = std::make_shared<spdlog::logger>("multi_sink", spdlog::sinks_init_list({console_sink, file_sink}));
     spdlog::set_default_logger(lg);
-    spdlog::set_pattern("%v");
+//    spdlog::set_pattern("%v");
 
     // Load grid data (pre-created by plate_preparer)
     std::filesystem::path gridPath = jsonFileDir / parseResult["GridData"];
@@ -240,12 +240,6 @@ void Model::LoadParameterFile(std::string fileName)
 
 
 
-    // Load flow field data (mandatory)
-    if(parseResult.count("CurrentVelocityData"))
-    {
-        std::filesystem::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
-        sim_data.waci.SetHDF5Path(flowPath.string());
-    }
     
     if (parseResult.count("ERA5Data")) {
         std::string rawPath = parseResult["ERA5Data"];

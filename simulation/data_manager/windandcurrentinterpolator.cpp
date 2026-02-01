@@ -42,25 +42,6 @@ WindAndCurrentInterpolator::WindAndCurrentInterpolator(SimParams& params) : prms
 WindAndCurrentInterpolator::~WindAndCurrentInterpolator() = default;
 
 
-void WindAndCurrentInterpolator::SetHDF5Path(const std::string& filePath)
-{
-    if (filePath.empty()) return;
-
-    if (!hdf5_path.empty()) {
-        throw std::runtime_error("SetHDF5Path called more than once");
-    }
-
-    // Check file exists before attempting to open
-    if (!std::filesystem::exists(filePath)) {
-        throw std::runtime_error(fmt::format("Flow field file not found: {}", filePath));
-    }
-
-    hdf5_path = filePath;
-
-    // Lazily open file and load HDF5 metadata (currents)
-    LoadHDF5Metadata();
-}
-
 void WindAndCurrentInterpolator::SetEra5Path(const std::string& filePath)
 {
     if (!era5_path.empty()) {
@@ -113,52 +94,9 @@ void WindAndCurrentInterpolator::SetGLO12TidesPath(const std::string& filePath)
     // If we wanted to be robust we would verify dimensions here.
 }
 
-void WindAndCurrentInterpolator::LoadHDF5Metadata()
-{
-    if (hdf5_path.empty()) {
-        return;
-    }
-
-    file_flow = std::make_unique<H5::H5File>(hdf5_path, H5F_ACC_RDONLY);
-
-    // 1. Read Flow Type from the root group attribute
-    H5::Group root = file_flow->openGroup("/");
-    
-    // Check if flow_type exists
-    if(root.attrExists("flow_type")) {
-        H5::Attribute attr_type = root.openAttribute("flow_type");
-        H5::StrType str_type = attr_type.getStrType();
-        size_t len = str_type.getSize();
-        std::vector<char> buf(len + 1, '\0');
-        attr_type.read(str_type, buf.data());
-        flow_type_id = std::string(buf.data());
-    } else {
-        flow_type_id = "default";
-    }
-
-    // Standard wave/current flow
-    H5::DataSet ds_vx = file_flow->openDataSet("water_current_vx");
-    H5::DataSpace space = ds_vx.getSpace();
-    hsize_t dims[3];
-    space.getSimpleExtentDims(dims, NULL);
-    num_frames = static_cast<int>(dims[0]);
-    int file_gx = static_cast<int>(dims[1]);
-    int file_gy = static_cast<int>(dims[2]);
-
-    if (file_gx != prms.GridXTotal || file_gy != prms.GridYTotal) {
-        throw std::runtime_error(fmt::format(
-            "HDF5 flow dimensions ({}x{}) do not match simulation params ({}x{})", 
-            file_gx, file_gy, prms.GridXTotal, prms.GridYTotal));
-    }
-
-    ds_vx.openAttribute("time_interval").read(H5::PredType::NATIVE_DOUBLE, &time_interval);
-    ds_vx.openAttribute("loop_mode").read(H5::PredType::NATIVE_INT, &loop_mode);
-}
-
 void WindAndCurrentInterpolator::LoadEra5Metadata()
 {
-    if (era5_path.empty()) return;
-    
+    if (era5_path.empty()) return; 
     LOGR("Loading ERA5 Metadata from {}", era5_path);
     file_wind = std::make_unique<H5::H5File>(era5_path, H5F_ACC_RDONLY);
     
@@ -538,52 +476,6 @@ void WindAndCurrentInterpolator::LoadGLO12Frame(int frameIdx, int bufferSlot)
     spdlog::default_logger()->flush();
 }
 
-
-void WindAndCurrentInterpolator::LoadOceanFrame(int frameIdx, int bufferSlot)
-{
-    if (!file_flow) return;
-
-    // Clamp frame index based on loop mode
-    int actualIdx = frameIdx;
-    if (loop_mode == 0) {
-        // Periodic: wrap around
-        actualIdx = frameIdx % num_frames;
-        if (actualIdx < 0) actualIdx += num_frames;
-    } else {
-        // Hold last frame
-        if (actualIdx >= num_frames) actualIdx = num_frames - 1;
-        if (actualIdx < 0) actualIdx = 0;
-    }
-
-
-
-    const int& gx = prms.GridXTotal;
-    const int& gy = prms.GridYTotal;
-    size_t gridSize = (size_t)gx * (size_t)gy;
-    ocean_vx_frame_buffer[bufferSlot].resize(gridSize);
-    ocean_vy_frame_buffer[bufferSlot].resize(gridSize);
-
-    try {
-        H5::DataSet ds_vx = file_flow->openDataSet("water_current_vx");
-        H5::DataSet ds_vy = file_flow->openDataSet("water_current_vy");
-
-        hsize_t offset[3] = {static_cast<hsize_t>(actualIdx), 0, 0};
-        hsize_t dims[3] = {1, static_cast<hsize_t>(gx), static_cast<hsize_t>(gy)};
-
-        H5::DataSpace space_vx = ds_vx.getSpace();
-        space_vx.selectHyperslab(H5S_SELECT_SET, dims, offset);
-        H5::DataSpace mem_space(3, dims);
-
-        // Read directly as float
-        ds_vx.read(ocean_vx_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
-        ds_vy.read(ocean_vy_frame_buffer[bufferSlot].data(), H5::PredType::NATIVE_FLOAT, mem_space, space_vx);
-
-    } catch (const H5::Exception& e) {
-        LOGR("HDF5 Error loading flow frame: {}", e.getDetailMsg());
-        throw std::runtime_error("Failed to load flow field frame from HDF5");
-    }
-}
-
 // --------------------------------------------------------------------------------------
 // Projection & Rotation Logic
 // --------------------------------------------------------------------------------------
@@ -927,100 +819,153 @@ void WindAndCurrentInterpolator::UpdateRingBufferSlots(int needed_f0, int needed
 
 std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
 {
+    if (!interpolation_enabled) return {false, false};
 
     // --- 0. Wait for any pending async preloads ---
-    if (ocean_preload_future.valid()) ocean_preload_future.wait();
+    if (glo12_preload_future.valid()) glo12_preload_future.wait();
     if (wind_preload_future.valid()) wind_preload_future.wait();
     
-    // --- 1. OCEAN CURRENT (Standard) ---
-    bool ocean_frames_changed = false;
-    if (num_frames > 0) {
-        // Calculate logical frames based on Time 't'
-        double frame_idx_f = (time_interval > 0.0) ? (t / time_interval) : 0.0;
+    bool ocean_frames_changed = ProcessGLO12(t);
+    bool wind_frames_changed = ProcessERA5(t);
 
-        // Apply Loop Mode (Periodic vs Hold)
-        if (loop_mode == 0) { // Periodic
-            frame_idx_f = std::fmod(frame_idx_f, static_cast<double>(num_frames));
-            if (frame_idx_f < 0.0) frame_idx_f += num_frames;
-        } else { // Hold Last
-            if (frame_idx_f > num_frames - 1) frame_idx_f = num_frames - 1;
-            if (frame_idx_f < 0.0) frame_idx_f = 0.0;
-        }
+    return {ocean_frames_changed, wind_frames_changed};
+}
 
-        int first_idx = static_cast<int>(std::floor(frame_idx_f));
-        int second_idx = first_idx;
-        double alpha = frame_idx_f - first_idx;
 
-        if (loop_mode == 0) second_idx = (first_idx + 1) % num_frames;
-        else second_idx = std::min(first_idx + 1, num_frames - 1);
+std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j) const
+{
+    if (!interpolation_enabled) return {0.0, 0.0};
 
-        // Check if our interpolation window has shifted
-        bool time_window_changed = (first_idx != current_ocean_first_idx || second_idx != current_ocean_second_idx);
-        bool sequential_flow = false;
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
+
+    if (num_frames == 0) {
+        // Check if GLO12 is available
+        bool has_glo12 = prms.UseGLO12Data && glo12_num_frames > 0;
+        if (!has_glo12) return {0.0, 0.0};
         
-        // Check for sequential flow: Did we move from [n, n+1] to [n+1, n+2]?
-        // Basically, if the new first_idx is exactly the old second_idx (or old first_idx + 1)
-        if (current_ocean_first_idx != -1) {
-             int expected_next = (current_ocean_first_idx + 1);
-             if (loop_mode == 0) expected_next %= num_frames;
-             else expected_next = std::min(expected_next, num_frames - 1);
-             
-             if (first_idx == expected_next) sequential_flow = true;
-        }
-        
-        if (time_window_changed) {
-            ocean_frames_changed = true;
-            current_ocean_first_idx = first_idx;
-            current_ocean_second_idx = second_idx;
-            
-            // Delegate buffer management to helper (Synchronous for current frames)
-            UpdateRingBufferSlots(first_idx, second_idx, ocean_slot_frames, current_ocean_active_slots, 
-                [&](int f, int s){ LoadOceanFrame(f, s); });
-            
-            // ASYNC PRELOAD LOGIC
-            // If we are moving sequentially, try to preload the NEXT frame (n+2)
-            if (sequential_flow) {
-                int next_preload_idx = -1;
-                
-                if (loop_mode == 0) { // Periodic
-                    next_preload_idx = (second_idx + 1) % num_frames;
-                } else { // Hold Last
-                    if (second_idx < num_frames - 1) next_preload_idx = second_idx + 1;
-                }
-                
-                // Only preload if valid frame and not already loaded
-                if (next_preload_idx != -1) {
-                    // Check if already in slot
-                    bool already_loaded = false;
-                    for(int k=0; k<NUM_SLOTS; ++k) if(ocean_slot_frames[k] == next_preload_idx) already_loaded = true;
-                    
-                    if (!already_loaded) {
-                        // Find the spare slot (not used by first_idx or second_idx)
-                        int spare_slot = -1;
-                        for(int k=0; k<NUM_SLOTS; ++k) {
-                            if (k != current_ocean_active_slots[0] && k != current_ocean_active_slots[1]) {
-                                spare_slot = k;
-                                break;
-                            }
-                        }
-                        
-                        // Launch Async Load
-                        if (spare_slot != -1) {
-                            // Mark slot as occupied by this frame (so future SetTime calls see it)
-                            ocean_slot_frames[spare_slot] = next_preload_idx;
-                            
-                            // Capture by value carefully
-                            ocean_preload_future = std::async(std::launch::async, [this, next_preload_idx, spare_slot]() {
-                                LoadOceanFrame(next_preload_idx, spare_slot);
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        current_ocean_alpha = alpha;
+        // If we are here, we use GLO12 data (which populates ocean_vx_frame_buffer)
+    }
+    if (i < 0 || i >= gx || j < 0 || j >= gy) return {0.0, 0.0};
+
+    size_t idx = j + static_cast<size_t>(i) * gy;
+
+    // Use current active slots
+    int s0 = current_ocean_active_slots[0];
+    int s1 = current_ocean_active_slots[1];
+
+    if (num_frames == 1) {
+        return {(double)ocean_vx_frame_buffer[s0][idx], (double)ocean_vy_frame_buffer[s0][idx]};
     }
 
+    double vx_first = ocean_vx_frame_buffer[s0][idx];
+    double vx_second = ocean_vx_frame_buffer[s1][idx];
+    double vy_first = ocean_vy_frame_buffer[s0][idx];
+    double vy_second = ocean_vy_frame_buffer[s1][idx];
+
+    double vx = (1.0 - current_ocean_alpha) * vx_first + current_ocean_alpha * vx_second;
+    double vy = (1.0 - current_ocean_alpha) * vy_first + current_ocean_alpha * vy_second;
+    
+    return {vx, vy};
+}
+
+std::pair<double, double> WindAndCurrentInterpolator::GetWindValue(int i, int j) const
+{
+    if (!interpolation_enabled) return {0.0, 0.0};
+
+    if (!prms.UseWindData) return {0.0, 0.0};
+    
+    const int& gx = prms.GridXTotal;
+    const int& gy = prms.GridYTotal;
+
+    // Ensure we have loaded data (check active slots - although SetTime ensures they are set)
+    // Note: Checking empty() on slot 0 is not enough as active slot might vary.
+    // Just check the active slots.
+    int s0 = current_wind_active_slots[0];
+    int s1 = current_wind_active_slots[1];
+    
+    if (wind_vx_frame_buffer[s0].empty()) return {0.0, 0.0};
+
+    size_t idx = (size_t)i * gy + j;
+    if (idx >= wind_vx_frame_buffer[s0].size()) return {0.0, 0.0};
+
+    double vx0 = wind_vx_frame_buffer[s0][idx];
+    double vx1 = wind_vx_frame_buffer[s1][idx];
+    double vy0 = wind_vy_frame_buffer[s0][idx];
+    double vy1 = wind_vy_frame_buffer[s1][idx];
+
+    double vx = vx0 * (1.0 - current_wind_alpha) + vx1 * current_wind_alpha;
+    double vy = vy0 * (1.0 - current_wind_alpha) + vy1 * current_wind_alpha;
+
+    return {vx, vy};
+}
+
+const float* WindAndCurrentInterpolator::GetOceanDataPointer(int logicalFrame, int component) const
+{
+    if (!interpolation_enabled) return nullptr;
+    // logicalFrame: 0 or 1
+    if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
+    int slot = current_ocean_active_slots[logicalFrame];
+    
+    if (slot < 0 || slot >= NUM_SLOTS) return nullptr;
+
+    if (component == 0) return ocean_vx_frame_buffer[slot].data();
+    else return ocean_vy_frame_buffer[slot].data();
+}
+
+const float* WindAndCurrentInterpolator::GetWindDataPointer(int logicalFrame, int component) const
+{
+    if (!interpolation_enabled) return nullptr;
+    if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
+    int slot = current_wind_active_slots[logicalFrame];
+    
+    if (slot < 0 || slot >= NUM_SLOTS) return nullptr;
+
+    if (component == 0) return wind_vx_frame_buffer[slot].data();
+    else return wind_vy_frame_buffer[slot].data();
+}
+
+std::pair<double, double> WindAndCurrentInterpolator::GetLatLon(int i, int j) const
+{
+    // Global pixel coordinates
+    int global_x = i + prms.ModeledRegionOffsetX;
+    
+    // Invert Y because PROJ coeffs are based on top-left origin image, 
+    // while grid is bottom-left origin.
+    int global_y_grid = j + prms.ModeledRegionOffsetY;
+    int global_y = prms.InitializationImageSizeY - 1 - global_y_grid;
+
+    LatLon ll = ProjectPixel(global_x, global_y);
+    
+    if (!ll.valid) {
+        return {0.0, 0.0};
+    }
+    return {ll.lat_deg, ll.lon_deg};
+}
+
+
+void WindAndCurrentInterpolator::SetEnabled(bool enabled)
+{
+    if (interpolation_enabled == enabled) return;
+    interpolation_enabled = enabled;
+    if (!enabled) {
+        // Clear buffers
+        for (int i=0; i<NUM_SLOTS; ++i) {
+            std::vector<float>().swap(ocean_vx_frame_buffer[i]);
+            std::vector<float>().swap(ocean_vy_frame_buffer[i]);
+            std::vector<float>().swap(wind_vx_frame_buffer[i]);
+            std::vector<float>().swap(wind_vy_frame_buffer[i]);
+            ocean_slot_frames[i] = -1;
+            wind_slot_frames[i] = -1;
+        }
+        current_ocean_first_idx = -1;
+        current_wind_first_idx = -1;
+    }
+}
+
+bool WindAndCurrentInterpolator::ProcessGLO12(double t)
+{
+    bool ocean_frames_changed = false;
     // --- 1.5 OCEAN CURRENT (GLO12 - Alternative) ---
     // If GLO12 is present AND Ocean Flow (HDF5) is NOT active (num_frames == 0),
     // we use GLO12 to populate the ocean buffers.
@@ -1057,11 +1002,58 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
              UpdateRingBufferSlots(f_first, f_second, ocean_slot_frames, current_ocean_active_slots,
                 [&](int f, int s){ LoadGLO12Frame(f, s); });
                 
-             // Async preload could be added here similar to ERA5
+             // Async Preload for GLO12 (Ocean)
+             bool glo_sequential = false;
+             // Check if we moved from n to n+1 sequentially
+             // Since we just updated current_ocean_first_idx to f_first, compare it with what it *was*? 
+             // Actually, simplest check for preload is: if we are at frame `f_first`, do we need `f_second+1` soon?
+             // ERA5 logic checks 'w_sequential' derived from comparing new w_first to old w_first.
+             // But inside this block, we already updated current_ocean_first_idx!
+             // Wait, ERA5 logic calculates 'w_sequential' BEFORE updating active slots, but uses it inside.
+             // Ah, I see ERA5 logic:
+             // if (w_first == current_wind_first_idx + 1) w_sequential = true; -> This happens *before* update?
+             // In `ProcessERA5` (and my helper copy), `w_sequential` var is set.
+             // In `ProcessGLO12`, I don't have `glo_sequential` pre-calculated.
+             // I need to add it or infer it.
+             // Standard playback implies f_second is the future target. Next one is f_second + 1.
+             // Let's assume sequential for optimization if loop mode is consistent.
+             
+             int next_preload_idx = -1;
+             if (loop_mode == 0) { // Periodic
+                 next_preload_idx = (f_second + 1) % glo12_num_frames;
+             } else { // Hold Last
+                 if (f_second < glo12_num_frames - 1) next_preload_idx = f_second + 1;
+             }
+         
+             if (next_preload_idx != -1) {
+                 bool already_loaded = false;
+                 for(int k=0; k<NUM_SLOTS; ++k) if(ocean_slot_frames[k] == next_preload_idx) already_loaded = true;
+                 
+                 if (!already_loaded) {
+                     int spare_slot = -1;
+                     for(int k=0; k<NUM_SLOTS; ++k) {
+                         if (k != current_ocean_active_slots[0] && k != current_ocean_active_slots[1]) {
+                             spare_slot = k;
+                             break;
+                         }
+                     }
+                     
+                     if (spare_slot != -1) {
+                         ocean_slot_frames[spare_slot] = next_preload_idx;
+                         glo12_preload_future = std::async(std::launch::async, [this, next_preload_idx, spare_slot]() {
+                             LoadGLO12Frame(next_preload_idx, spare_slot);
+                         });
+                     }
+                 }
+             }
         }
         current_ocean_alpha = glo_alpha;
     }
-    
+    return ocean_frames_changed;
+}
+
+bool WindAndCurrentInterpolator::ProcessERA5(double t)
+{
     // --- 2. WIND (ERA5) ---
     bool wind_frames_changed = false;
     if (prms.UseWindData && era5_num_frames > 0) {
@@ -1127,113 +1119,5 @@ std::pair<bool, bool> WindAndCurrentInterpolator::SetTime(double t)
          }
          current_wind_alpha = w_alpha;
     }
-
-    return {ocean_frames_changed, wind_frames_changed};
+    return wind_frames_changed;
 }
-
-
-std::pair<double, double> WindAndCurrentInterpolator::GetOceanValue(int i, int j) const
-{
-    const int& gx = prms.GridXTotal;
-    const int& gy = prms.GridYTotal;
-
-    if (hdf5_path.empty() || num_frames == 0) {
-        // Check if GLO12 is available
-        bool has_glo12 = prms.UseGLO12Data && glo12_num_frames > 0;
-        if (!has_glo12) return {0.0, 0.0};
-        
-        // If we are here, we use GLO12 data (which populates ocean_vx_frame_buffer)
-    }
-    if (i < 0 || i >= gx || j < 0 || j >= gy) return {0.0, 0.0};
-
-    size_t idx = j + static_cast<size_t>(i) * gy;
-
-    // Use current active slots
-    int s0 = current_ocean_active_slots[0];
-    int s1 = current_ocean_active_slots[1];
-
-    if (num_frames == 1) {
-        return {(double)ocean_vx_frame_buffer[s0][idx], (double)ocean_vy_frame_buffer[s0][idx]};
-    }
-
-    double vx_first = ocean_vx_frame_buffer[s0][idx];
-    double vx_second = ocean_vx_frame_buffer[s1][idx];
-    double vy_first = ocean_vy_frame_buffer[s0][idx];
-    double vy_second = ocean_vy_frame_buffer[s1][idx];
-
-    double vx = (1.0 - current_ocean_alpha) * vx_first + current_ocean_alpha * vx_second;
-    double vy = (1.0 - current_ocean_alpha) * vy_first + current_ocean_alpha * vy_second;
-    
-    return {vx, vy};
-}
-
-std::pair<double, double> WindAndCurrentInterpolator::GetWindValue(int i, int j) const
-{
-    if (!prms.UseWindData) return {0.0, 0.0};
-    
-    const int& gx = prms.GridXTotal;
-    const int& gy = prms.GridYTotal;
-
-    // Ensure we have loaded data (check active slots - although SetTime ensures they are set)
-    // Note: Checking empty() on slot 0 is not enough as active slot might vary.
-    // Just check the active slots.
-    int s0 = current_wind_active_slots[0];
-    int s1 = current_wind_active_slots[1];
-    
-    if (wind_vx_frame_buffer[s0].empty()) return {0.0, 0.0};
-
-    size_t idx = (size_t)i * gy + j;
-    if (idx >= wind_vx_frame_buffer[s0].size()) return {0.0, 0.0};
-
-    double vx0 = wind_vx_frame_buffer[s0][idx];
-    double vx1 = wind_vx_frame_buffer[s1][idx];
-    double vy0 = wind_vy_frame_buffer[s0][idx];
-    double vy1 = wind_vy_frame_buffer[s1][idx];
-
-    double vx = vx0 * (1.0 - current_wind_alpha) + vx1 * current_wind_alpha;
-    double vy = vy0 * (1.0 - current_wind_alpha) + vy1 * current_wind_alpha;
-
-    return {vx, vy};
-}
-
-const float* WindAndCurrentInterpolator::GetOceanDataPointer(int logicalFrame, int component) const
-{
-    // logicalFrame: 0 or 1
-    if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
-    int slot = current_ocean_active_slots[logicalFrame];
-    
-    if (slot < 0 || slot >= NUM_SLOTS) return nullptr;
-
-    if (component == 0) return ocean_vx_frame_buffer[slot].data();
-    else return ocean_vy_frame_buffer[slot].data();
-}
-
-const float* WindAndCurrentInterpolator::GetWindDataPointer(int logicalFrame, int component) const
-{
-    if (logicalFrame < 0 || logicalFrame > 1) return nullptr;
-    int slot = current_wind_active_slots[logicalFrame];
-    
-    if (slot < 0 || slot >= NUM_SLOTS) return nullptr;
-
-    if (component == 0) return wind_vx_frame_buffer[slot].data();
-    else return wind_vy_frame_buffer[slot].data();
-}
-
-std::pair<double, double> WindAndCurrentInterpolator::GetLatLon(int i, int j) const
-{
-    // Global pixel coordinates
-    int global_x = i + prms.ModeledRegionOffsetX;
-    
-    // Invert Y because PROJ coeffs are based on top-left origin image, 
-    // while grid is bottom-left origin.
-    int global_y_grid = j + prms.ModeledRegionOffsetY;
-    int global_y = prms.InitializationImageSizeY - 1 - global_y_grid;
-
-    LatLon ll = ProjectPixel(global_x, global_y);
-    
-    if (!ll.valid) {
-        return {0.0, 0.0};
-    }
-    return {ll.lat_deg, ll.lon_deg};
-}
-

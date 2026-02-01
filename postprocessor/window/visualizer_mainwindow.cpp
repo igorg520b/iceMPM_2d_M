@@ -27,6 +27,10 @@ PPMainWindow::~PPMainWindow() {}
 PPMainWindow::PPMainWindow(QWidget *parent)
     : QMainWindow(parent), representation(hsd)
 {
+    // Memory Optimizations:
+    hsd.SetVisualizationMode(true);
+    hsd.waci.SetEnabled(false);
+    
     setWindowTitle("MPM Post-Processor");
 
     // Create central widget with scroll area for VTK rendering
@@ -211,6 +215,17 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     renderSelectorAction->setChecked(false);
     connect(renderSelectorAction, &QAction::triggered, this, &PPMainWindow::toggleRenderSelector);
 
+    QAction *loadFlowAction = viewMenu->addAction("Load Flow Data");
+    loadFlowAction->setCheckable(true);
+    loadFlowAction->setChecked(false);
+    connect(loadFlowAction, &QAction::toggled, this, [&](bool checked){
+        hsd.waci.SetEnabled(checked);
+        // Force update of WACI state
+        hsd.waci.SetTime(hsd.prms.SimulationTime);
+        representation.SynchronizeTopology();
+        renderWindow->Render();
+    });
+
 
 
     // Connect value range changes
@@ -336,22 +351,7 @@ void PPMainWindow::LoadParametersFile(QString fileName)
 
     // Load flow field data (for v_eta and v_norm visualization)
     // Load flow field data (for v_eta and v_norm visualization)
-    LOGR("Loading flow field data...");
-    if (parseResult.count("CurrentVelocityData") && !parseResult["CurrentVelocityData"].empty()) {
-        fs::path flowPath = jsonFileDir / parseResult["CurrentVelocityData"];
-        LOGR("Flow field file: {}", flowPath.string());
-        
-        if (fs::exists(flowPath) && fs::is_regular_file(flowPath)) {
-            hsd.waci.SetHDF5Path(flowPath.string());
-            LOGR("Flow field loaded successfully");
-        } else {
-            LOGR("Warning: Flow field file not found or invalid: {}", flowPath.string());
-            LOGR("  v_eta and v_norm visualizations will not be available");
-        }
-    } else {
-        LOGR("No CurrentVelocityData specified in config.");
-        LOGR("  v_eta and v_norm visualizations will not be available");
-    }
+
 
     // Load wind data if available (for wind visualization)
     if (parseResult.count("ERA5Data") && !parseResult["ERA5Data"].empty()) {

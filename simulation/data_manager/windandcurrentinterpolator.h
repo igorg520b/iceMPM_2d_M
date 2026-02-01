@@ -25,7 +25,8 @@ public:
     SimParams &prms;
 
     // Set HDF5 file path (must be called before SetTime)
-    void SetHDF5Path(const std::string& filePath);
+
+
     
     // Set ERA5 file path (must be called before SetTime)
     void SetEra5Path(const std::string& filePath);
@@ -76,10 +77,12 @@ public:
     double current_ocean_alpha = 0.0;
     double current_wind_alpha = 0.0;
 
+    // Optimization: Optional enabling
+    bool interpolation_enabled = true;
+    void SetEnabled(bool enabled);
+
 private:
-    std::string hdf5_path;              // path to flow field HDF5 file
-    std::unique_ptr<H5::H5File> file_flow;   // HDF5 file handle (opened lazily)
-    
+  
     std::string era5_path;
     std::unique_ptr<H5::H5File> file_wind;
 
@@ -129,17 +132,19 @@ private:
     std::string flow_type_id = "";
 
     // Helper methods
-    void LoadHDF5Metadata();
-    void LoadOceanFrame(int frameIdx, int bufferSlot);
+
 
     void LoadEra5Metadata();
     void LoadWindFrame(int frameIdx, int bufferSlot);
+
+    bool ProcessGLO12(double t);
+    bool ProcessERA5(double t);
 
     void LoadGLO12Metadata();
     void LoadGLO12Frame(int frameIdx, int bufferSlot);
 
     // Async preloading
-    std::future<void> ocean_preload_future;
+    std::future<void> glo12_preload_future;
     std::future<void> wind_preload_future;
 
     // Smart Ring Buffer Update Logic
