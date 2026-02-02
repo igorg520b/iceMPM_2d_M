@@ -122,6 +122,31 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
 //    LOGR("    rgb: {:.3f} MB", (double)rgb.size() * sizeof(uint8_t) / 1.0e6);
 }
 
+float* HostSideData::GetGridBufferPointer(int arrayIndex)
+{
+    if (host_grid_buffer.empty()) {
+        return nullptr;
+    }
+    
+    // Safety check for index
+    if (arrayIndex < 0 || arrayIndex >= SimParams::HostGridArrayIndex::nGridArraysHost) {
+        LOGR("GetGridBufferPointer: Invalid array index {}", arrayIndex);
+        return nullptr;
+    }
+
+    size_t gridSize = (size_t)prms.GridXTotal * prms.GridYTotal;
+    size_t offset = gridSize * (size_t)arrayIndex;
+
+    // Safety check for buffer size
+    if (offset >= host_grid_buffer.size()) {
+         LOGR("GetGridBufferPointer: Array index {} (offset {}) out of bounds (size {})", 
+              arrayIndex, offset, host_grid_buffer.size());
+         return nullptr;
+    }
+
+    return &host_grid_buffer[offset];
+}
+
 
 
 

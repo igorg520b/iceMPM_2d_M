@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
     LOGR("Loading snapshot from {}", inputPath);
     
     // This will read points, attributes, and perform RemoveDisabledAndSort internaly
+    hsd.prms.extra_space_pts = 0;   // for this compressor purposes, no extra space necessary
     hsd.ReadPointsFromSnapshot(inputPath);
 
     std::string prefix = compress ? "sc" : "s";

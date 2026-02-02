@@ -65,6 +65,9 @@ public:
 //    void SaveFrame_Old(int SimulationStep, double SimulationTime);
     void SaveFrame(const int SimulationStep, const double SimulationTime); // New split-saving implementation
 
+    // Helper to get raw pointer to specific grid array (returns nullptr if grid not allocated)
+    float* GetGridBufferPointer(int arrayIndex);
+
     // Reusable buffers for saving (allocated once to avoid reallocation)
     std::vector<float> save_buffer_float; 
     std::vector<uint8_t> save_buffer_uint8; 

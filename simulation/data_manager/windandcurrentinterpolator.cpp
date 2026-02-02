@@ -1004,19 +1004,6 @@ bool WindAndCurrentInterpolator::ProcessGLO12(double t)
                 
              // Async Preload for GLO12 (Ocean)
              bool glo_sequential = false;
-             // Check if we moved from n to n+1 sequentially
-             // Since we just updated current_ocean_first_idx to f_first, compare it with what it *was*? 
-             // Actually, simplest check for preload is: if we are at frame `f_first`, do we need `f_second+1` soon?
-             // ERA5 logic checks 'w_sequential' derived from comparing new w_first to old w_first.
-             // But inside this block, we already updated current_ocean_first_idx!
-             // Wait, ERA5 logic calculates 'w_sequential' BEFORE updating active slots, but uses it inside.
-             // Ah, I see ERA5 logic:
-             // if (w_first == current_wind_first_idx + 1) w_sequential = true; -> This happens *before* update?
-             // In `ProcessERA5` (and my helper copy), `w_sequential` var is set.
-             // In `ProcessGLO12`, I don't have `glo_sequential` pre-calculated.
-             // I need to add it or infer it.
-             // Standard playback implies f_second is the future target. Next one is f_second + 1.
-             // Let's assume sequential for optimization if loop mode is consistent.
              
              int next_preload_idx = -1;
              if (loop_mode == 0) { // Periodic
