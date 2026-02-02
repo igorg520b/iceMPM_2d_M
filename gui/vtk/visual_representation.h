@@ -126,6 +126,8 @@ public:
     void ConfigureScalarBar();
     void UpdateTimeText();
 
+    std::vector<int> GetRequiredGridArrays(VisOpt visualizationOptionIndex);
+
 private:
     constexpr static std::string_view state_file_name = "plateMPM_vis_state";
 

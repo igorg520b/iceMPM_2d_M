@@ -996,3 +996,68 @@ void VisualRepresentation::LoadVisualizationState()
 
     }
 }
+
+std::vector<int> VisualRepresentation::GetRequiredGridArrays(VisOpt visualizationOptionIndex)
+{
+    std::vector<int> required;
+    using HI = SimParams::HostGridArrayIndex;
+
+    switch (visualizationOptionIndex)
+    {
+    case grid_mass:
+        required.push_back(HI::host_grid_idx_mass);
+        break;
+    case grid_pt_count:
+        required.push_back(HI::grid_idx_vis_pts_density);
+        break;
+    case grid_Jpinv:
+        required.push_back(HI::grid_idx_vis_Jpinv);
+        break;
+    case grid_ridges:
+        // Ridges might require EqvGreenLagrange or other derived fields, 
+        // but for now we assume they are pre-calculated or not strictly grid-dependent in this map
+        // If checking SynchronizeTopology reveals otherwise, add here.
+        break;
+    case grid_P:
+        required.push_back(HI::grid_idx_vis_P);
+        break;
+    case grid_Q:
+        required.push_back(HI::grid_idx_vis_Q);
+        break;
+    case grid_colors:
+        required.push_back(HI::grid_idx_vis_r);
+        required.push_back(HI::grid_idx_vis_g);
+        required.push_back(HI::grid_idx_vis_b);
+        break;
+    case grid_vnorm:
+        required.push_back(HI::grid_idx_px);
+        required.push_back(HI::grid_idx_py);
+        required.push_back(HI::host_grid_idx_mass); 
+        break;
+    case grid_cracked:
+        required.push_back(HI::grid_idx_vis_cracked);
+        required.push_back(HI::grid_idx_vis_crushed); 
+        break;
+    case grid_thickness:
+        required.push_back(HI::grid_idx_vis_thickness);
+        break;
+    case grid_fracture_type:
+        required.push_back(HI::grid_idx_fracture_tension);
+        required.push_back(HI::grid_idx_fracture_shear);
+        required.push_back(HI::grid_idx_fracture_crush);
+        break;
+    case grid_glen_flow:
+        required.push_back(HI::grid_idx_glen_flow);
+        break;
+    case str_EqvGreenLagrange:
+        required.push_back(HI::grid_idx_vis_strain_EqvGreenLagrange);
+        break;
+    case str_vonMises:
+        required.push_back(HI::grid_idx_vis_strain_vonMises);
+        break;
+    default:
+        break;
+    }
+    
+    return required;
+}

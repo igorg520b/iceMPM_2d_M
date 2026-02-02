@@ -239,6 +239,48 @@ void MainWindow::quit_triggered()
 
 void MainWindow::comboboxIndexChanged_visualizations(int index)
 {
+    if (model.prms.GridXTotal <= 0) return;
+
+    VisualRepresentation::VisOpt opt = (VisualRepresentation::VisOpt)index;
+    auto required = representation.GetRequiredGridArrays(opt);
+
+    bool missing = false;
+    for (int req : required) {
+        if (!model.sim_data.IsGridArrayAllocated(req)) {
+            missing = true;
+            break;
+        }
+    }
+
+    if (missing) {
+        if (model.sim_data.isVisualizationMode) {
+             // Allocate missing arrays
+             for (int req : required) {
+                 model.sim_data.AllocateGridArray(req);
+             }
+             
+             // Reload frame data to populate the newly allocated arrays
+             // We use AnimationFrameNumber which should track the currently visualized frame
+             int currentFrame = model.prms.AnimationFrameNumber();
+             
+             std::string framesDir = model.sim_data.output_directory;
+             if(framesDir.empty()) framesDir = "output";
+             framesDir += "/frames";
+             
+             // We need to reload data. 
+             // Note: LoadFrameData is thread-safe? locked below anyway.
+             // But we are accessing model.sim_data which needs locking?
+             // The lock is acquired below. We should acquire it here too?
+             // Actually, the Original code acquired lock inside the scope. 
+             // We should act safely.
+             std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
+             model.sim_data.LoadFrameData(currentFrame, framesDir);
+        } 
+        // else: Simulation mode. We expect dense allocation. 
+        // If missing, it's an anomaly but we won't crash here. 
+        // Rendering might fail/skip if VisualRepresentation checks pointers (which it does).
+    }
+
     {
         std::lock_guard<std::mutex> lg(model.lock_data_for_GUI);
         representation.ChangeVisualizationOption(index);
@@ -354,6 +396,9 @@ void MainWindow::LoadParameterFile(QString qFileName)
 
     this->setWindowTitle(qFileName);
     pbrowser->setActiveObject(params);
+
+    // Apply the selected visualization option now that the model is loaded
+    comboboxIndexChanged_visualizations(comboBox_visualizations->currentIndex());
 
     updateGUI();
 }

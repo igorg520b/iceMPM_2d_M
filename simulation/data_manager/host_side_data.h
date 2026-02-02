@@ -33,7 +33,7 @@ public:
 
     SimParams prms;
     HostSideSOA hssoa;                        // host-side points
-    std::vector<float> host_grid_buffer;     // host-side grid (only used for visualization, so it is single precision)
+    std::vector<std::vector<float>> host_grid_buffer;     // host-side grid: sparse allocation for visualization
     WindAndCurrentInterpolator waci;          // water current and wind interpolator
 
     std::string SimulationTitle;
@@ -54,6 +54,8 @@ public:
     size_t allocated_bytes[2] = {0, 0};
 
     void AllocateGridArrays(bool allocate_dense_grid = true);
+    void AllocateGridArray(int arrayIndex); // Allocate specific array if not present
+    bool IsGridArrayAllocated(int arrayIndex) const; // Check status
 
     void LoadGridDataFromFile(const std::string& gridFilePath);
 

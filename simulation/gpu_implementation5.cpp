@@ -261,8 +261,13 @@ void GPU_Implementation5::render_visualized_data()
     // Each group reuses the same 10 GPU array slots, so we must transfer before the next group
     
     // Initialize host buffer once before accumulating all groups
-    const size_t total_host_buffer_size = (size_t)hsd.prms.GridXTotal * hsd.prms.GridYTotal * SimParams::HostGridArrayIndex::nGridArraysHost;
-    hsd.host_grid_buffer.assign(total_host_buffer_size, 0.0f);
+    // Initialize host buffer once before accumulating all groups
+    // const size_t total_host_buffer_size = (size_t)hsd.prms.GridXTotal * hsd.prms.GridYTotal * SimParams::HostGridArrayIndex::nGridArraysHost;
+    // hsd.host_grid_buffer.assign(total_host_buffer_size, 0.0f);
+    // Sparse clear:
+    for(auto &vec : hsd.host_grid_buffer) {
+        if(!vec.empty()) std::fill(vec.begin(), vec.end(), 0.0f);
+    }
 
     // Groups 0-5: Render Visualization Properties
     for (int group = 0; group <= 6; ++group)
@@ -560,6 +565,13 @@ void GPU_Implementation5::normalize_grid_on_host()
     const double cellsize_sq = hsd.prms.cellsize * hsd.prms.cellsize;
     const size_t grid_plane_size = (size_t)gx * gy;
 
+    // Check if Mass buffer is allocated (Critical)
+    if (!hsd.IsGridArrayAllocated(SimParams::HostGridArrayIndex::host_grid_idx_mass)) {
+        throw std::runtime_error("normalize_grid_on_host: Mass buffer not allocated!");
+    }
+
+    std::vector<float>& mass_buf = hsd.host_grid_buffer[SimParams::HostGridArrayIndex::host_grid_idx_mass];
+
     // List of grid quantities that need to be normalized by mass
     const size_t planes_to_normalize[] = {
         SimParams::HostGridArrayIndex::grid_idx_px,
@@ -581,19 +593,20 @@ void GPU_Implementation5::normalize_grid_on_host()
         SimParams::HostGridArrayIndex::grid_idx_glen_flow
     };
 
-    const size_t mass_plane_offset = grid_plane_size * SimParams::HostGridArrayIndex::host_grid_idx_mass;
-
 #pragma omp parallel for
     for (int i = 0; i < gx; ++i) {
         for (int j = 0; j < gy; ++j) {
             const size_t idx = (size_t)j + (size_t)i * gy;
-            const float mass = hsd.host_grid_buffer[mass_plane_offset + idx];
+            const float mass = mass_buf[idx];
             if (mass == 0) continue;
 
-            for (const auto& plane_idx : planes_to_normalize)
-                hsd.host_grid_buffer[grid_plane_size * plane_idx + idx] /= mass;
+            for (const auto& plane_idx : planes_to_normalize) {
+                if (hsd.IsGridArrayAllocated(plane_idx)) {
+                    hsd.host_grid_buffer[plane_idx][idx] /= mass;
+                }
+            }
 
-            hsd.host_grid_buffer[mass_plane_offset + idx] /= cellsize_sq;
+            mass_buf[idx] /= cellsize_sq;
         }
     }
 }
@@ -602,14 +615,12 @@ void GPU_Implementation5::normalize_grid_on_host()
 void GPU_Implementation5::transfer_grid_group_to_host(int group)
 {
 //    LOGR("GPU_Implementation5::transfer_grid_group_to_host", group);
-//    spdlog::default_logger()->flush();
 
     // Note that during rendering and this transfer we treat grid data as 'float'
     const size_t gx_total = hsd.prms.GridXTotal;
     const size_t gy_total = hsd.prms.GridYTotal;
     const size_t halo = hsd.prms.GridHaloSize;
     const size_t grid_plane_size = (size_t)gx_total * gy_total;
-    const int nGridArrays = SimParams::HostGridArrayIndex::nGridArraysHost;
 
     // Get the slot mapping for this group (throws if group not found)
     auto slot_mapping = getGroupSlotMapping(group);
@@ -624,7 +635,11 @@ void GPU_Implementation5::transfer_grid_group_to_host(int group)
         // Transfer each array in this group individually (slice by slice)
         for (auto [gpu_slot, host_slot] : slot_mapping)
         {
-            float* dst_host = hsd.host_grid_buffer.data() + host_slot*grid_plane_size + gy_total*p.pparams.gridX_offset;
+            if (!hsd.IsGridArrayAllocated(host_slot)) {
+                throw std::runtime_error(fmt::format("transfer_grid_group_to_host: Host buffer {} not allocated!", host_slot));
+            }
+
+            float* dst_host = hsd.host_grid_buffer[host_slot].data() + gy_total*p.pparams.gridX_offset;
             const float* src_dev = (float*)p.pparams.buffer_grid + (size_t)gpu_slot*p.pparams.pitch_grid + gy_total*halo;
 
             CUDA_CHECK(cudaMemcpy(dst_host, src_dev, gy_total*p.pparams.partition_gridX*sizeof(float), cudaMemcpyDeviceToHost));
@@ -641,6 +656,8 @@ void GPU_Implementation5::transfer_grid_group_to_host(int group)
         // Transfer each array in this group individually
         for (auto [gpu_slot, host_slot] : slot_mapping)
         {
+            if (!hsd.IsGridArrayAllocated(host_slot)) continue; // Already checked above, but safe
+
             // Left halo
             if (i > 0)
             {
@@ -652,8 +669,8 @@ void GPU_Implementation5::transfer_grid_group_to_host(int group)
                 for (size_t x = 0; x < halo; x++) {
                     for (size_t y = 0; y < gy_total; y++) {
                         const size_t src_idx = x * gy_total + y;
-                        const size_t dst_idx = host_slot * grid_plane_size + (host_x_start + x) * gy_total + y;
-                        hsd.host_grid_buffer[dst_idx] += hsd.tmp_halo_buffer[src_idx];
+                        const size_t dst_idx = (host_x_start + x) * gy_total + y;
+                        hsd.host_grid_buffer[host_slot][dst_idx] += hsd.tmp_halo_buffer[src_idx];
                     }
                 }
             }
@@ -669,8 +686,8 @@ void GPU_Implementation5::transfer_grid_group_to_host(int group)
                 for (size_t x = 0; x < halo; x++) {
                     for (size_t y = 0; y < gy_total; y++) {
                         const size_t src_idx = x * gy_total + y;
-                        const size_t dst_idx = host_slot * grid_plane_size + (host_x_start + x) * gy_total + y;
-                        hsd.host_grid_buffer[dst_idx] += hsd.tmp_halo_buffer[src_idx];
+                        const size_t dst_idx = (host_x_start + x) * gy_total + y;
+                        hsd.host_grid_buffer[host_slot][dst_idx] += hsd.tmp_halo_buffer[src_idx];
                     }
                 }
             }

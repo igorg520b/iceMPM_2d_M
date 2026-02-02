@@ -94,17 +94,21 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
     original_image_colors_rgb.resize(3 * initial_image_total);
     allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
 
+    // Resize the main container to hold all potential pointers/vectors
+    host_grid_buffer.resize(SimParams::HostGridArrayIndex::nGridArraysHost);
+
     if (allocate_dense_grid)
     {
-        host_grid_buffer.resize(modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost);
-        allocated_bytes[0] += modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
+        // Simulation Mode: Allocate EVERYTHING
+        for (int i = 0; i < SimParams::HostGridArrayIndex::nGridArraysHost; ++i) {
+            host_grid_buffer[i].resize(modeled_grid_total, 0.0f);
+            allocated_bytes[0] += modeled_grid_total * sizeof(float);
+        }
 
-        tmp_halo_buffer.resize((size_t)prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost);
-        allocated_bytes[0] += (size_t)prms.GridYTotal * prms.GridHaloSize * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(double);
-
-        // 'rgb' buffer is used for saving frames (simulation) but not needed for preparer
-//        rgb.resize(3 * initial_image_total);
-        allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
+        // Halo buffer is needed for halo exchange
+        size_t halo_size = (size_t)prms.GridYTotal * prms.GridHaloSize; 
+        tmp_halo_buffer.resize(halo_size * SimParams::HostGridArrayIndex::nGridArraysHost); 
+        allocated_bytes[0] += halo_size * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(float); 
 
         save_buffer_float.resize(4 * plane_size); 
         save_buffer_uint8.resize(4 * plane_size);
@@ -113,13 +117,50 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
         allocated_bytes[0] += (save_buffer_float.capacity() * sizeof(float));
         allocated_bytes[0] += (save_buffer_uint8.capacity() * sizeof(uint8_t));
     }
+    else
+    {
+        // Visualization Mode (Sparse Allocation)
+        std::vector<int> defaults = {
+            SimParams::HostGridArrayIndex::grid_idx_vis_pts_density,
+            SimParams::HostGridArrayIndex::grid_idx_fracture_tension,
+            SimParams::HostGridArrayIndex::grid_idx_fracture_shear,
+            SimParams::HostGridArrayIndex::grid_idx_fracture_crush,
+            SimParams::HostGridArrayIndex::grid_idx_glen_flow,
+            SimParams::HostGridArrayIndex::host_grid_idx_mass
+        };
+
+        for (int idx : defaults) {
+            AllocateGridArray(idx);
+        }
+
+        // 'rgb' buffer is used for saving frames (simulation) but not needed for preparer
+        allocated_bytes[0] += 3 * initial_image_total * sizeof(uint8_t);
+    }
 
     LOGR("[MEMORY] HostSideData Grid Arrays: {:.3f} MB", allocated_bytes[0] / 1.0e6);
     LOGR("    landmask_buffer: {:.3f} MB", (double)landmask_buffer.size() * sizeof(uint8_t) / 1.0e6);
     LOGR("    original_image_colors_rgb: {:.3f} MB", (double)original_image_colors_rgb.size() * sizeof(uint8_t) / 1.0e6);
-    if (allocate_dense_grid) LOGR("    host_grid_buffer: {:.3f} MB", (double)host_grid_buffer.size() * sizeof(float) / 1.0e6);
+    if (allocate_dense_grid) LOGR("    host_grid_buffer (ALL): {:.3f} MB", (double)(modeled_grid_total * SimParams::HostGridArrayIndex::nGridArraysHost * sizeof(float)) / 1.0e6);
+    else LOGR("    host_grid_buffer (SPARSE): {:.3f} MB", (double)allocated_bytes[0] / 1.0e6);
+}
 
-//    LOGR("    rgb: {:.3f} MB", (double)rgb.size() * sizeof(uint8_t) / 1.0e6);
+void HostSideData::AllocateGridArray(int arrayIndex)
+{
+    if (arrayIndex < 0 || arrayIndex >= SimParams::HostGridArrayIndex::nGridArraysHost) return;
+
+    if (host_grid_buffer[arrayIndex].empty()) {
+        size_t size = (size_t)prms.GridXTotal * prms.GridYTotal;
+        host_grid_buffer[arrayIndex].resize(size, 0.0f);
+        allocated_bytes[0] += size * sizeof(float);
+        LOGR("Allocated grid array index {} ({:.2f} MB)", arrayIndex, (double)size * sizeof(float)/1.0e6);
+    }
+}
+
+bool HostSideData::IsGridArrayAllocated(int arrayIndex) const
+{
+    if (host_grid_buffer.empty()) return false;
+    if (arrayIndex < 0 || arrayIndex >= SimParams::HostGridArrayIndex::nGridArraysHost) return false;
+    return !host_grid_buffer[arrayIndex].empty();
 }
 
 float* HostSideData::GetGridBufferPointer(int arrayIndex)
@@ -134,17 +175,8 @@ float* HostSideData::GetGridBufferPointer(int arrayIndex)
         return nullptr;
     }
 
-    size_t gridSize = (size_t)prms.GridXTotal * prms.GridYTotal;
-    size_t offset = gridSize * (size_t)arrayIndex;
-
-    // Safety check for buffer size
-    if (offset >= host_grid_buffer.size()) {
-         LOGR("GetGridBufferPointer: Array index {} (offset {}) out of bounds (size {})", 
-              arrayIndex, offset, host_grid_buffer.size());
-         return nullptr;
-    }
-
-    return &host_grid_buffer[offset];
+    if (host_grid_buffer[arrayIndex].empty()) return nullptr;
+    return host_grid_buffer[arrayIndex].data();
 }
 
 
@@ -222,8 +254,8 @@ void HostSideData::LoadGridDataFromFile(const std::string& gridFilePath)
                 prms.InitializationImageSizeY, prms.InitializationImageSizeX));
         }
 
-        // Allocate grid arrays (dense grid required here since we load data)
-        AllocateGridArrays(true);
+        // Allocate grid arrays (dense required for simulation, sparse for visualization)
+        AllocateGridArrays(!isVisualizationMode);
 
         // Read landmask dataset
         ds_landmask.read(landmask_buffer.data(), H5::PredType::NATIVE_UINT8);
@@ -532,12 +564,13 @@ void HostSideData::LoadFrameData(int frameIndex, const std::string& framesDirect
     auto load_into_grid = [&](fs::path path, const char* ds_name, int grid_idx, bool normalize = false) {
         if (!fs::exists(path)) return;
 
+        // Skip if grid index is not allocated (dynamic sparse loading)
+        if (!IsGridArrayAllocated(grid_idx)) return;
+
         // Open file (uncaught exception if open fails despite fs::exists)
         H5::H5File file(path.string(), H5F_ACC_RDONLY);
 
-        size_t offset = (size_t)grid_idx * gridSize;
-
-        std::vector<float>& dest_buffer = host_grid_buffer;
+        std::vector<float>& dest_buffer = host_grid_buffer[grid_idx];
         const std::string dataset_name = ds_name;
 
         // Check if dataset exists before trying to open to avoid exception on missing optional datasets
@@ -554,7 +587,7 @@ void HostSideData::LoadFrameData(int frameIndex, const std::string& framesDirect
         size_t file_size = dims_grid[0] * dims_grid[1];
 
         // Safety check to ensure we don't write out of bounds
-        if (offset + file_size > dest_buffer.size()) {
+        if (file_size > dest_buffer.size()) {
             LOGR("Error: Dataset {} is too large for buffer.", dataset_name);
             return;
         }
@@ -563,11 +596,11 @@ void HostSideData::LoadFrameData(int frameIndex, const std::string& framesDirect
         H5::DataType mem_dtype = H5::PredType::NATIVE_FLOAT;
         H5::DataSpace memspace(2, dims_grid);
 
-        dataset.read(dest_buffer.data() + offset, mem_dtype, memspace, filespace);
+        dataset.read(dest_buffer.data(), mem_dtype, memspace, filespace);
 
         // Normalize uint8 [0, 255] -> float [0.0, 1.0] if requested
         if (normalize) {
-            float* ptr = dest_buffer.data() + offset;
+            float* ptr = dest_buffer.data();
             for(size_t i = 0; i < file_size; ++i) ptr[i] = ptr[i] / 255.0f;
         }
     };
@@ -638,23 +671,13 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
         // mass
-        size_t mass_offset = plane_size * SimParams::HostGridArrayIndex::host_grid_idx_mass;
-        std::copy(host_grid_buffer.begin() + mass_offset,  host_grid_buffer.begin() + mass_offset + plane_size,
-                  save_buffer_float.begin());
-        WriteDatasetHelper(file, "mass", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "mass", host_grid_buffer[SimParams::HostGridArrayIndex::host_grid_idx_mass], gx, gy, H5::PredType::NATIVE_FLOAT);
 
         // vx
-        size_t vx_offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_px;
-        std::copy(host_grid_buffer.begin() + vx_offset, host_grid_buffer.begin() + vx_offset + plane_size,
-                  save_buffer_float.begin());
-        WriteDatasetHelper(file, "vx", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "vx", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_px], gx, gy, H5::PredType::NATIVE_FLOAT);
 
         // vy
-        size_t vy_offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_py;
-        std::copy(host_grid_buffer.begin() + vy_offset,
-                  host_grid_buffer.begin() + vy_offset + plane_size,
-                  save_buffer_float.begin());
-        WriteDatasetHelper(file, "vy", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "vy", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_py], gx, gy, H5::PredType::NATIVE_FLOAT);
 
         file.close();
     }
@@ -667,15 +690,15 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
             // Updated to use float variable and float constants (0.4f)
-            float d = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_pts_density];
+            float d = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_pts_density][i];
 
             // Alpha calculation using float math
             float alpha = std::clamp(d * 0.4f, 0.0f, 1.0f);
 
             // R, G, B
-            float r = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_r];
-            float g = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_g];
-            float b = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_b];
+            float r = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_r][i];
+            float g = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_g][i];
+            float b = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_b][i];
 
             save_buffer_uint8[i * 4 + 0] = (uint8_t)(std::clamp(r, 0.f, 1.f) * 255.f);
             save_buffer_uint8[i * 4 + 1] = (uint8_t)(std::clamp(g, 0.f, 1.f) * 255.f);
@@ -701,15 +724,8 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         fs::path path = GetOrCreateDir("strains");
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
-        size_t offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange;
-        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
-                  save_buffer_float.begin());
-        WriteDatasetHelper(file, "strain_eqv", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
-
-        offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises;
-        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
-                  save_buffer_float.begin());
-        WriteDatasetHelper(file, "strain_vm", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "strain_eqv", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange], gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "strain_vm", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises], gx, gy, H5::PredType::NATIVE_FLOAT);
         file.close();
     }
 
@@ -720,23 +736,19 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
-            float v = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_crushed];
+            float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_crushed][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
         WriteDatasetHelper(file, "crushed", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
-            float v = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_cracked];
+            float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_cracked][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
         WriteDatasetHelper(file, "cracked", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
 
-#pragma omp parallel for
-        for(size_t i=0; i<plane_size; i++) {
-            save_buffer_float[i] = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_thickness];
-        }
-        WriteDatasetHelper(file, "thickness", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "thickness", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_thickness], gx, gy, H5::PredType::NATIVE_FLOAT);
         file.close();
     }
 
@@ -747,21 +759,21 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
-            float v = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_fracture_tension];
+            float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_fracture_tension][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
         WriteDatasetHelper(file, "tension", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
-            float v = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_fracture_shear];
+            float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_fracture_shear][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
         WriteDatasetHelper(file, "shear", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
-            float v = host_grid_buffer[i + plane_size * SimParams::HostGridArrayIndex::grid_idx_fracture_crush];
+            float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_fracture_crush][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
         WriteDatasetHelper(file, "crush", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
@@ -773,24 +785,20 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         fs::path path = GetOrCreateDir("pressure");
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
-        size_t offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_P;
-        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
-                  save_buffer_float.begin());
+        const std::vector<float>& src_P = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_P];
+        std::copy(src_P.begin(), src_P.end(), save_buffer_float.begin());
         WriteDatasetHelper(file, "P", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
 
-        offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_Q;
-        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
-                  save_buffer_float.begin());
+        const std::vector<float>& src_Q = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Q];
+        std::copy(src_Q.begin(), src_Q.end(), save_buffer_float.begin());
         WriteDatasetHelper(file, "Q", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
 
-        offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv;
-        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
-                  save_buffer_float.begin());
+        const std::vector<float>& src_Jpinv = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv];
+        std::copy(src_Jpinv.begin(), src_Jpinv.end(), save_buffer_float.begin());
         WriteDatasetHelper(file, "Jpinv", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
 
-        offset = plane_size * SimParams::HostGridArrayIndex::grid_idx_glen_flow;
-        std::copy(host_grid_buffer.begin() + offset,  host_grid_buffer.begin() + offset + plane_size,
-                  save_buffer_float.begin());
+        const std::vector<float>& src_glen = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_glen_flow];
+        std::copy(src_glen.begin(), src_glen.end(), save_buffer_float.begin());
         WriteDatasetHelper(file, "glen_flow", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
 
         file.close();
