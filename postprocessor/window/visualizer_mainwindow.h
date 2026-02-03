@@ -3,6 +3,7 @@
 #ifndef PPMAINWINDOW_H
 #define PPMAINWINDOW_H
 
+#include <array>
 #include <QMainWindow>
 
 #include <QSizePolicy>
@@ -110,9 +111,14 @@ private:
     // Render selector dialog
     RenderSelectorDialog* m_renderSelectorDialog;
 
-    void generate_ffmpeg_script(int frameFrom, int frameTo);
+    void generate_ffmpeg_script(int frameFrom, int frameTo, std::string dirName = "raster");
 
     // Grid size threshold for slider tracking behavior
     static constexpr int GRID_SIZE_TRACKING_THRESHOLD = 4000;
+
+    // Camera Slots
+    std::array<double, 7> m_cameraSlots[5];
+    bool m_useCameraSlot[5] = {false, false, false, false, false};
+    void captureCameraToSlot(int index);
 };
 #endif

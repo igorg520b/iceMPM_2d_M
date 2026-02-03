@@ -268,7 +268,7 @@ void VisualRepresentation::SynchronizeTopology()
     actor_vectors->VisibilityOff();
     actor_streamlines->VisibilityOff();
 
-
+#pragma omp parallel for
     for (int i = 0; i < gx; i++) {
         for (int j = 0; j < gy; j++) {
             const size_t grid_idx = (size_t)j + (size_t)i * gy;
@@ -1014,6 +1014,7 @@ std::vector<int> VisualRepresentation::GetRequiredGridArrays(VisOpt visualizatio
         required.push_back(HI::grid_idx_vis_Jpinv);
         break;
     case grid_ridges:
+        required.push_back(HI::grid_idx_vis_Jpinv);
         // Ridges might require EqvGreenLagrange or other derived fields, 
         // but for now we assume they are pre-calculated or not strictly grid-dependent in this map
         // If checking SynchronizeTopology reveals otherwise, add here.

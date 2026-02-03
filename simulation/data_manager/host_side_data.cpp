@@ -126,7 +126,10 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
             SimParams::HostGridArrayIndex::grid_idx_fracture_shear,
             SimParams::HostGridArrayIndex::grid_idx_fracture_crush,
             SimParams::HostGridArrayIndex::grid_idx_glen_flow,
-            SimParams::HostGridArrayIndex::host_grid_idx_mass
+            SimParams::HostGridArrayIndex::host_grid_idx_mass,
+            SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv,
+            SimParams::HostGridArrayIndex::grid_idx_vis_P,
+            SimParams::HostGridArrayIndex::grid_idx_vis_Q
         };
 
         for (int idx : defaults) {
@@ -148,8 +151,15 @@ void HostSideData::AllocateGridArray(int arrayIndex)
 {
     if (arrayIndex < 0 || arrayIndex >= SimParams::HostGridArrayIndex::nGridArraysHost) return;
 
+    // Ensure main buffer is sized correctly
+    if (host_grid_buffer.size() < SimParams::HostGridArrayIndex::nGridArraysHost) {
+        host_grid_buffer.resize(SimParams::HostGridArrayIndex::nGridArraysHost);
+    }
+
     if (host_grid_buffer[arrayIndex].empty()) {
         size_t size = (size_t)prms.GridXTotal * prms.GridYTotal;
+        if(size == 0) return; // Don't allocate if dimensions are zero
+        
         host_grid_buffer[arrayIndex].resize(size, 0.0f);
         allocated_bytes[0] += size * sizeof(float);
         LOGR("Allocated grid array index {} ({:.2f} MB)", arrayIndex, (double)size * sizeof(float)/1.0e6);

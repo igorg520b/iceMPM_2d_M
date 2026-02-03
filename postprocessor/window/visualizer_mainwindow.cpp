@@ -210,6 +210,23 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     // View menu
     QMenu *viewMenu = menuBar()->addMenu("&View");
 
+    // Camera menu
+    QMenu *cameraMenu = menuBar()->addMenu("&Camera");
+    for(int i = 0; i < 5; ++i) {
+        QAction *saveAction = cameraMenu->addAction(QString("Save Pos %1").arg(i+1));
+        connect(saveAction, &QAction::triggered, this, [this, i](){
+            captureCameraToSlot(i);
+        });
+    }
+    cameraMenu->addSeparator();
+    for(int i = 0; i < 5; ++i) {
+        QAction *useAction = cameraMenu->addAction(QString("Use Slot %1").arg(i+1));
+        useAction->setCheckable(true);
+        connect(useAction, &QAction::toggled, this, [this, i](bool checked){
+            m_useCameraSlot[i] = checked;
+        });
+    }
+
     QAction *renderSelectorAction = viewMenu->addAction("&Render Selector");
     renderSelectorAction->setCheckable(true);
     renderSelectorAction->setChecked(false);
@@ -465,6 +482,40 @@ void PPMainWindow::sliderValueChanged(int val)
 
 void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 {
+    // Lazy Allocation Logic
+    VisualRepresentation::VisOpt opt = (VisualRepresentation::VisOpt)index;
+    
+    // Safety check: Don't attempt allocation if grid dimensions are not loaded yet
+    if (hsd.prms.GridXTotal == 0 || hsd.prms.GridYTotal == 0) {
+        representation.ChangeVisualizationOption(index);
+        return;
+    }
+
+    std::vector<int> requiredArrays = representation.GetRequiredGridArrays(opt);
+
+    bool needsReload = false;
+    for(int arrayIdx : requiredArrays) {
+        if(!hsd.IsGridArrayAllocated(arrayIdx)) {
+            hsd.AllocateGridArray(arrayIdx);
+            needsReload = true;
+        }
+    }
+
+    if(needsReload) {
+        int currentFrame = slider2->value(); // Assuming slider tracks current frame
+        
+        statusBar->showMessage("Allocating and reloading data...");
+        QCoreApplication::processEvents();
+        try {
+             hsd.LoadFrameData(currentFrame, currentFrameDirectory);
+             // Ensure WACI time is correct if we reloaded
+             hsd.waci.SetTime(hsd.prms.SimulationTime);
+        } catch (const std::exception& e) {
+            LOGR("Lazy load failed: {}", e.what());
+        }
+        statusBar->showMessage("Ready");
+    }
+
     representation.ChangeVisualizationOption(index);
 
     qdsbValRange->blockSignals(true);
@@ -518,6 +569,17 @@ void PPMainWindow::render_frame_triggered()
 }
 
 
+
+void PPMainWindow::captureCameraToSlot(int index)
+{
+    if (index < 0 || index >= 5) return;
+    vtkCamera* cam = renderer->GetActiveCamera();
+    cam->GetPosition(&m_cameraSlots[index][0]);
+    cam->GetFocalPoint(&m_cameraSlots[index][3]);
+    m_cameraSlots[index][6] = cam->GetParallelScale();
+    statusBar->showMessage(QString("Camera position saved to slot %1").arg(index + 1), 2000);
+}
+
 void PPMainWindow::render_all_triggered()
 {
     qDebug() << "render_all_triggered() started.";
@@ -537,8 +599,27 @@ void PPMainWindow::render_all_triggered()
         return;
     }
 
-    // Generate ffmpeg script for animation
-    generate_ffmpeg_script(frameFrom, frameTo);
+    // Pre-allocate arrays for all selected visualizations
+    // This ensures that LoadFrameData will load the necessary data
+    for (const auto& visOpt : visOptsToRender) {
+        std::vector<int> requiredArrays = representation.GetRequiredGridArrays(visOpt);
+        for(int arrayIdx : requiredArrays) {
+            hsd.AllocateGridArray(arrayIdx);
+        }
+    }
+
+    // Identify active camera slots (including default)
+    struct RenderTarget {
+        std::string dirName;
+        int slotIndex; // -1 for default
+    };
+    std::vector<RenderTarget> targets;
+    targets.push_back({"raster", -1}); // Default
+    for(int i = 0; i < 5; ++i) {
+        if(m_useCameraSlot[i]) {
+            targets.push_back({"raster_" + std::to_string(i+1), i});
+        }
+    }
 
     // Validate that the frame range is valid
     if (frameTo < frameFrom) {
@@ -550,7 +631,7 @@ void PPMainWindow::render_all_triggered()
     statusBar->showMessage(QString("Rendering %1 frames...").arg(totalFrames));
 
     // Create a progress dialog to show rendering status
-    const int totalOperations = totalFrames * visOptsToRender.size();
+    const int totalOperations = totalFrames * visOptsToRender.size() * targets.size();
     QProgressDialog progress("Rendering all frames...", "Abort", 0, totalOperations, this);
     progress.setWindowModality(Qt::WindowModal);
     QCoreApplication::processEvents();
@@ -567,7 +648,14 @@ void PPMainWindow::render_all_triggered()
     windowToImageFilter->SetInputBufferTypeToRGB();
     writer->SetInputConnection(windowToImageFilter->GetOutputPort());
 
-    // Main loop: process each frame and all visualization options
+    // Save initial camera state to restore later
+    vtkCamera* cam = renderer->GetActiveCamera();
+    std::array<double, 7> initialCamState;
+    cam->GetPosition(&initialCamState[0]);
+    cam->GetFocalPoint(&initialCamState[3]);
+    initialCamState[6] = cam->GetParallelScale();
+
+    // Main loop: process each frame
     int operationCount = 0;
     for (int frameNum = frameFrom; frameNum <= frameTo; ++frameNum) {
         if (progress.wasCanceled()) break;
@@ -575,16 +663,15 @@ void PPMainWindow::render_all_triggered()
         progress.setLabelText(QString("Loading frame %1...").arg(frameNum));
         QCoreApplication::processEvents();
 
-        // Load the frame data from HDF5 file
+        // Load the frame data from HDF5 file (ONCE per frame)
         try {
-            // std::string framePath = frame_utils::GetFramePath(currentFrameDirectory, frameNum);
             hsd.LoadFrameData(frameNum, currentFrameDirectory);
             representation.simulationTime = hsd.prms.SimulationTime;
             // Update WACI time to match current frame
             hsd.waci.SetTime(hsd.prms.SimulationTime);
         } catch (const std::exception& e) {
             LOGR("Failed to load frame {}: {}", frameNum, e.what());
-            operationCount += visOptsToRender.size();
+            operationCount += visOptsToRender.size() * targets.size();
             progress.setValue(operationCount);
             continue;
         }
@@ -592,42 +679,78 @@ void PPMainWindow::render_all_triggered()
         // Render each visualization option for this frame
         for (const auto& visOpt : visOptsToRender) {
             if (progress.wasCanceled()) break;
-            operationCount++;
 
             const QMetaEnum metaEnum = QMetaEnum::fromType<VisualRepresentation::VisOpt>();
             const QString visName = metaEnum.valueToKey(visOpt);
 
-            progress.setValue(operationCount);
-            progress.setLabelText(QString("Frame %1/%2 : Rendering %3")
-                                      .arg(frameNum - frameFrom + 1).arg(totalFrames).arg(visName));
-            QCoreApplication::processEvents();
-
-            // Update visualization and render the scene
+            // Update visualization (ONCE per VisOpt per frame)
             representation.ChangeVisualizationOption(visOpt);
-            renderWindow->Render();
-            windowToImageFilter->Modified();
 
-            // Create output directory structure and save rendered image
-            QDir frameDir(QString::fromStdString(currentFrameDirectory));
-            frameDir.cdUp(); // Navigate to parent directory (output/)
-            const QString rasterBasePath = frameDir.filePath("raster");
-            const QString subDir = QString("%1/%2").arg(rasterBasePath).arg(visName);
-            QDir().mkpath(subDir); // Create full directory path
-            const QString outputPath = QString("%1/%2.jpg").arg(subDir).arg(frameNum, 5, 10, QChar('0'));
+            // Render for each camera position
+            for (const auto& target : targets) {
+                 if (progress.wasCanceled()) break;
+                 operationCount++;
 
-            // Capture and write the image to disk
-            writer->SetFileName(outputPath.toStdString().c_str());
-            writer->Write();
+                 progress.setValue(operationCount);
+                 progress.setLabelText(QString("Frame %1/%2 : %3 [%4]")
+                                           .arg(frameNum - frameFrom + 1)
+                                           .arg(totalFrames)
+                                           .arg(visName)
+                                           .arg(QString::fromStdString(target.dirName)));
+                 
+                 // Apply camera state
+                 if (target.slotIndex == -1) {
+                     // Default: use initial state (or should we track the "live" camera? 
+                     // The requirement says "The current version works well... current camera state is used".
+                     // So we should restore the state the user had before clicking Render.
+                     cam->SetPosition(initialCamState[0], initialCamState[1], initialCamState[2]);
+                     cam->SetFocalPoint(initialCamState[3], initialCamState[4], initialCamState[5]);
+                     cam->SetParallelScale(initialCamState[6]);
+                 } else {
+                     // Apply slot state
+                     const auto& slot = m_cameraSlots[target.slotIndex];
+                     cam->SetPosition(slot[0], slot[1], slot[2]);
+                     cam->SetFocalPoint(slot[3], slot[4], slot[5]);
+                     cam->SetParallelScale(slot[6]);
+                 }
+                 cam->Modified();
+                 
+                 // Render
+                 renderWindow->Render();
+                 windowToImageFilter->Modified();
+
+                 // Create output directory structure and save rendered image
+                 QDir frameDir(QString::fromStdString(currentFrameDirectory));
+                 frameDir.cdUp(); // Navigate to parent directory (output/)
+                 const QString rasterBasePath = frameDir.filePath(QString::fromStdString(target.dirName));
+                 const QString subDir = QString("%1/%2").arg(rasterBasePath).arg(visName);
+                 QDir().mkpath(subDir); // Create full directory path
+                 const QString outputPath = QString("%1/%2.jpg").arg(subDir).arg(frameNum, 5, 10, QChar('0'));
+
+                 // Capture and write the image to disk
+                 writer->SetFileName(outputPath.toStdString().c_str());
+                 writer->Write();
+            }
         }
     }
 
     // Restore the GUI to its original state
+    cam->SetPosition(initialCamState[0], initialCamState[1], initialCamState[2]);
+    cam->SetFocalPoint(initialCamState[3], initialCamState[4], initialCamState[5]);
+    cam->SetParallelScale(initialCamState[6]);
+    cam->Modified();
+
     qt_vtk_widget->setMinimumSize(0, 0);
     qt_vtk_widget->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     qt_vtk_widget->setSizePolicy(originalPolicy);
     scrollArea->setWidgetResizable(true);
     renderWindow->DoubleBufferOn();
     QCoreApplication::processEvents();
+
+    // Generate scripts for all populated targets
+    for(const auto& target : targets) {
+        generate_ffmpeg_script(frameFrom, frameTo, target.dirName);
+    }
 
     // Refresh the display to show the last rendered frame
     renderWindow->Render();
@@ -641,21 +764,17 @@ void PPMainWindow::render_all_triggered()
 
 // --- Core Logic Function (Rewritten) ---
 // This is the clean, reusable implementation.
-void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
+void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo, std::string dirName)
 {
-    qDebug() << "Generating ffmpeg script for frames" << frameFrom << "to" << frameTo;
+    qDebug() << "Generating ffmpeg script for frames" << frameFrom << "to" << frameTo << "in" << QString::fromStdString(dirName);
 
     const int totalFrames = (frameTo - frameFrom) + 1;
-    if (totalFrames <= 0) {
-        qDebug() << "Invalid frame range provided to generate_ffmpeg_script.";
-        return;
-    }
-    // const int fps = 30; // Defined in the shell script variable now
+    if (totalFrames <= 0) return;
 
     // Correctly determine the output "raster" directory path.
     QDir frameDir(QString::fromStdString(currentFrameDirectory));
     frameDir.cdUp(); // Go from ".../output/frames" to ".../output/"
-    const QString rasterPath = frameDir.filePath("raster");
+    const QString rasterPath = frameDir.filePath(QString::fromStdString(dirName));
     QDir().mkpath(rasterPath); // Ensure the raster directory exists
     const std::string scriptFilename = QDir(rasterPath).filePath("genvideo.sh").toStdString();
 
@@ -668,7 +787,7 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     // Write a standard, robust script header.
     scriptFile << "#!/bin/bash\n";
     scriptFile << "# This script will generate mp4 videos from the rendered JPG frames.\n";
-    scriptFile << "# It is designed to be run from within the 'raster' directory.\n";
+    scriptFile << "# It is designed to be run from within the '" << dirName << "' directory.\n";
     scriptFile << "cd \"$(dirname \"$0\")\"\n\n";
 
     // Define variables
@@ -704,8 +823,7 @@ void PPMainWindow::generate_ffmpeg_script(int frameFrom, int frameTo)
     scriptFile.close();
     // Make the script executable.
     int result = std::system(("chmod +x " + scriptFilename).c_str());
-
-    statusBar->showMessage(QString("Generated genvideo.sh in %1").arg(rasterPath), 5000);
+    (void)result;
 }
 
 
