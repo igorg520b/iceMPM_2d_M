@@ -1026,9 +1026,7 @@ std::vector<int> VisualRepresentation::GetRequiredGridArrays(VisOpt visualizatio
         required.push_back(HI::grid_idx_vis_Q);
         break;
     case grid_colors:
-        required.push_back(HI::grid_idx_vis_r);
-        required.push_back(HI::grid_idx_vis_g);
-        required.push_back(HI::grid_idx_vis_b);
+        // No specific grid arrays required; uses hsd.frame_rgba which is always loaded.
         break;
     case grid_vnorm:
         required.push_back(HI::grid_idx_px);

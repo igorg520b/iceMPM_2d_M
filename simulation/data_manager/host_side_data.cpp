@@ -125,7 +125,6 @@ void HostSideData::AllocateGridArrays(bool allocate_dense_grid)
             SimParams::HostGridArrayIndex::grid_idx_fracture_tension,
             SimParams::HostGridArrayIndex::grid_idx_fracture_shear,
             SimParams::HostGridArrayIndex::grid_idx_fracture_crush,
-            SimParams::HostGridArrayIndex::grid_idx_glen_flow,
             SimParams::HostGridArrayIndex::host_grid_idx_mass,
             SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv,
             SimParams::HostGridArrayIndex::grid_idx_vis_P,
@@ -647,16 +646,25 @@ void HostSideData::LoadFrameData(int frameIndex, const std::string& framesDirect
 
 template<typename T>
 void WriteDatasetHelper(H5::Group& ptr, const std::string& name, const std::vector<T>& data,
-                        int gx, int gy, const H5::DataType& dtype)
+                        int gx, int gy, const H5::DataType& dtype, bool compress, int compression_level)
 {
     hsize_t dims[2] = {(hsize_t)gx, (hsize_t)gy};
     H5::DataSpace dataspace(2, dims);
-    H5::DataSet dataset = ptr.createDataSet(name, dtype, dataspace);
+
+    H5::DSetCreatPropList proplist = H5::DSetCreatPropList::DEFAULT;
+    if (compress) {
+        proplist = H5::DSetCreatPropList();
+        hsize_t chunk_dims[2] = {(hsize_t)gx, (hsize_t)gy};
+        proplist.setChunk(2, chunk_dims);
+        proplist.setDeflate(compression_level);
+    }
+
+    H5::DataSet dataset = ptr.createDataSet(name, dtype, dataspace, proplist);
     dataset.write(data.data(), dtype);
 }
 
 
-void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTime)
+void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTime, bool compress, int compression_level)
 {
     if(!prms.SaveSnapshots) return;
 
@@ -681,13 +689,13 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
         // mass
-        WriteDatasetHelper(file, "mass", host_grid_buffer[SimParams::HostGridArrayIndex::host_grid_idx_mass], gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "mass", host_grid_buffer[SimParams::HostGridArrayIndex::host_grid_idx_mass], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
         // vx
-        WriteDatasetHelper(file, "vx", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_px], gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "vx", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_px], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
         // vy
-        WriteDatasetHelper(file, "vy", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_py], gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "vy", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_py], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
         file.close();
     }
@@ -718,7 +726,16 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
 
         hsize_t dims[3] = {(hsize_t)gx, (hsize_t)gy, 4};
         H5::DataSpace dataspace(3, dims);
-        H5::DataSet dataset = file.createDataSet("rgba", H5::PredType::NATIVE_UINT8, dataspace);
+        
+        H5::DSetCreatPropList proplist = H5::DSetCreatPropList::DEFAULT;
+        if (compress) {
+            proplist = H5::DSetCreatPropList();
+            hsize_t chunk_dims[3] = {(hsize_t)gx, (hsize_t)gy, 4};
+            proplist.setChunk(3, chunk_dims);
+            proplist.setDeflate(compression_level);
+        }
+        
+        H5::DataSet dataset = file.createDataSet("rgba", H5::PredType::NATIVE_UINT8, dataspace, proplist);
         dataset.write(save_buffer_uint8.data(), H5::PredType::NATIVE_UINT8);
 
         // Attributes
@@ -734,8 +751,8 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         fs::path path = GetOrCreateDir("strains");
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
-        WriteDatasetHelper(file, "strain_eqv", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange], gx, gy, H5::PredType::NATIVE_FLOAT);
-        WriteDatasetHelper(file, "strain_vm", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises], gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "strain_eqv", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_strain_EqvGreenLagrange], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
+        WriteDatasetHelper(file, "strain_vm", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_strain_vonMises], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
         file.close();
     }
 
@@ -749,16 +766,16 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
             float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_crushed][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
-        WriteDatasetHelper(file, "crushed", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
+        WriteDatasetHelper(file, "crushed", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8, compress, compression_level);
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
             float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_cracked][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
-        WriteDatasetHelper(file, "cracked", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
+        WriteDatasetHelper(file, "cracked", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8, compress, compression_level);
 
-        WriteDatasetHelper(file, "thickness", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_thickness], gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "thickness", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_thickness], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
         file.close();
     }
 
@@ -772,21 +789,21 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
             float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_fracture_tension][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
-        WriteDatasetHelper(file, "tension", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
+        WriteDatasetHelper(file, "tension", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8, compress, compression_level);
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
             float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_fracture_shear][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
-        WriteDatasetHelper(file, "shear", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
+        WriteDatasetHelper(file, "shear", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8, compress, compression_level);
 
 #pragma omp parallel for
         for(size_t i=0; i<plane_size; i++) {
             float v = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_fracture_crush][i];
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
-        WriteDatasetHelper(file, "crush", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8);
+        WriteDatasetHelper(file, "crush", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8, compress, compression_level);
         file.close();
     }
 
@@ -795,21 +812,13 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         fs::path path = GetOrCreateDir("pressure");
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
-        const std::vector<float>& src_P = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_P];
-        std::copy(src_P.begin(), src_P.end(), save_buffer_float.begin());
-        WriteDatasetHelper(file, "P", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "P", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_P], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
-        const std::vector<float>& src_Q = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Q];
-        std::copy(src_Q.begin(), src_Q.end(), save_buffer_float.begin());
-        WriteDatasetHelper(file, "Q", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "Q", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Q], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
-        const std::vector<float>& src_Jpinv = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv];
-        std::copy(src_Jpinv.begin(), src_Jpinv.end(), save_buffer_float.begin());
-        WriteDatasetHelper(file, "Jpinv", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "Jpinv", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
-        const std::vector<float>& src_glen = host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_glen_flow];
-        std::copy(src_glen.begin(), src_glen.end(), save_buffer_float.begin());
-        WriteDatasetHelper(file, "glen_flow", save_buffer_float, gx, gy, H5::PredType::NATIVE_FLOAT);
+        WriteDatasetHelper(file, "glen_flow", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_glen_flow], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
         file.close();
     }
