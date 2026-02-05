@@ -54,7 +54,15 @@ bool Model::Step()
     sim_data.prms.SimulationTime = simulation_time;
     sim_data.prms.SimulationStep += count_unupdated_steps;
 
-    if(m_save_future.valid()) m_save_future.get();
+    if(m_save_future.valid()) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        m_save_future.get();
+        auto t_end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> diff = t_end - t_start;
+        if(diff.count() > 0.5) {
+            LOGR("Step(): time waiting for frame save {:.3f} s", diff.count());
+        }
+    }
     gpu.render_visualized_data();
 
     bool external_termination = false;
