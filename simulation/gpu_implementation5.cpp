@@ -558,7 +558,7 @@ std::vector<std::pair<int, int>> GPU_Implementation5::getGroupSlotMapping(int gr
 
 void GPU_Implementation5::normalize_grid_on_host()
 {
-    LOGR("Normalizing grid data on host...");
+    //LOGR("Normalizing grid data on host...");
 
     const int gx = hsd.prms.GridXTotal;
     const int gy = hsd.prms.GridYTotal;

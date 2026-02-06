@@ -367,8 +367,6 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
     hssoa.RemoveDisabledAndSort(prms.GridYTotal);
     VerifyPoints();
 
-//    FillModelledAreaWithBlueColor();
-
     LOGR("ReadPointsFromSnapshot; hssoa capacity {}; size {}", hssoa.capacity, hssoa.size);
 }
 
@@ -377,76 +375,6 @@ void HostSideData::ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5)
 
 // =============================  READ AND WRITE SNAPSHOTS
 
-
-
-/*
-void HostSideData::SaveForces(const int frame)
-{
-    fs::path targetPath;
-    if (!output_directory.empty()) {
-        targetPath = output_directory;
-    } else {
-        targetPath = "output";
-    }
-    fs::path framesDir = targetPath / "frames";
-    fs::create_directories(framesDir);
-
-    // save forces
-    fs::path fullPathForces = framesDir / "forces.h5";
-    bool file_exists = std::filesystem::exists(fullPathForces);
-    H5::H5File file_forces(fullPathForces.string(), file_exists ? H5F_ACC_RDWR : H5F_ACC_TRUNC);
-    H5::DataSet ds_forces;
-
-    if(!file_exists)
-    {
-        hsize_t initial_dims[3] = {0, (hsize_t)SimParams::MAX_REGIONS, 2};
-        hsize_t max_dims[3] = {H5S_UNLIMITED, (hsize_t)SimParams::MAX_REGIONS, 2};
-        H5::DataSpace file_dataspace_for_creation(3, initial_dims, max_dims);
-
-        H5::DSetCreatPropList dcpl;
-        hsize_t chunk_dims[3] = {1, (hsize_t)SimParams::MAX_REGIONS, 2};
-        dcpl.setChunk(3, chunk_dims);
-        ds_forces = file_forces.createDataSet("ds_forces", H5::PredType::NATIVE_DOUBLE,
-                                              file_dataspace_for_creation, dcpl);
-
-        H5::DataSpace scalar_space(H5S_SCALAR);
-        ds_forces.createAttribute("cellsize", H5::PredType::NATIVE_DOUBLE, scalar_space)
-            .write(H5::PredType::NATIVE_DOUBLE, &prms.cellsize);
-        ds_forces.createAttribute("InitialTimeStep", H5::PredType::NATIVE_DOUBLE, scalar_space)
-            .write(H5::PredType::NATIVE_DOUBLE, &prms.InitialTimeStep);
-        ds_forces.createAttribute("AnimationFramePeriod", H5::PredType::NATIVE_DOUBLE, scalar_space)
-            .write(H5::PredType::NATIVE_DOUBLE, &prms.AnimationFramePeriod);
-    }
-    else
-    {
-        ds_forces = file_forces.openDataSet("ds_forces");
-    }
-
-    // Get current dataspace and dimensions
-    H5::DataSpace file_space = ds_forces.getSpace();
-    hsize_t current_dims_on_file[3];
-    file_space.getSimpleExtentDims(current_dims_on_file);
-
-    // Extend if needed
-    hsize_t required_frame_capacity = static_cast<hsize_t>(frame) + 1;
-    if (required_frame_capacity > current_dims_on_file[0]) {
-        hsize_t new_dims[3] = {required_frame_capacity, static_cast<hsize_t>(SimParams::MAX_REGIONS), 2};
-        ds_forces.extend(new_dims);
-        file_space = ds_forces.getSpace();
-    }
-
-    // Define hyperslab
-    hsize_t offset[3] = {static_cast<hsize_t>(frame), 0, 0};
-    hsize_t slab_dims[3] = {1, static_cast<hsize_t>(SimParams::MAX_REGIONS), 2};
-    file_space.selectHyperslab(H5S_SELECT_SET, slab_dims, offset);
-
-    H5::DataSpace memory_space(3, slab_dims);
-
-    // Write the data
-    ds_forces.write(grid_forces_summary_per_region.data(), H5::PredType::NATIVE_DOUBLE,
-                    memory_space, file_space);
-}
-*/
 
 
 void HostSideData::SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory, const std::string& prefix, int force_frame_index)
@@ -687,16 +615,9 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
     {
         fs::path path = GetOrCreateDir("physics");
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
-
-        // mass
         WriteDatasetHelper(file, "mass", host_grid_buffer[SimParams::HostGridArrayIndex::host_grid_idx_mass], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
-
-        // vx
         WriteDatasetHelper(file, "vx", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_px], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
-
-        // vy
         WriteDatasetHelper(file, "vy", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_py], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
-
         file.close();
     }
 
@@ -774,7 +695,6 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
             save_buffer_uint8[i] = (uint8_t)(std::clamp(v, 0.f, 1.f) * 255.f);
         }
         WriteDatasetHelper(file, "cracked", save_buffer_uint8, gx, gy, H5::PredType::NATIVE_UINT8, compress, compression_level);
-
         WriteDatasetHelper(file, "thickness", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_thickness], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
         file.close();
     }
@@ -813,11 +733,8 @@ void HostSideData::SaveFrame(const int SimulationStep, const double SimulationTi
         H5::H5File file(path.string(), H5F_ACC_TRUNC);
 
         WriteDatasetHelper(file, "P", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_P], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
-
         WriteDatasetHelper(file, "Q", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Q], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
-
         WriteDatasetHelper(file, "Jpinv", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_vis_Jpinv], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
-
         WriteDatasetHelper(file, "glen_flow", host_grid_buffer[SimParams::HostGridArrayIndex::grid_idx_glen_flow], gx, gy, H5::PredType::NATIVE_FLOAT, compress, compression_level);
 
         file.close();
@@ -886,3 +803,73 @@ void HostSideData::VerifyPoints()
 }
 
 
+// currently unused code
+
+/*
+void HostSideData::SaveForces(const int frame)
+{
+    fs::path targetPath;
+    if (!output_directory.empty()) {
+        targetPath = output_directory;
+    } else {
+        targetPath = "output";
+    }
+    fs::path framesDir = targetPath / "frames";
+    fs::create_directories(framesDir);
+
+    // save forces
+    fs::path fullPathForces = framesDir / "forces.h5";
+    bool file_exists = std::filesystem::exists(fullPathForces);
+    H5::H5File file_forces(fullPathForces.string(), file_exists ? H5F_ACC_RDWR : H5F_ACC_TRUNC);
+    H5::DataSet ds_forces;
+
+    if(!file_exists)
+    {
+        hsize_t initial_dims[3] = {0, (hsize_t)SimParams::MAX_REGIONS, 2};
+        hsize_t max_dims[3] = {H5S_UNLIMITED, (hsize_t)SimParams::MAX_REGIONS, 2};
+        H5::DataSpace file_dataspace_for_creation(3, initial_dims, max_dims);
+
+        H5::DSetCreatPropList dcpl;
+        hsize_t chunk_dims[3] = {1, (hsize_t)SimParams::MAX_REGIONS, 2};
+        dcpl.setChunk(3, chunk_dims);
+        ds_forces = file_forces.createDataSet("ds_forces", H5::PredType::NATIVE_DOUBLE,
+                                              file_dataspace_for_creation, dcpl);
+
+        H5::DataSpace scalar_space(H5S_SCALAR);
+        ds_forces.createAttribute("cellsize", H5::PredType::NATIVE_DOUBLE, scalar_space)
+            .write(H5::PredType::NATIVE_DOUBLE, &prms.cellsize);
+        ds_forces.createAttribute("InitialTimeStep", H5::PredType::NATIVE_DOUBLE, scalar_space)
+            .write(H5::PredType::NATIVE_DOUBLE, &prms.InitialTimeStep);
+        ds_forces.createAttribute("AnimationFramePeriod", H5::PredType::NATIVE_DOUBLE, scalar_space)
+            .write(H5::PredType::NATIVE_DOUBLE, &prms.AnimationFramePeriod);
+    }
+    else
+    {
+        ds_forces = file_forces.openDataSet("ds_forces");
+    }
+
+    // Get current dataspace and dimensions
+    H5::DataSpace file_space = ds_forces.getSpace();
+    hsize_t current_dims_on_file[3];
+    file_space.getSimpleExtentDims(current_dims_on_file);
+
+    // Extend if needed
+    hsize_t required_frame_capacity = static_cast<hsize_t>(frame) + 1;
+    if (required_frame_capacity > current_dims_on_file[0]) {
+        hsize_t new_dims[3] = {required_frame_capacity, static_cast<hsize_t>(SimParams::MAX_REGIONS), 2};
+        ds_forces.extend(new_dims);
+        file_space = ds_forces.getSpace();
+    }
+
+    // Define hyperslab
+    hsize_t offset[3] = {static_cast<hsize_t>(frame), 0, 0};
+    hsize_t slab_dims[3] = {1, static_cast<hsize_t>(SimParams::MAX_REGIONS), 2};
+    file_space.selectHyperslab(H5S_SELECT_SET, slab_dims, offset);
+
+    H5::DataSpace memory_space(3, slab_dims);
+
+    // Write the data
+    ds_forces.write(grid_forces_summary_per_region.data(), H5::PredType::NATIVE_DOUBLE,
+                    memory_space, file_space);
+}
+*/

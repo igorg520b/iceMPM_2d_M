@@ -64,8 +64,7 @@ public:
     void ReadPointsFromSnapshot(std::string fileNameSnapshotHDF5);
     void VerifyPoints();
     void SaveSnapshot(int SimulationStep, double SimulationTime, bool compress, const std::string& output_directory = "", const std::string& prefix = "f", int force_frame_index = -1);
-//    void SaveFrame_Old(int SimulationStep, double SimulationTime);
-    void SaveFrame(const int SimulationStep, const double SimulationTime, bool compress = true, int compression_level = 2); // New split-saving implementation
+    void SaveFrame(const int SimulationStep, const double SimulationTime, bool compress, int compression_level);
 
     // Helper to get raw pointer to specific grid array (returns nullptr if grid not allocated)
     float* GetGridBufferPointer(int arrayIndex);

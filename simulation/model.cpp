@@ -120,7 +120,7 @@ bool Model::Step()
     if(saveSnapshot) sim_data.SaveSnapshot(sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, false, sim_data.snapshot_directory);  // synchronous
 
     m_save_future = std::async(std::launch::async, &HostSideData::SaveFrame, &sim_data,
-                              sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, true, 2);
+                              sim_data.prms.SimulationStep, sim_data.prms.SimulationTime, true, 3);
 
     if (external_termination) return false;
     return (sim_data.prms.SimulationTime < sim_data.prms.SimulationEndTime && !gpu.error_code && sim_data.hssoa.size);
