@@ -246,22 +246,66 @@ void VisualRepresentation::SynchronizeTopology()
     bool is_wind = (VisualizingVariable == VisOpt::v_wind_norm || VisualizingVariable == VisOpt::wind_streamlines);
 
     if (show_vectors || show_streamlines) {
-        flow_grid->SetDimensions(gx, gy, 1);
-        flow_vectors->SetNumberOfTuples(gx * gy);
+        // Calculate downsampled dimensions (limit to ~2000 wide)
+        int vis_gx = std::min(gx, 2000);
+        // Maintain aspect ratio
+        int vis_gy = (gx > 0) ? (int)((long long)gy * vis_gx / gx) : 0;
         
-        // Initialize points if needed (assuming static grid for simpler implementation)
-        // If grid changes size, this logic might need check.
-        if (flow_grid->GetNumberOfPoints() != gx * gy) {
+        // Ensure at least 2x2 to avoid div by zero in interpolation
+        vis_gx = std::max(vis_gx, 2);
+        vis_gy = std::max(vis_gy, 2);
+
+        int dims[3];
+        flow_grid->GetDimensions(dims);
+        if (dims[0] != vis_gx || dims[1] != vis_gy) {
+            flow_grid->SetDimensions(vis_gx, vis_gy, 1);
+            flow_vectors->SetNumberOfTuples(vis_gx * vis_gy);
+            
+            // Re-initialize points since dimensions changed
             vtkNew<vtkPoints> gp;
-            gp->SetNumberOfPoints(gx * gy);
-            for (int j = 0; j < gy; j++) {
-                for (int i = 0; i < gx; i++) {
-                    // VTK structured grid ordering: i moves fastest
-                    vtkIdType vtk_idx = i + j * gx;
-                    gp->SetPoint(vtk_idx, (ox + i) * h, (oy + j) * h, 0.0);
+            gp->SetNumberOfPoints(vis_gx * vis_gy);
+            for (int j = 0; j < vis_gy; j++) {
+                for (int i = 0; i < vis_gx; i++) {
+                    // Interpolate physical position
+                    double r_i = (double)i / (vis_gx - 1);
+                    double r_j = (double)j / (vis_gy - 1);
+                    
+                    double phys_x = (ox + r_i * (gx - 1)) * h;
+                    double phys_y = (oy + r_j * (gy - 1)) * h;
+                    
+                    vtkIdType vtk_idx = i + j * vis_gx;
+                    gp->SetPoint(vtk_idx, phys_x, phys_y, 0.0);
                 }
             }
             flow_grid->SetPoints(gp);
+        }
+
+        // Populate flow vectors in a separate loop using the downsampled grid
+        // This saves RAM by not storing vectors for the full multi-million point grid
+        #pragma omp parallel for
+        for (int i = 0; i < vis_gx; i++) {
+            for (int j = 0; j < vis_gy; j++) {
+                // Map back to original grid indices to sample data
+                // Simple nearest neighbor or linear mapping is sufficient
+                int orig_i = (int)((double)i / (vis_gx - 1) * (gx - 1));
+                int orig_j = (int)((double)j / (vis_gy - 1) * (gy - 1));
+
+                // Clamp just in case
+                if (orig_i >= gx) orig_i = gx - 1;
+                if (orig_j >= gy) orig_j = gy - 1;
+
+                float vx = 0, vy = 0;
+                if (is_ocean) {
+                    auto [uv, vv] = hsd.waci.GetOceanValue(orig_i, orig_j);
+                    vx = uv; vy = vv;
+                } else if (is_wind) {
+                    auto [uv, vv] = hsd.waci.GetWindValue(orig_i, orig_j);
+                    vx = uv; vy = vv;
+                }
+                
+                vtkIdType vtk_idx = i + j * vis_gx;
+                flow_vectors->SetTuple3(vtk_idx, vx, vy, 0.0);
+            }
         }
     }
 
@@ -277,19 +321,7 @@ void VisualRepresentation::SynchronizeTopology()
             // ... (Region/Background Logic) ...
             
             // Flow Data Collection
-            if (show_vectors || show_streamlines) {
-                float vx = 0, vy = 0;
-                if (is_ocean) {
-                    auto [uv, vv] = hsd.waci.GetOceanValue(i, j);
-                    vx = uv; vy = vv;
-                } else if (is_wind) {
-                    auto [uv, vv] = hsd.waci.GetWindValue(i, j);
-                    vx = uv; vy = vv;
-                }
-                
-                vtkIdType vtk_idx = i + j * gx;
-                flow_vectors->SetTuple3(vtk_idx, vx, vy, 0.0);
-            }
+
             // End Flow Data Collection
 
             if (grid_status[grid_idx] == SimParams::MAX_REGIONS)
@@ -527,15 +559,20 @@ void VisualRepresentation::SynchronizeTopology()
 
     // Update Actors
     if (show_vectors) {
+        int dims[3];
+        flow_grid->GetDimensions(dims);
+        int f_gx = dims[0];
+        int f_gy = dims[1];
+
         // Subsampling logic: Target ~50 vectors horizontally
-        int stride = std::max(1, gx / 50);
+        int stride = std::max(1, f_gx / 50);
         
         // Apply stride mask (zero out vectors not on stride)
-        for(int j=0; j<gy; j++) {
-            for(int i=0; i<gx; i++) {
+        for(int j=0; j<f_gy; j++) {
+            for(int i=0; i<f_gx; i++) {
                 if(i % stride != 0 || j % stride != 0) {
                      // Set vector to 0,0,0
-                     flow_vectors->SetTuple3(i + j*gx, 0.0, 0.0, 0.0);
+                     flow_vectors->SetTuple3(i + j*f_gx, 0.0, 0.0, 0.0);
                 }
             }
         }

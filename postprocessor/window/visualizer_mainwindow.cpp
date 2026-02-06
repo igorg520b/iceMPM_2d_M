@@ -156,9 +156,7 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         if(!var.isNull())
         {
             comboBox_visualizations->setCurrentIndex(var.toInt());
-            qdsbValRange->setValue(representation.ranges[var.toInt()]);
         }
-
         // Restore scroll tracking preference
         bool scrollTracking = settings.value("scroll_tracking", false).toBool();
         slider2->setTracking(scrollTracking);
@@ -172,6 +170,9 @@ PPMainWindow::PPMainWindow(QWidget *parent)
 
     // Load render selector saved selections
     m_renderSelectorDialog->loadSelections(settingsFileName);
+    int idx = comboBox_visualizations->currentIndex();
+    qdsbValRange->setValue(representation.ranges[idx]);
+    qdsbTransparency->setValue(representation.transparency_coeffs[idx]);
 
     // ========== MENUS ==========
 
@@ -484,6 +485,18 @@ void PPMainWindow::comboboxIndexChanged_visualizations(int index)
 {
     // Lazy Allocation Logic
     VisualRepresentation::VisOpt opt = (VisualRepresentation::VisOpt)index;
+
+    // Auto-enable flow interpolation if a flow visualization is selected
+    if (opt == VisualRepresentation::VisOpt::v_ocean_norm || 
+        opt == VisualRepresentation::VisOpt::v_wind_norm ||
+        opt == VisualRepresentation::VisOpt::ocean_streamlines || 
+        opt == VisualRepresentation::VisOpt::wind_streamlines) 
+    {
+        if (!hsd.waci.interpolation_enabled) {
+            hsd.waci.SetEnabled(true);
+            hsd.waci.SetTime(hsd.prms.SimulationTime);
+        }
+    }
     
     // Safety check: Don't attempt allocation if grid dimensions are not loaded yet
     if (hsd.prms.GridXTotal == 0 || hsd.prms.GridYTotal == 0) {
@@ -591,6 +604,23 @@ void PPMainWindow::render_all_triggered()
     // Get selected visualization options from dialog
     std::vector<VisualRepresentation::VisOpt> visOptsToRender =
         m_renderSelectorDialog->getSelectedOptions();
+
+    // Check if any flow visualization is selected
+    bool needFlow = false;
+    for (const auto& opt : visOptsToRender) {
+        if (opt == VisualRepresentation::VisOpt::v_ocean_norm || 
+            opt == VisualRepresentation::VisOpt::v_wind_norm ||
+            opt == VisualRepresentation::VisOpt::ocean_streamlines || 
+            opt == VisualRepresentation::VisOpt::wind_streamlines) 
+        {
+            needFlow = true;
+            break;
+        }
+    }
+    
+    if (needFlow && !hsd.waci.interpolation_enabled) {
+        hsd.waci.SetEnabled(true);
+    }
 
     // Validate that at least one option is selected
     if (visOptsToRender.empty()) {
