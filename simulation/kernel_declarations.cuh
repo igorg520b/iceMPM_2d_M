@@ -130,15 +130,20 @@ __device__ void Glen_Nye_flow_law(const double dt, double &q_tr,
 // Checks if a material point has exceeded the failure surface (yield criterion)
 // Sets status flags if failure has occurred
 __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_data,
-                                                   const double &p, const double &q,
-                                                   const double &strength);
+                                                   const double &p, const double &q);
+
+// alternative version that returns true if outside of failure surface
+__device__ bool CheckIfPointIsOutsideFailureSurface(const double &p, const double &q);
 
 // Retrieves grain-specific material parameters (strength bounds, hardening)
 __device__ void GetParametersForGrain(uint32_t utility_data, double &pmin, double &pmax, double &qmax,
                                       double &beta, double &mSq, double &pmin2);
 
 // Computes Kirchhoff stress from deformation gradient using Wolper material model
-__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F, const double &Jp_inv);
+__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F);
+
+// compute strain energy density
+__device__ double StrainEnergyDensity(const Eigen::Matrix2d &F);
 
 // how Jp_inv affects bulk modulus
 __device__ double BulkModulusReductionCoeff(const double &Jp_inv);
@@ -159,33 +164,6 @@ __device__ Eigen::Vector2d get_wind_vector(float lat, float lon, float tb);
 // obtain point's (i,j) cell index from raw double value (stored in points buffer)
 __device__ Eigen::Vector2i getIntegerCellIndex(double raw_value);
 
-__device__ void ComputeStressResultants(
-    // Inputs
-    const Eigen::Matrix2d &kappa_raw,       // Raw curvature (gradient of omega)
-    const Eigen::Vector2d &gamma,           // Shear strain
-    const Eigen::Matrix2d &Damage,          // Anisotropic Damage Tensor (Eigenvalues 0 to 1)
-    const double thickness,
-    const double E,                         // Young's Modulus
-    const double nu,                        // Poisson's Ratio
-    const double mu,                        // Shear Modulus
-    // Outputs (by reference)
-    Eigen::Matrix2d &Mp_out,
-    Eigen::Vector2d &Q_out
-    );
-
-__device__ void ComputeElasticForces(
-    const Eigen::Matrix2d &kappa_raw,
-    const Eigen::Vector2d &gamma,
-    const double thickness, const double E, const double nu, const double mu,
-    Eigen::Matrix2d &Mp_elastic,
-    Eigen::Vector2d &Q_elastic
-    );
-
-__device__ void EigenDecomposition2x2(
-    const Eigen::Matrix2d &M,
-    double &eig1, double &eig2,      // Eigenvalues
-    Eigen::Vector2d &v1, Eigen::Vector2d &v2 // Eigenvectors
-    );
 
 // ============================================================================
 // DEVICE STATE - Accessed by all kernels

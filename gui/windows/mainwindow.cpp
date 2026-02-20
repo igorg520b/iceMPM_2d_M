@@ -60,7 +60,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->toolBar->addWidget(lbl2);
 
     qdsbTransparency = new QDoubleSpinBox();
-    qdsbTransparency->setRange(0, 1);
+    qdsbTransparency->setRange(0, 1000);
     qdsbTransparency->setValue(0);
     qdsbTransparency->setDecimals(1);
     qdsbTransparency->setSingleStep(0.1);
@@ -136,20 +136,6 @@ MainWindow::MainWindow(QWidget *parent)
             camera->Modified();
         }
 
-        var = settings.value("visualization_ranges");
-        if(!var.isNull())
-        {
-            QByteArray ba = var.toByteArray();
-            memcpy(representation.ranges, ba.constData(), ba.size());
-        }
-
-        var = settings.value("transparency_coeffs");
-        if(!var.isNull())
-        {
-            QByteArray ba = var.toByteArray();
-            memcpy(representation.transparency_coeffs, ba.constData(), ba.size());
-        }
-
         comboBox_visualizations->setCurrentIndex(settings.value("vis_option").toInt());
 
         var = settings.value("splitter_size_0");
@@ -219,14 +205,7 @@ void MainWindow::quit_triggered()
     QByteArray arr((char*)data, sizeof(data));
     settings.setValue("camData", arr);
 
-    QByteArray ranges((char*)representation.ranges, sizeof(representation.ranges));
-    settings.setValue("visualization_ranges", ranges);
-
-    QByteArray transparency_coeffs((char*)representation.transparency_coeffs, sizeof(representation.transparency_coeffs));
-    settings.setValue("transparency_coeffs", transparency_coeffs);
-
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
-
 
     QList<int> szs = splitter->sizes();
     settings.setValue("splitter_size_0", szs[0]);

@@ -50,6 +50,8 @@ public:
 
     // layout of the grid arrays
     constexpr static int grid_arrays_to_clear = 3;  // at reset_grid, which should be cleared
+    constexpr static int glen_flow_every_N_step = 100;
+
     enum GPUGridArrayIndex : size_t {
         // --- Persistent Arrays (Group 0) ---
         // These arrays persist across the entire time step and are not overwritten by visualization logic
@@ -137,7 +139,7 @@ public:
     // storage of point data: index of the corresponding array in SoA
     enum PtArrIdx : size_t {
         idx_utility_data = 0,   // flags such as cracked/crushed, also RGB color
-        integer_cell_idx = 1,   // integer (i,j) index of point's cell
+        integer_cell_idx = 1,   // two-integer (i,j) index of point's cell
         posx = 2,               // [-0.5, 0.5] local coordinates within cell
         posy = 3,
         velx = 4,               // point's velocity
@@ -147,7 +149,9 @@ public:
         idx_glen_flow = 8,
         Fe00 = 9,       // size 4: deformation gradient (9,10,11,12)
         Bp00 = 13,      // size 4: grad of v with respect to x,y (13,14,15,16)
-        nPtsArrays = 17
+        idx_damage = 17,            // damage to the ice fragment in range [0,1]
+        idx_strain_energy = 18,     // strain energy (for damage accumulation)
+        nPtsArrays = 19
     };
 
     // GPU and multi-GPU-related params
@@ -204,6 +208,7 @@ public:
     double DP_phi, DP_threshold_p;
     double cellsize;
     double ParticleArea, ParticleViewSize;
+    double EnergyFractureThreshold;
 
     // computed parameters/properties
     double dt_vol_Dpinv, vmax;

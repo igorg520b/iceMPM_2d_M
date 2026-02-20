@@ -239,6 +239,214 @@ void VisualRepresentation::SynchronizeTopology()
     const float* ptr_glen_flow = hsd.GetGridBufferPointer(SimParams::HostGridArrayIndex::grid_idx_glen_flow);
     const float* ptr_thickness = hsd.GetGridBufferPointer(SimParams::HostGridArrayIndex::grid_idx_vis_thickness);
 
+    UpdateFlowData();
+
+#pragma omp parallel for
+    for (int i = 0; i < gx; i++) {
+        for (int j = 0; j < gy; j++) {
+            const size_t grid_idx = (size_t)j + (size_t)i * gy;
+            const size_t render_idx = ((i + ox) + (j + oy) * width) * 3;
+
+            if (grid_status[grid_idx] == SimParams::MAX_REGIONS)
+            {
+                // Modeled area
+                double val_pt_density = 0, val_crushed = 0;
+                std::array<uint8_t, 3> _rgb = {0, 0, 0};
+                float alpha = 0.0f;
+
+                if(ptr_density) val_pt_density = ptr_density[grid_idx];
+                if(ptr_crushed) val_crushed = ptr_crushed[grid_idx];
+
+                // Determine base color and alpha
+                if (hsd.frame_rgba.size() == gridSize * 4) {
+                    _rgb[0] = hsd.frame_rgba[grid_idx * 4 + 0];
+                    _rgb[1] = hsd.frame_rgba[grid_idx * 4 + 1];
+                    _rgb[2] = hsd.frame_rgba[grid_idx * 4 + 2];
+                    alpha = hsd.frame_rgba[grid_idx * 4 + 3] / 255.0f;
+                } 
+                else if (ptr_r && ptr_g && ptr_b) {
+                    // Original ice colors from grid variables
+                    float vr = ptr_r[grid_idx];
+                    float vg = ptr_g[grid_idx];
+                    float vb = ptr_b[grid_idx];
+                    _rgb[0] = (uint8_t)(std::clamp(vr, 0.f, 1.f) * 255);
+                    _rgb[1] = (uint8_t)(std::clamp(vg, 0.f, 1.f) * 255);
+                    _rgb[2] = (uint8_t)(std::clamp(vb, 0.f, 1.f) * 255);
+
+                    // Calculate alpha from density
+                    alpha = std::min(val_pt_density * (2.0 / 5.0), 1.0);
+                }
+
+                std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
+
+                auto set_pixel = [&](const std::array<uint8_t, 3>& col) {
+                    renderedImage[render_idx + 0] = col[0];
+                    renderedImage[render_idx + 1] = col[1];
+                    renderedImage[render_idx + 2] = col[2];
+                };
+
+                auto blend_and_set = [&](const std::array<uint8_t, 3>& col, float mix, bool with_water = false) {
+                    auto c2 = ColorMap::mergeColors(c, col, mix);
+                    if (with_water) c2 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
+                    set_pixel(c2);
+                };
+
+                auto calc_mix = [&](float val) {
+                    return alpha * (std::abs(val / range) + (1. - transparency));
+                };
+
+                if (VisualizingVariable == VisOpt::regions) {
+                    set_pixel({100, 150, 200});  // Light blue for water
+                }
+                else if (VisualizingVariable == VisOpt::grid_colors) {
+                    set_pixel(c);
+                }
+                else if (VisualizingVariable == VisOpt::grid_mass) {
+                    if(!ptr_mass) continue;
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, ptr_mass[grid_idx] / range), 
+                                  alpha * (1. - transparency), true);
+                }
+                else if (VisualizingVariable == VisOpt::grid_pt_count) {
+                    if(!ptr_density) continue; // Use ptr_density as proxy for ptr_vis_var
+                    set_pixel(colormap.getColor(ColorMap::Palette::ANSYS, ptr_density[grid_idx] / range));
+                }
+                else if (VisualizingVariable == VisOpt::grid_Jpinv) {
+                    if(!ptr_Jpinv) continue;
+                    float val = ptr_Jpinv[grid_idx] - 1.0f;
+                    blend_and_set(colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5), 
+                                  calc_mix(val), true);
+                }
+                else if (VisualizingVariable == VisOpt::grid_P) {
+                    if(!ptr_P) continue;
+                    float val = ptr_P[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5), 
+                                  calc_mix(val), true);
+                }
+                else if (VisualizingVariable == VisOpt::grid_Q) {
+                    if(!ptr_Q) continue;
+                    float val = ptr_Q[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, val / range), 
+                                  calc_mix(val), true);
+                }
+                else if (VisualizingVariable == VisOpt::grid_vnorm) {
+                    if(!ptr_px || !ptr_py) continue;
+                    float vx = ptr_px[grid_idx], vy = ptr_py[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, std::sqrt(vx*vx + vy*vy) / range), 
+                                  alpha * (1. - transparency), true);
+                }
+                else if (VisualizingVariable == VisOpt::grid_cracked) {
+                    if(!ptr_cracked) continue; 
+                    float val_cracked = ptr_cracked[grid_idx];
+                    float val_crushed = ptr_crushed ? ptr_crushed[grid_idx] : 0.0f;
+                    
+                    auto combined_color = c;
+                    if (val_cracked > 0.0) combined_color = ColorMap::mergeColors(combined_color, ColorMap::rgb_green, std::min(1.0f, val_cracked));
+                    if (val_crushed > 0.0) combined_color = ColorMap::mergeColors(combined_color, ColorMap::rgb_red, std::min(1.0f, val_crushed));
+                    
+                    set_pixel(ColorMap::mergeColors(ColorMap::rgb_water, combined_color, alpha));
+                }
+                else if (VisualizingVariable == VisOpt::grid_fracture_type) {
+                    if(!ptr_frac_tension || !ptr_frac_shear || !ptr_frac_crush) continue;
+                    float val_tension = std::clamp(ptr_frac_tension[grid_idx], 0.0f, 1.0f);
+                    float val_shear = std::clamp(ptr_frac_shear[grid_idx], 0.0f, 1.0f);
+                    float val_crush = std::clamp(ptr_frac_crush[grid_idx], 0.0f, 1.0f);
+
+                    // Start as black (fractured base). Tension -> Blue, Shear -> Green
+                    std::array<float, 3> frac_rgb = {0.0f, val_shear, val_tension};
+                    // Crush -> Red (Dominates/Overwrites)
+                    for(int k=0; k<3; k++) {
+                        frac_rgb[k] = frac_rgb[k] * (1.0f - val_crush) + (k==0 ? 1.0f : 0.0f) * val_crush;
+                    }
+
+                    std::array<uint8_t, 3> c_frac;
+                    for(int k=0; k<3; k++) c_frac[k] = (uint8_t)(std::clamp(frac_rgb[k], 0.0f, 1.0f) * 255.0f);
+
+                    float fracture_intensity = std::max({val_tension, val_shear, val_crush});
+                    blend_and_set(c_frac, fracture_intensity, true);
+                }
+                else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange) {
+                    if(!ptr_strain_eqv) continue;
+                    float val = ptr_strain_eqv[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, val / range), calc_mix(val));
+                }
+                else if (VisualizingVariable == VisOpt::str_vonMises) {
+                    if(!ptr_strain_vm) continue;
+                    float val = ptr_strain_vm[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, val / range), calc_mix(val));
+                }
+                else if (VisualizingVariable == VisOpt::grid_glen_flow) {
+                    if(!ptr_glen_flow) continue;
+                    float val = ptr_glen_flow[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, val / range), calc_mix(val));
+                }
+                else if (VisualizingVariable == VisOpt::grid_ridges) {
+                    if(!ptr_Jpinv) continue;
+                    float val = ptr_Jpinv[grid_idx] - 1.0f;
+                    blend_and_set(colormap.getColor(ColorMap::Palette::Ridges, 0.5 * val / range + 0.5), 
+                                  (val > 0.01) ? calc_mix(val) : 0.0f);
+                }
+                else if (VisualizingVariable == VisOpt::grid_thickness) {
+                    if(!ptr_thickness) continue;
+                    float val = ptr_thickness[grid_idx];
+                    blend_and_set(colormap.getColor(ColorMap::Palette::ANSYS, val / range), calc_mix(val));
+                }
+                else if (VisualizingVariable == VisOpt::v_ocean_norm || VisualizingVariable == VisOpt::ocean_streamlines) {
+                    auto [vx, vy] = hsd.waci.GetOceanValue(i, j);
+                    set_pixel(colormap.getColor(ColorMap::Palette::ANSYS, std::sqrt(vx*vx + vy*vy) / range));
+                }
+                else if (VisualizingVariable == VisOpt::v_wind_norm || VisualizingVariable == VisOpt::wind_streamlines) {
+                    auto [vx, vy] = hsd.waci.GetWindValue(i, j);
+                    set_pixel(colormap.getColor(ColorMap::Palette::ANSYS, std::sqrt(vx*vx + vy*vy) / range));
+                }
+            } else {
+                // Non-modeled area
+                if (VisualizingVariable == VisOpt::regions) {
+                    // In regions mode, color non-modeled areas by region ID
+                    uint8_t region_id = grid_status[grid_idx];
+                    float val = (region_id % 13) / 12.0f;
+                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pastel, val);
+                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
+                }
+            }
+        }
+    }
+
+    // Update VTK raster image
+    raster_scalars->SetNumberOfComponents(3);
+    raster_scalars->SetArray(renderedImage.data(), renderedImage.size(), 1);
+    raster_scalars->Modified();
+    raster_imageData->SetDimensions(width, height, 1);
+    raster_imageData->GetPointData()->SetScalars(raster_scalars);
+
+    raster_plane->SetOrigin(-h / 2, -h / 2, -1.0);
+    raster_plane->SetPoint1((width - 0.5) * h, -h / 2, -1.0);
+    raster_plane->SetPoint2(-h / 2, (height - 0.5) * h, -1.0);
+
+    raster_mapper->SetInputConnection(raster_plane->GetOutputPort());
+    raster_texture->SetInputData(raster_imageData);
+    raster_actor->SetMapper(raster_mapper);
+    raster_actor->SetTexture(raster_texture);
+    raster_mapper->Update();
+    raster_texture->Update();
+
+    // Contours logic removed
+    SynchronizeValues();
+    ConfigureScalarBar();
+    UpdateTimeText();
+}
+
+
+void VisualRepresentation::UpdateFlowData()
+{
+    const SimParams& prms = hsd.prms;
+    const int width = prms.InitializationImageSizeX;
+    const int height = prms.InitializationImageSizeY;
+    const int ox = prms.ModeledRegionOffsetX;
+    const int oy = prms.ModeledRegionOffsetY;
+    const int gx = prms.GridXTotal;
+    const int gy = prms.GridYTotal;
+    const double h = prms.cellsize;
+
     // Flow Vis Logic
     bool show_vectors = (VisualizingVariable == VisOpt::v_ocean_norm || VisualizingVariable == VisOpt::v_wind_norm);
     bool show_streamlines = (VisualizingVariable == VisOpt::ocean_streamlines || VisualizingVariable == VisOpt::wind_streamlines);
@@ -312,251 +520,6 @@ void VisualRepresentation::SynchronizeTopology()
     actor_vectors->VisibilityOff();
     actor_streamlines->VisibilityOff();
 
-#pragma omp parallel for
-    for (int i = 0; i < gx; i++) {
-        for (int j = 0; j < gy; j++) {
-            const size_t grid_idx = (size_t)j + (size_t)i * gy;
-            const size_t render_idx = ((i + ox) + (j + oy) * width) * 3;
-
-            // ... (Region/Background Logic) ...
-            
-            // Flow Data Collection
-
-            // End Flow Data Collection
-
-            if (grid_status[grid_idx] == SimParams::MAX_REGIONS)
-            {
-                // Modeled area
-                double val_pt_density = 0, val_crushed = 0;
-                std::array<uint8_t, 3> _rgb = {0, 0, 0};
-                float alpha = 0.0f;
-
-                if(ptr_density) val_pt_density = ptr_density[grid_idx];
-                if(ptr_crushed) val_crushed = ptr_crushed[grid_idx];
-
-                // Determine base color and alpha
-                if (hsd.frame_rgba.size() == gridSize * 4) {
-                    _rgb[0] = hsd.frame_rgba[grid_idx * 4 + 0];
-                    _rgb[1] = hsd.frame_rgba[grid_idx * 4 + 1];
-                    _rgb[2] = hsd.frame_rgba[grid_idx * 4 + 2];
-                    alpha = hsd.frame_rgba[grid_idx * 4 + 3] / 255.0f;
-                } 
-                else if (ptr_r && ptr_g && ptr_b) {
-                    // Original ice colors from grid variables
-                    float vr = ptr_r[grid_idx];
-                    float vg = ptr_g[grid_idx];
-                    float vb = ptr_b[grid_idx];
-                    _rgb[0] = (uint8_t)(std::clamp(vr, 0.f, 1.f) * 255);
-                    _rgb[1] = (uint8_t)(std::clamp(vg, 0.f, 1.f) * 255);
-                    _rgb[2] = (uint8_t)(std::clamp(vb, 0.f, 1.f) * 255);
-
-                    // Calculate alpha from density
-                    alpha = std::min(val_pt_density * (2.0 / 5.0), 1.0);
-                }
-
-                std::array<uint8_t, 3> c = ColorMap::mergeColors(ColorMap::rgb_water, _rgb, alpha);
-
-                if (VisualizingVariable == VisOpt::regions) {
-                    // In regions mode, show water as a distinct color
-                    std::array<uint8_t, 3> water_color = {100, 150, 200};  // Light blue for water
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = water_color[k];
-                }
-
-                else if (VisualizingVariable == VisOpt::grid_colors) {
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_mass) {
-                    if(!ptr_mass) continue;
-                    double val = ptr_mass[grid_idx];
-                    const float mix = alpha * (1. - transparency);
-                    std::array<uint8_t, 3> cm = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, cm, mix);
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_pt_count) {
-                    if(!ptr_density) continue; // Use ptr_density as proxy for ptr_vis_var
-                    double val = ptr_density[grid_idx];
-                    std::array<uint8_t, 3> cm = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = cm[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_Jpinv) {
-                    if(!ptr_Jpinv) continue;
-                    float val = ptr_Jpinv[grid_idx] - 1.0f;
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
-                    const float mix = std::abs(val / range * alpha) + (1. - transparency) * alpha;
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-
-                else if (VisualizingVariable == VisOpt::grid_P) {
-                    if(!ptr_P) continue;
-                    float val = ptr_P[grid_idx];
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Pressure, 0.5 * val / range + 0.5);
-                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_Q) {
-                    if(!ptr_Q) continue;
-                    float val = ptr_Q[grid_idx];
-                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val/range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_vnorm) {
-                    if(!ptr_px || !ptr_py) continue;
-                    float vx = ptr_px[grid_idx];
-                    float vy = ptr_py[grid_idx];
-                    float val = std::sqrt(vx * vx + vy * vy);
-                    const float mix = (1. - transparency) * alpha;
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_cracked) {
-                    if(!ptr_cracked) continue; 
-                    float val_cracked = ptr_cracked[grid_idx];
-                    float val_crushed = ptr_crushed ? ptr_crushed[grid_idx] : 0.0f;
-
-                    // Cracked -> Green
-                    // Crushed -> Red
-                    // Combine them if both exist
-                    std::array<uint8_t, 3> combined_color = c;
-                    
-                    if (val_cracked > 0.0) {
-                         // Blend with green
-                         float mix = std::min(1.0f, val_cracked); 
-                         combined_color = ColorMap::mergeColors(combined_color, ColorMap::rgb_green, mix);
-                    }
-                    if (val_crushed > 0.0) {
-                        // Blend with red
-                        float mix = std::min(1.0f, val_crushed);
-                        combined_color = ColorMap::mergeColors(combined_color, ColorMap::rgb_red, mix);
-                    }
-                    
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, combined_color, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_fracture_type) {
-                    if(!ptr_frac_tension || !ptr_frac_shear || !ptr_frac_crush) continue;
-                    float val_tension = ptr_frac_tension[grid_idx];
-                    float val_shear = ptr_frac_shear[grid_idx];
-                    float val_crush = ptr_frac_crush[grid_idx];
-
-                    val_tension = std::clamp(val_tension, 0.0f, 1.0f);
-                    val_shear = std::clamp(val_shear, 0.0f, 1.0f);
-                    val_crush = std::clamp(val_crush, 0.0f, 1.0f);
-
-                    // Reconstruct color based on flag logic
-                    // Start as black (fractured base)
-                    std::array<float, 3> frac_rgb = {0.0f, 0.0f, 0.0f};
-
-                    // Tension -> Blue, Shear -> Green
-                    frac_rgb[2] = val_tension;
-                    frac_rgb[1] = val_shear;
-
-                    // Crush -> Red (Dominates/Overwrites)
-                    // Interpolate Current -> Red based on crush val
-                    for(int k=0; k<3; k++) {
-                        frac_rgb[k] = frac_rgb[k] * (1.0f - val_crush) + (k==0 ? 1.0f : 0.0f) * val_crush;
-                    }
-
-                    std::array<uint8_t, 3> c_frac;
-                    for(int k=0; k<3; k++) c_frac[k] = (uint8_t)(std::clamp(frac_rgb[k], 0.0f, 1.0f) * 255.0f);
-
-                    // Blend Intact Color (c) -> Fracture Color
-                    float fracture_intensity = std::max({val_tension, val_shear, val_crush});
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c_frac, fracture_intensity);
-
-                    // Blend with Water
-                    std::array<uint8_t, 3> c3 = ColorMap::mergeColors(ColorMap::rgb_water, c2, alpha);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c3[k];
-                }
-                else if (VisualizingVariable == VisOpt::str_EqvGreenLagrange) {
-                    if(!ptr_strain_eqv) continue;
-                    float val = ptr_strain_eqv[grid_idx];
-                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
-                }
-                else if (VisualizingVariable == VisOpt::str_vonMises) {
-                    if(!ptr_strain_vm) continue;
-                    float val = ptr_strain_vm[grid_idx];
-                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_glen_flow) {
-                    if(!ptr_glen_flow) continue;
-                    float val = ptr_glen_flow[grid_idx];
-                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_ridges) {
-                    if(!ptr_Jpinv) continue;
-                    float val = ptr_Jpinv[grid_idx] - 1.0f;
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::Ridges, 0.5 * val / range + 0.5);
-                    const float mix = (val > 0.01) ? ((alpha * val / range) + (1. - transparency) * alpha) : 0.0f;
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
-                }
-                else if (VisualizingVariable == VisOpt::grid_thickness) {
-                    if(!ptr_thickness) continue;
-                    float val = ptr_thickness[grid_idx];
-                    const float mix = alpha * (std::abs(val / range) + (1. - transparency));
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    std::array<uint8_t, 3> c2 = ColorMap::mergeColors(c, c1, mix);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c2[k];
-                }
-                else if (VisualizingVariable == VisOpt::v_ocean_norm || VisualizingVariable == VisOpt::ocean_streamlines) {
-                    auto [vx, vy] = hsd.waci.GetOceanValue(i, j);
-                    double val = std::sqrt(vx * vx + vy * vy);
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
-                }
-                else if (VisualizingVariable == VisOpt::v_wind_norm || VisualizingVariable == VisOpt::wind_streamlines) {
-                    auto [vx, vy] = hsd.waci.GetWindValue(i, j);
-                    double val = std::sqrt(vx * vx + vy * vy);
-                    // use same colormap as v_norm for consistency
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
-                }
-                else if (VisualizingVariable == VisOpt::vis_lat) {
-                    auto [lat, lon] = hsd.waci.GetLatLon(i, j);
-                    double val = lat - prms.PROJ_LAT_0;
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
-                }
-                else if (VisualizingVariable == VisOpt::vis_lon) {
-                    auto [lat, lon] = hsd.waci.GetLatLon(i, j);
-                    double val = lon - prms.PROJ_LON_0;
-                    std::array<uint8_t, 3> c1 = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c1[k];
-                }
-            } else {
-                // Non-modeled area
-                if (VisualizingVariable == VisOpt::regions) {
-                    // In regions mode, color non-modeled areas by region ID
-                    uint8_t region_id = grid_status[grid_idx];
-                    float val = (region_id % 13) / 12.0f;
-                    std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pastel, val);
-                    for (int k = 0; k < 3; k++) renderedImage[render_idx + k] = c[k];
-                }
-            }
-        }
-    }
-
-
     // Update Actors
     if (show_vectors) {
         int dims[3];
@@ -615,34 +578,7 @@ void VisualRepresentation::SynchronizeTopology()
         actor_vectors->VisibilityOff();
         actor_streamlines->VisibilityOff();
     }
-
-    // Update VTK raster image
-    raster_scalars->SetNumberOfComponents(3);
-    raster_scalars->SetArray(renderedImage.data(), renderedImage.size(), 1);
-    raster_scalars->Modified();
-    raster_imageData->SetDimensions(width, height, 1);
-    raster_imageData->GetPointData()->SetScalars(raster_scalars);
-
-    raster_plane->SetOrigin(-h / 2, -h / 2, -1.0);
-    raster_plane->SetPoint1((width - 0.5) * h, -h / 2, -1.0);
-    raster_plane->SetPoint2(-h / 2, (height - 0.5) * h, -1.0);
-
-    raster_mapper->SetInputConnection(raster_plane->GetOutputPort());
-    raster_texture->SetInputData(raster_imageData);
-    raster_actor->SetMapper(raster_mapper);
-    raster_actor->SetTexture(raster_texture);
-    raster_mapper->Update();
-    raster_texture->Update();
-
-    // Contours logic removed
-    SynchronizeValues();
-    ConfigureScalarBar();
-    UpdateTimeText();
 }
-
-// UpdateEtaContours removed
-
-
 
 void VisualRepresentation::SynchronizeValues()
 {
@@ -675,58 +611,41 @@ void VisualRepresentation::SynchronizeValues()
     const double range = std::pow(10, ranges[VisualizingVariable]);
     const double transparency = transparency_coeffs[(int)VisualizingVariable];
 
+    auto get_util_color = [](uint64_t util) -> std::array<uint8_t, 3> {
+        return { static_cast<uint8_t>((util >> 24) & 0xFF),
+                 static_cast<uint8_t>((util >> 32) & 0xFF),
+                 static_cast<uint8_t>((util >> 40) & 0xFF) };
+    };
+
     if (VisualizingVariable == VisOpt::pt_color) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            uint8_t r = (utility >> 24) & 0xFF;
-            uint8_t g = (utility >> 32) & 0xFF;
-            uint8_t b = (utility >> 40) & 0xFF;
-            pts_colors->SetTuple3((vtkIdType)i, r, g, b);
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            auto c = get_util_color(util);
+            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
     } else if (VisualizingVariable == VisOpt::pt_status) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
             std::array<uint8_t, 3> c = ColorMap::rgb_white; // Default Intact (White)
-            if (utility & SimParams::status_crushed) {
-                c = ColorMap::rgb_red; // Crushed (Red)
-            } else if (utility & SimParams::status_cracked) {
-                c = ColorMap::rgb_green; // Cracked (Green)
-            }
+            if (util & SimParams::status_crushed) c = ColorMap::rgb_red;
+            else if (util & SimParams::status_cracked) c = ColorMap::rgb_green;
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
-
     } else if (VisualizingVariable == VisOpt::pt_fracture_type) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            
-            // Start with original color
-            uint8_t r = (utility >> 24) & 0xFF;
-            uint8_t g = (utility >> 32) & 0xFF;
-            uint8_t b = (utility >> 40) & 0xFF;
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            auto c = get_util_color(util);
 
-            if (utility & (SimParams::fracture_tension | 
-                SimParams::fracture_compression_shear |
-                utility & SimParams::fracture_crush))
-            {
-                r = g = b = 0;
+            if (util & (SimParams::fracture_tension | SimParams::fracture_compression_shear | SimParams::fracture_crush)) {
+                c = {0, 0, 0};
+                if (util & SimParams::fracture_tension) c[2] = 255; // Blue
+                if (util & SimParams::fracture_compression_shear) c[1] = 255; // Green
+                if (util & SimParams::fracture_crush) c = {255, 0, 0}; // Red
             }
-            // Overwrite components based on fracture flags
-            if (utility & SimParams::fracture_tension) {
-                b = 255; // Blue
-            }
-            if (utility & SimParams::fracture_compression_shear) {
-                g = 255; // Green
-            }
-            if (utility & SimParams::fracture_crush) {
-                r = 255; // Red
-                g = 0;
-                b = 0;
-            }
-
-            pts_colors->SetTuple3((vtkIdType)i, r, g, b);
+            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
     } else if (VisualizingVariable == VisOpt::none) {
         for (int i = 0; i < nPts; i++) {
@@ -736,19 +655,12 @@ void VisualRepresentation::SynchronizeValues()
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
             double val = s->getValue(SimParams::PtArrIdx::idx_Jp_inv) - 1.0;
-            double value = val / range + 0.5;
-            // Compute alpha based on transparency coefficient (see pt_P for details)
-            const double base_alpha = std::min(1.0, std::abs(val) / range);
-            double alpha = (1.0 - transparency) * 1.0 + transparency * base_alpha;
+            double alpha = (1.0 - transparency) + transparency * std::min(1.0, std::abs(val) / range);
             
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            uint8_t r = (utility >> 24) & 0xFF;
-            uint8_t g = (utility >> 32) & 0xFF;
-            uint8_t b = (utility >> 40) & 0xFF;
-            
-            std::array<uint8_t, 3> original_color = {r, g, b};
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Pressure, value);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            auto orig = get_util_color(util);
+            auto c = colormap.getColor(ColorMap::Palette::Pressure, val / range + 0.5);
+            auto c2 = colormap.mergeColors(orig, c, alpha);
             pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
     } else if (VisualizingVariable == VisOpt::pt_ridges) {
@@ -757,58 +669,29 @@ void VisualRepresentation::SynchronizeValues()
             double val = s->getValue(SimParams::PtArrIdx::idx_Jp_inv) - 1.0;
             double alpha = val > 0 ? 1.0 : 0.0;
             
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            uint8_t r = (utility >> 24) & 0xFF;
-            uint8_t g = (utility >> 32) & 0xFF;
-            uint8_t b = (utility >> 40) & 0xFF;
-            
-            std::array<uint8_t, 3> original_color = {r, g, b};
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Ridges, val / range);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
-            pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
-        }
-    } else if (VisualizingVariable == VisOpt::pt_ridges) {
-        for (int i = 0; i < nPts; i++) {
-            SOAIterator s = hssoa.begin() + i;
-            double val = s->getValue(SimParams::PtArrIdx::idx_Jp_inv) - 1.0;
-            double alpha = val > 0 ? 1.0 : 0.0;
-            
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            uint8_t r = (utility >> 24) & 0xFF;
-            uint8_t g = (utility >> 32) & 0xFF;
-            uint8_t b = (utility >> 40) & 0xFF;
-            
-            std::array<uint8_t, 3> original_color = {r, g, b};
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::Ridges, val / range);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            auto orig = get_util_color(util);
+            auto c = colormap.getColor(ColorMap::Palette::Ridges, val / range);
+            auto c2 = colormap.mergeColors(orig, c, alpha);
             pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
     } else if (VisualizingVariable == VisOpt::pt_glen_flow) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
-            // Use idx_glen_flow (18)
             double val = s->getValue(SimParams::PtArrIdx::idx_glen_flow);
-            double value = val / range;
+            double alpha = (1.0 - transparency) + transparency * std::min(1.0, std::abs(val) / range);
             
-            const double base_alpha = std::min(1.0, std::abs(val) / range);
-            double alpha = (1.0 - transparency) * 1.0 + transparency * base_alpha;
-            
-            uint64_t utility = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            uint8_t r = (utility >> 24) & 0xFF;
-            uint8_t g = (utility >> 32) & 0xFF;
-            uint8_t b = (utility >> 40) & 0xFF;
-            
-            std::array<uint8_t, 3> original_color = {r, g, b};
-            // Use ANSYS palette (same as Q)
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, value);
-            std::array<uint8_t, 3> c2 = colormap.mergeColors(original_color, c, alpha);
+            uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
+            auto orig = get_util_color(util);
+            auto c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+            auto c2 = colormap.mergeColors(orig, c, alpha);
             pts_colors->SetTuple3((vtkIdType)i, c2[0], c2[1], c2[2]);
         }
     } else if (VisualizingVariable == VisOpt::pt_thickness) {
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
             double val = s->getValue(SimParams::PtArrIdx::idx_thickness);
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+            auto c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
         lut_ANSYS->SetTableRange(0, range);
@@ -819,14 +702,23 @@ void VisualRepresentation::SynchronizeValues()
         for (int i = 0; i < nPts; i++) {
             SOAIterator s = hssoa.begin() + i;
             uint64_t util = s->getValueUInt64(SimParams::PtArrIdx::idx_utility_data);
-            uint16_t partition_idx = util & 0xFFFF;
-
-            std::array<uint8_t, 3> c = colormap.getColor(ColorMap::Palette::NCD, partition_idx / 8.0);
+            auto c = colormap.getColor(ColorMap::Palette::NCD, (util & 0xFFFF) / 8.0);
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
-
-
-
+    } else if (VisualizingVariable == VisOpt::pt_damage) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa.begin() + i;
+            double val = s->getValue(SimParams::PtArrIdx::idx_damage);
+            auto c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
+        }
+    } else if (VisualizingVariable == VisOpt::pt_strain_energy) {
+        for (int i = 0; i < nPts; i++) {
+            SOAIterator s = hssoa.begin() + i;
+            double val = s->getValue(SimParams::PtArrIdx::idx_strain_energy);
+            auto c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
+        }
     } else {
         // Default case: disable point rendering (for v_u, v_v, v_norm, and other unhandled modes)
         actor_points->VisibilityOff();
@@ -848,9 +740,7 @@ void VisualRepresentation::ConfigureScalarBar()
     // Default to visible
     scalarBar->VisibilityOn();
     scalarBarBgActor->VisibilityOn();
-    //scalarBar->SetTitle(visOptDescriptions[(int)VisualizingVariable].data());
-    actorTextTitle->SetInput(visOptDescriptions[(int)VisualizingVariable].data());
-
+    actorTextTitle->SetInput(visOptDescriptions.at(VisualizingVariable).data());
 
     switch (VisualizingVariable)
     {
@@ -882,11 +772,11 @@ void VisualRepresentation::ConfigureScalarBar()
     case VisOpt::v_wind_norm:
     case VisOpt::ocean_streamlines:
     case VisOpt::wind_streamlines:
-    case VisOpt::vis_lat:
-    case VisOpt::vis_lon:
     case VisOpt::pt_Q:
     case VisOpt::pt_glen_flow:
     case VisOpt::grid_glen_flow:
+    case VisOpt::pt_damage:
+    case VisOpt::pt_strain_energy:
         lut_ANSYS->SetTableRange(0, range);
         scalarBar->SetLookupTable(lut_ANSYS);
         scalarBar->SetLabelFormat("%.1e");
@@ -1009,6 +899,7 @@ void VisualRepresentation::LoadVisualizationState()
             ranges[(int)grid_glen_flow] = -2.0;
             ranges[(int)str_vonMises] = ranges[(int)str_EqvGreenLagrange] = -3.0;
             ranges[(int)pt_thickness] = ranges[(int)grid_thickness] = 0.35;
+            ranges[(int)pt_strain_energy] = 3.25;
 
             ranges[(int)v_wind_norm] = 1.25;
             transparency_coeffs[(int)v_wind_norm] = 0.6;

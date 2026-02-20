@@ -58,60 +58,79 @@ public:
     double simulationTime = 0;
 
     enum VisOpt {
-        none,   // 0
-        regions,    //1
+        none,
+        regions,
         // points must be available
-        pt_status, //2
-        pt_color, // 3
-        pt_Jp_inv, //4
-        pt_ridges, //5
-        pt_P, //6
-        pt_Q, //7
-        pt_thickness, //8
-        pt_partitions, //9
-        pt_glen_flow, // 10
-        pt_fracture_type, //11
+        pt_status,
+        pt_color,
+        pt_Jp_inv,
+        pt_ridges,
+        pt_P,
+        pt_Q,
+        pt_thickness,
+        pt_partitions,
+        pt_glen_flow,
+        pt_fracture_type,
+        pt_damage,
+        pt_strain_energy,
         // grid-based visualizations
-        grid_mass, //12
-        grid_pt_count, //13
-        grid_Jpinv, //14
-        grid_ridges, //15
-        grid_P, //16
-        grid_Q, //17
-        grid_colors, //18
-        grid_vnorm, //19
-        grid_cracked, //20
-        grid_thickness, //21
-        grid_fracture_type, //22
-        grid_glen_flow,     // 23
-        str_EqvGreenLagrange, //24
-        str_vonMises, //25
+        grid_mass,
+        grid_pt_count,
+        grid_Jpinv,
+        grid_ridges,
+        grid_P,
+        grid_Q,
+        grid_colors,
+        grid_vnorm,
+        grid_cracked,
+        grid_thickness,
+        grid_fracture_type,
+        grid_glen_flow,
+        str_EqvGreenLagrange,
+        str_vonMises,
         // visualization of external currents/forces
-        v_ocean_norm, //26
-        v_wind_norm,  // 27
-        ocean_streamlines, //28
-        wind_streamlines,  // 29
-        vis_lat,
-        vis_lon
+        v_ocean_norm,
+        v_wind_norm,
+        ocean_streamlines,
+        wind_streamlines
     };
     Q_ENUM(VisOpt)
 
-    inline static constexpr std::array<std::string_view, 32> visOptDescriptions = {
-        "", "Regions", "Status", "Color",
-        "Change in Surf. Density", "Ridges",
-        "In-plane Pressure", "Deviatoric Stress", "Thickness", "GPU Partitions", "Glen Flow", 
-        "Fracture Type",
-
-        "Mass", "Point count", "Jp_inv", "Ridges",
-
-        "In-plane Pressure P", "Deviatoric Stress Q",
-        "Colors", "Ice velocity norm", "Cracked/Crushed Material",
-        "Ice Thickness", "Fracture Type", "Glen Flow",
-        "Green-Lagrange Strain", "von Mises Strain",
-        "Ocean Current Velocity Norm", "Wind Velocity Norm", 
-        "Ocean Streamlines", "Wind Streamlines",
-        "Latitude", "Longitude"
+    inline static const std::map<VisOpt, std::string> visOptDescriptions = {
+        {none, ""},
+        {regions, "Regions"},
+        {pt_status, "Status"},
+        {pt_color, "Color"},
+        {pt_Jp_inv, "Change in Surf. Density"},
+        {pt_ridges, "Ridges"},
+        {pt_P, "In-plane Pressure"},
+        {pt_Q, "Deviatoric Stress"},
+        {pt_thickness, "Thickness"},
+        {pt_partitions, "GPU Partitions"},
+        {pt_glen_flow, "Glen Flow"},
+        {pt_fracture_type, "Fracture Type"},
+        {pt_damage, "Point Damage"},
+        {pt_strain_energy, "Strain Energy Density"},
+        {grid_mass, "Mass"},
+        {grid_pt_count, "Point count"},
+        {grid_Jpinv, "Jp_inv"},
+        {grid_ridges, "Ridges"},
+        {grid_P, "In-plane Pressure P"},
+        {grid_Q, "Deviatoric Stress Q"},
+        {grid_colors, "Colors"},
+        {grid_vnorm, "Ice velocity norm"},
+        {grid_cracked, "Cracked/Crushed Material"},
+        {grid_thickness, "Ice Thickness"},
+        {grid_fracture_type, "Fracture Type"},
+        {grid_glen_flow, "Glen Flow"},
+        {str_EqvGreenLagrange, "Green-Lagrange Strain"},
+        {str_vonMises, "von Mises Strain"},
+        {v_ocean_norm, "Ocean Current Velocity Norm"},
+        {v_wind_norm, "Wind Velocity Norm"},
+        {ocean_streamlines, "Ocean Streamlines"},
+        {wind_streamlines, "Wind Streamlines"}
     };
+
 
 
     VisOpt VisualizingVariable = VisOpt::none;
@@ -133,6 +152,7 @@ private:
 
     ColorMap colormap;
     void SynchronizeValues();
+    void UpdateFlowData();
 
     void SetupRegionBoundary(int gx, int gy, int ox, int oy, double h);  // draw rectangle for modeled area
 

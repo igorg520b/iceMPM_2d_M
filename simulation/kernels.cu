@@ -71,7 +71,7 @@ __global__ void partition_kernel_p2g(const PartitionParams pparams)
     double Jp_inv = bpts[pt_idx + pitch*SimParams::PtArrIdx::idx_Jp_inv];
 
     // PFt is 1st Piola-Kirchhoff Stress times F-transposed
-    PFt = KirchhoffStress_Wolper(Fe,Jp_inv);
+    PFt = KirchhoffStress_Wolper(Fe);
     stress_contribution = -(gprms.dt_vol_Dpinv*Jp_inv*thickness)*PFt;
     stress_contribution += Cp*particle_mass;    // this is part of the linear term from the velocity approximateion
 
@@ -253,6 +253,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     }
 
     Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
+    const double PSI_prev = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_strain_energy] ;
 
     // optimized method of computing the quadratic weight function without conditional operators
     Eigen::Array2d ww[3];
@@ -306,25 +307,28 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     Fe = (Eigen::Matrix2d::Identity() + dt*p_Bp) * Fe;     // Bp plays the role of the gradient of the velocity vector
     ComputePQ(Je_tr, p_tr, q_tr, Fe);    // computes P, Q
 
+    // for testing - compute strain energy
+    const double PSI = StrainEnergyDensity(Fe);
+
+
     if(!(utility_data & SimParams::status_crushed))
     {
-        CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr, initial_thickness);
+        CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr);
     }
 
     Eigen::Matrix2d U, V;
     Eigen::Vector2d vSigma, vSigmaSquared, v_s_hat_tr;
 
-    constexpr int glen_step = 100;
-    const bool perform_glen_step = (step % glen_step == 0) && (gprms.GlenA != 0);
-    const bool perform_plastic_flow = ((utility_data & SimParams::status_crushed) || (utility_data & SimParams::status_cracked));
-    if(perform_glen_step || perform_plastic_flow)
+    const bool perform_glen_step = (step % SimParams::glen_flow_every_N_step == 0) && (gprms.GlenA != 0);
+    const bool is_damaged = ((utility_data & SimParams::status_crushed) || (utility_data & SimParams::status_cracked));
+    if(perform_glen_step || is_damaged)
         ComputeSVD(Fe, U, vSigma, V, vSigmaSquared, v_s_hat_tr, kappa, mu, Je_tr);
 
     // Glen's Flow Rule
     double glen_flow_change = 0;
-    if(perform_glen_step) Glen_Nye_flow_law(dt*glen_step, q_tr, vSigmaSquared, U, V, v_s_hat_tr, Fe, glen_flow_change);
+    if(perform_glen_step) Glen_Nye_flow_law(dt*SimParams::glen_flow_every_N_step, q_tr, vSigmaSquared, U, V, v_s_hat_tr, Fe, glen_flow_change);
 
-    if(perform_plastic_flow)
+    if(is_damaged)
     {
         Wolper_Drucker_Prager(utility_data, initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
     }
@@ -350,6 +354,8 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         long long cell = ((long long)cell_i[1] << 32) | (long long)cell_i[0];
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx] = __longlong_as_double(cell);
     }
+
+    bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_strain_energy] = PSI;
 
     // upon request, PQ are recorded for visualization
 //    if(recordPQ)
@@ -740,7 +746,7 @@ __device__ void ComputePQ(double &Je_tr, double &p_tr, double &q_tr,
 
 
 __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_data,
-                            const double &p, const double &q, const double &strength)
+                            const double &p, const double &q)
 {
     const double pmax = gprms.IceCompressiveStrength;
     const double pmin = -gprms.IceTensileStrength;
@@ -791,6 +797,20 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
     }
 }
 
+
+
+__device__ bool CheckIfPointIsOutsideFailureSurface(const double &p, const double &q)
+{
+    const double pmax = gprms.IceCompressiveStrength;
+    const double pmin = -gprms.IceTensileStrength;
+    const double qmax = gprms.IceShearStrength;
+
+    const double beta = gprms.IceTensileStrength/gprms.IceCompressiveStrength;
+    const double M_sq = (4.*qmax*qmax*(1.+2.*beta))/((pmax-pmin)*(pmax-pmin));
+
+    double y = (1.+2.*beta)*q*q + M_sq*(p+beta*pmax) * (p-pmax);
+    return (y > 0);
+}
 
 
 
@@ -946,7 +966,7 @@ __device__ Eigen::Matrix2d dev(Eigen::Matrix2d A)
 }
 
 
-__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F, const double &Jp_inv)
+__device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F)
 {
     const double kappa = gprms.kappa;
     const double &mu = gprms.mu;
@@ -959,7 +979,19 @@ __device__ Eigen::Matrix2d KirchhoffStress_Wolper(const Eigen::Matrix2d &F, cons
 }
 
 
+__device__ double StrainEnergyDensity(const Eigen::Matrix2d &F)
+{
+    const double kappa = gprms.kappa;
+    const double &mu = gprms.mu;
 
+    // Strain energy density as per Wolper (2019)
+    const double trace = (F.transpose()*F).trace();
+    double J = F.determinant();
+    double term1 = mu*(trace/J - SimParams::dim);
+    double term2 = kappa*((J*J-1.)*0.5 - log(J));
+    const double result = 0.5*(term1+term2);
+    return result;
+}
 
 
 __device__ void Glen_Nye_flow_law(const double dt, double &q_tr,

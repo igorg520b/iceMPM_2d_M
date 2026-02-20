@@ -53,6 +53,7 @@ void SimParams::Reset()
 
     DP_phi = 62;
     DP_threshold_p = 1e4;
+    EnergyFractureThreshold = 1e5;  // J/m^3
 
     tpb_P2G = 256;
     tpb_Upd = 512;
@@ -82,7 +83,6 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     strConfigFile.resize(std::filesystem::file_size(fileName));
     fileStream.read(strConfigFile.data(), strConfigFile.length());
     fileStream.close();
-
 
     rapidjson::Document doc;
     doc.Parse(strConfigFile.data());
@@ -127,8 +127,6 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
 
     if(doc.HasMember("SaveSnapshots")) SaveSnapshots = doc["SaveSnapshots"].GetBool();
 
-
-
     if(doc.HasMember("SnapshotPeriod")) SnapshotPeriod = doc["SnapshotPeriod"].GetInt();
     if(doc.HasMember("SimulationEndTime")) SimulationEndTime = doc["SimulationEndTime"].GetDouble();
 
@@ -146,12 +144,12 @@ std::map<std::string,std::string> SimParams::ParseFile(std::string fileName)
     if(doc.HasMember("IceShearStrength")) IceShearStrength = doc["IceShearStrength"].GetDouble();
     if(doc.HasMember("IceShearStrengthFractured")) IceShearStrengthFractured = doc["IceShearStrengthFractured"].GetDouble();
 
-
     if(doc.HasMember("IceCompressiveThreshold")) IceCompressiveThreshold = doc["IceCompressiveThreshold"].GetDouble();
     if(doc.HasMember("DP_phi")) DP_phi = doc["DP_phi"].GetDouble();
     if(doc.HasMember("DP_threshold_p")) DP_threshold_p = doc["DP_threshold_p"].GetDouble();
     if(doc.HasMember("RidgeFormationCoeff")) RidgeFormationCoeff = doc["RidgeFormationCoeff"].GetDouble();
     if(doc.HasMember("GlenA")) GlenA = doc["GlenA"].GetDouble();
+    if(doc.HasMember("EnergyFractureThreshold")) EnergyFractureThreshold = doc["EnergyFractureThreshold"].GetDouble();
 
     if(doc.HasMember("waterDragEffectiveQuadratic")) waterDragEffectiveQuadratic = doc["waterDragEffectiveQuadratic"].GetDouble();
     if(doc.HasMember("windDragEffectiveQuadratic")) windDragEffectiveQuadratic = doc["windDragEffectiveQuadratic"].GetDouble();
