@@ -95,6 +95,13 @@ PPMainWindow::PPMainWindow(QWidget *parent)
     toolBar->addWidget(qsbFrameFrom);
     toolBar->addWidget(qsbFrameTo);
 
+    toolBar->addSeparator();
+    qsbCurrentFrame = new QSpinBox();
+    toolBar->addWidget(qsbCurrentFrame);
+    btnSubmitFrame = new QPushButton("Submit");
+    toolBar->addWidget(btnSubmitFrame);
+    connect(btnSubmitFrame, &QPushButton::clicked, this, &PPMainWindow::submitFrame_triggered);
+
     // Frame slider
     slider2 = new QSlider(Qt::Horizontal);
     toolBar->addWidget(slider2);
@@ -160,8 +167,6 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         // Restore scroll tracking preference
         bool scrollTracking = settings.value("scroll_tracking", false).toBool();
         slider2->setTracking(scrollTracking);
-
-
     }
     else
     {
@@ -228,6 +233,35 @@ PPMainWindow::PPMainWindow(QWidget *parent)
         });
     }
 
+    cameraMenu->addSeparator();
+
+    showTitleAction = cameraMenu->addAction("Show Title");
+    showTitleAction->setCheckable(true);
+    showTitleAction->setChecked(true); // Default is shown
+    connect(showTitleAction, &QAction::toggled, this, [this](bool checked){
+        representation.textBgActor->SetVisibility(checked);
+        representation.actorText->SetVisibility(checked);
+        representation.actorTextTitle->SetVisibility(checked);
+        renderWindow->Render();
+    });
+
+    highResSnapshotAction = cameraMenu->addAction("Snapshot High-Res");
+    highResSnapshotAction->setCheckable(true);
+    highResSnapshotAction->setChecked(false); // Default is low-res
+    connect(highResSnapshotAction, &QAction::toggled, this, [this](bool checked){
+        m_highResSnapshot = checked;
+    });
+
+    // NOW we can apply the saved settings to the actions
+    if(fi.exists()) {
+        QSettings settings(settingsFileName, QSettings::IniFormat);
+        bool showTitle = settings.value("show_title", true).toBool();
+        showTitleAction->setChecked(showTitle);
+        
+        bool highRes = settings.value("high_res_snapshot", false).toBool();
+        highResSnapshotAction->setChecked(highRes);
+    }
+
     QAction *renderSelectorAction = viewMenu->addAction("&Render Selector");
     renderSelectorAction->setCheckable(true);
     renderSelectorAction->setChecked(false);
@@ -286,9 +320,26 @@ void PPMainWindow::closeEvent(QCloseEvent* event)
 
     settings.setValue("vis_option", comboBox_visualizations->currentIndex());
     settings.setValue("scroll_tracking", slider2->hasTracking());
+    
+    if (showTitleAction) {
+        settings.setValue("show_title", showTitleAction->isChecked());
+    }
+    if (highResSnapshotAction) {
+        settings.setValue("high_res_snapshot", highResSnapshotAction->isChecked());
+    }
 
     // Save render selector state
     m_renderSelectorDialog->saveSelections(settingsFileName);
+
+    if (!currentProjectDirectory.empty()) {
+        QString frameFile = QString::fromStdString(currentProjectDirectory) + "/last_frame.txt";
+        QFile file(frameFile);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << slider2->value();
+            file.close();
+        }
+    }
 
     event->accept();
 }
@@ -300,8 +351,19 @@ void PPMainWindow::limits_changed(double val_)
     int idx = (int)representation.VisualizingVariable;
     representation.ranges[idx] = qdsbValRange->value();
     representation.transparency_coeffs[idx] = qdsbTransparency->value();
-    representation.SynchronizeTopology();
-    renderWindow->Render();
+    // Frame will be redrawn only after pressing 'submit' button
+}
+
+void PPMainWindow::submitFrame_triggered()
+{
+    int targetFrame = qsbCurrentFrame->value();
+    if (targetFrame != slider2->value()) {
+        slider2->setValue(targetFrame); // This triggers sliderValueChanged, loading and rendering
+    } else {
+        // Redraw frame manually, e.g. if the limits or representations changed
+        this->representation.SynchronizeTopology();
+        renderWindow->Render();
+    }
 }
 
 
@@ -446,14 +508,36 @@ void PPMainWindow::LoadFramesDirectory(QString framesDirectory)
     qsbFrameFrom->setMaximum(countFrames);
     qsbFrameFrom->setValue(1);
 
-    // Load and display the last frame as a starting point
-    slider2->setValue(countFrames);
+    qsbCurrentFrame->setMaximum(countFrames);
+    qsbCurrentFrame->setValue(countFrames);
+
+    int initialFrame = countFrames;
+    if (!currentProjectDirectory.empty()) {
+        QString frameFile = QString::fromStdString(currentProjectDirectory) + "/last_frame.txt";
+        QFile file(frameFile);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&file);
+            int savedFrame = 0;
+            in >> savedFrame;
+            if (savedFrame >= 1 && savedFrame <= countFrames) {
+                initialFrame = savedFrame;
+            }
+            file.close();
+        }
+    }
+
+    // Load and display the initial frame as a starting point
+    slider2->setValue(initialFrame);
 
     statusBar->showMessage(QString("Loaded %1 frames").arg(countFrames));
 }
 
 void PPMainWindow::sliderValueChanged(int val)
 {
+    qsbCurrentFrame->blockSignals(true);
+    qsbCurrentFrame->setValue(val);
+    qsbCurrentFrame->blockSignals(false);
+    
     try {
         // Load the frame data from disk
         // Load the frame data from disk
@@ -556,7 +640,13 @@ void PPMainWindow::render_frame_triggered()
     const QSizePolicy originalPolicy = qt_vtk_widget->sizePolicy();
 
     scrollArea->setWidgetResizable(false);
-    qt_vtk_widget->setFixedSize(1920, 1080);
+    
+    if (m_highResSnapshot) {
+        qt_vtk_widget->setFixedSize(19200, 10800);
+    } else {
+        qt_vtk_widget->setFixedSize(1920, 1080);
+    }
+    
     QCoreApplication::processEvents();
 
     windowToImageFilter->SetInput(renderWindow);
@@ -567,6 +657,7 @@ void PPMainWindow::render_frame_triggered()
     windowToImageFilter->SetInputBufferTypeToRGB();
     renderWindow->WaitForCompletion();
 
+    windowToImageFilter->Modified();
     writer->SetFileName(filename.c_str());
     writer->Write();
 

@@ -713,12 +713,12 @@ void VisualRepresentation::SynchronizeValues()
             pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
         }
     } else if (VisualizingVariable == VisOpt::pt_strain_energy) {
-        for (int i = 0; i < nPts; i++) {
-            SOAIterator s = hssoa.begin() + i;
-            double val = s->getValue(SimParams::PtArrIdx::idx_strain_energy);
-            auto c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
-            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
-        }
+//        for (int i = 0; i < nPts; i++) {
+//            SOAIterator s = hssoa.begin() + i;
+//            double val = s->getValue(SimParams::PtArrIdx::idx_strain_energy);
+//            auto c = colormap.getColor(ColorMap::Palette::ANSYS, val / range);
+//            pts_colors->SetTuple3((vtkIdType)i, c[0], c[1], c[2]);
+//        }
     } else {
         // Default case: disable point rendering (for v_u, v_v, v_norm, and other unhandled modes)
         actor_points->VisibilityOff();

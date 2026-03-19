@@ -150,8 +150,8 @@ public:
         Fe00 = 9,       // size 4: deformation gradient (9,10,11,12)
         Bp00 = 13,      // size 4: grad of v with respect to x,y (13,14,15,16)
         idx_damage = 17,            // damage to the ice fragment in range [0,1]
-        idx_strain_energy = 18,     // strain energy (for damage accumulation)
-        nPtsArrays = 19
+//        idx_strain_energy = 18,     // strain energy (for damage accumulation)
+        nPtsArrays = 18
     };
 
     // GPU and multi-GPU-related params

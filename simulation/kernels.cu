@@ -253,7 +253,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     }
 
     Eigen::Vector2i cell_i  = getIntegerCellIndex(bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx]);
-    const double PSI_prev = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_strain_energy] ;
+    //const double PSI_prev = bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_strain_energy] ;
 
     // optimized method of computing the quadratic weight function without conditional operators
     Eigen::Array2d ww[3];
@@ -308,12 +308,12 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
     ComputePQ(Je_tr, p_tr, q_tr, Fe);    // computes P, Q
 
     // for testing - compute strain energy
-    const double PSI = StrainEnergyDensity(Fe);
+//    const double PSI = StrainEnergyDensity(Fe);
 
 
     if(!(utility_data & SimParams::status_crushed))
     {
-        CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr);
+ //       CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr);
     }
 
     Eigen::Matrix2d U, V;
@@ -355,7 +355,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
         bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::integer_cell_idx] = __longlong_as_double(cell);
     }
 
-    bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_strain_energy] = PSI;
+    //bpts[pt_idx + pitch_pts*SimParams::PtArrIdx::idx_strain_energy] = PSI;
 
     // upon request, PQ are recorded for visualization
 //    if(recordPQ)

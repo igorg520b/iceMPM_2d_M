@@ -73,6 +73,7 @@ private Q_SLOTS:
     void sliderValueChanged(int val);
     void render_frame_triggered();
     void render_all_triggered();
+    void submitFrame_triggered();
     void toggleScrollTracking(bool checked);
     void openProject_triggered();
     void openFrames_triggered();
@@ -92,7 +93,8 @@ private:
     QDoubleSpinBox *qdsbTransparency;
     QDoubleSpinBox *qdsbContourInterval;
 
-    QSpinBox *qsbFrameFrom, *qsbFrameTo;
+    QSpinBox *qsbFrameFrom, *qsbFrameTo, *qsbCurrentFrame;
+    QPushButton *btnSubmitFrame;
     QSlider *slider2;
     QScrollArea *scrollArea;
     QToolBar *toolBar;
@@ -119,6 +121,9 @@ private:
     // Camera Slots
     std::array<double, 7> m_cameraSlots[5];
     bool m_useCameraSlot[5] = {false, false, false, false, false};
+    bool m_highResSnapshot = false;
+    QAction* showTitleAction = nullptr;
+    QAction* highResSnapshotAction = nullptr;
     void captureCameraToSlot(int index);
 };
 #endif

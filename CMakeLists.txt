@@ -11,7 +11,6 @@ option(BUILD_GUI_VERSION "Build Qt version" OFF)
 option(BUILD_POSTPROCESSOR "Build the tool for visualization" OFF)
 option(BUILD_PREPARER "Build the tool for preparing the data" OFF)
 option(BUILD_PREPARER_CLI "Build the CLI tool for preparing the data" OFF)
-option(BUILD_COMPRESSOR "Build the CLI compressor utility" OFF)
 option(BUILD_ADDITIONAL_UTILITIES "Build additional utilities" OFF)
 
 option(ENABLE_NAN_CHECKS "Perform NaN checks during the simulation" OFF)
@@ -427,57 +426,8 @@ if(BUILD_PREPARER_CLI)
 endif()
 
 
-if(BUILD_COMPRESSOR)
-    add_executable(compressor
-        compressor/core.cpp
-        compressor/core.cpp
-        compressor/main_serial.cpp
-    )
-    target_include_directories(compressor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
-    target_link_libraries(compressor PRIVATE ${HDF5_LIBRARIES})
-
-endif()
-
-
 
 if(BUILD_ADDITIONAL_UTILITIES)
-
-    add_executable(verify_sort
-        _utilities/main_verify_sort.cpp
-
-        simulation/parameters_sim.h
-        simulation/parameters_sim.cpp
-        simulation/hssoa/host_side_soa.h
-        simulation/hssoa/host_side_soa.cpp
-        simulation/hssoa/proxypoint2d.h
-        simulation/hssoa/proxypoint2d.cpp
-    )
-    target_include_directories(verify_sort PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
-    target_include_directories(verify_sort PRIVATE _utilities simulation simulation/hssoa simulation/data_manager External)
-    target_link_libraries(verify_sort PRIVATE ${HDF5_LIBRARIES} spdlog::spdlog Eigen3::Eigen fmt::fmt)
-
-
-    add_executable(verify_omp
-    _utilities/main_verify_omp.cpp
-    )
-    target_compile_options(verify_omp PRIVATE -fopenmp -Wno-stringop-overflow -Wno-invalid-offsetof)
-    target_link_libraries(verify_omp PRIVATE gomp)
-
-    add_executable(snapshot_compressor
-        _utilities/main_snapshot_compressor.cpp
-        simulation/parameters_sim.h
-        simulation/parameters_sim.cpp
-        simulation/hssoa/host_side_soa.h
-        simulation/hssoa/host_side_soa.cpp
-        simulation/hssoa/proxypoint2d.h
-        simulation/hssoa/proxypoint2d.cpp
-        simulation/data_manager/host_side_data.cpp
-        simulation/data_manager/windandcurrentinterpolator.cpp
-        gui/colormap.cpp
-    )
-    target_include_directories(snapshot_compressor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
-    target_include_directories(snapshot_compressor PRIVATE _utilities simulation simulation/hssoa simulation/data_manager External gui)
-    target_link_libraries(snapshot_compressor PRIVATE ${HDF5_LIBRARIES} spdlog::spdlog Eigen3::Eigen fmt::fmt)
 
 
 
