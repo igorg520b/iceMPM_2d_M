@@ -313,7 +313,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     if(!(utility_data & SimParams::status_crushed))
     {
- //       CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr);
+        CheckIfPointIsInsideFailureSurface(utility_data, p_tr, q_tr);
     }
 
     Eigen::Matrix2d U, V;

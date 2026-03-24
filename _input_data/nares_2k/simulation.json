@@ -1,5 +1,5 @@
 {
-"SimulationTitle":"nares_2k_full",
+"SimulationTitle":"nares_2k",
 
 "IceShearStrength":3.5e6,
 "IceShearStrengthFractured":4.5e6,
@@ -7,12 +7,12 @@
 "IceTensileStrength2":3.0e6,
 "DP_phi":55,
 "waterDragEffectiveQuadratic":15e-3,
-"windDragEffectiveQuadratic":8e-6,
+"windDragEffectiveQuadratic":10e-6,
 "GlenA":2e-24,
-"RidgeFormationCoeff":0.1, 
+"RidgeFormationCoeff":0.1,
 
 "GridData":"grid.h5",
-"Snapshot":"s00000.h5",
+"Snapshot":"f00000.h5",
 "ERA5Data":"/home/s2/Projects-CUDA/iceMPM_2d_M/_python_code/netcdf/era5_data.nc",
 "GLO12Data":"/home/s2/Projects-CUDA/iceMPM_2d_M/_python_code/netcdf/glo12v4_nares_currents.nc",
 "GLO12Tides":"/home/s2/Projects-CUDA/iceMPM_2d_M/_python_code/netcdf/glo12v4_nares_tidal_currents.nc",
