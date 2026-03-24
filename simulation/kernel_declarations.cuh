@@ -135,6 +135,12 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
 // alternative version that returns true if outside of failure surface
 __device__ bool CheckIfPointIsOutsideFailureSurface(const double &p, const double &q);
 
+// for testing
+__device__ void Plastic_Project_to_Fracture_Surface(const unsigned long long &utility_data, const double &initial_thickness,
+                                                    const double &p_tr, const double &q_tr, const double &Je_tr,
+                                                    const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigmaSquared, const Eigen::Vector2d &v_s_hat_tr,
+                                                    Eigen::Matrix2d &Fe, double &Jp_inv);
+
 // Retrieves grain-specific material parameters (strength bounds, hardening)
 __device__ void GetParametersForGrain(uint32_t utility_data, double &pmin, double &pmax, double &qmax,
                                       double &beta, double &mSq, double &pmin2);

@@ -330,6 +330,7 @@ __global__ void partition_kernel_g2p(const PartitionParams pparams, const bool r
 
     if(is_damaged)
     {
+//        Plastic_Project_to_Fracture_Surface(utility_data, initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
         Wolper_Drucker_Prager(utility_data, initial_thickness, p_tr, q_tr, Je_tr, U, V, vSigmaSquared, v_s_hat_tr, Fe, Jp_inv);
     }
 
@@ -766,6 +767,7 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
     }
     else if(p < 0)
     {
+        /*
         // can be cracked in tension/shear (if outside failure envelope)
         double q0 = 2*sqrt(-pmax*pmin)*qmax/(pmax-pmin);
         double k = -q0/pmin2;
@@ -775,6 +777,15 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
             utility_data |= SimParams::status_cracked;
             utility_data |= SimParams::fracture_tension;
         }
+*/
+        double y = (1.+2.*beta)*q*q + M_sq*(p+beta*pmax) * (p-pmax);
+        if(y > 0)
+        {
+            utility_data |= SimParams::status_cracked;
+            utility_data |= SimParams::fracture_tension;
+        }
+
+
         return;
     }
     else
@@ -798,7 +809,7 @@ __device__ void CheckIfPointIsInsideFailureSurface(unsigned long long &utility_d
 }
 
 
-
+/*
 __device__ bool CheckIfPointIsOutsideFailureSurface(const double &p, const double &q)
 {
     const double pmax = gprms.IceCompressiveStrength;
@@ -811,7 +822,7 @@ __device__ bool CheckIfPointIsOutsideFailureSurface(const double &p, const doubl
     double y = (1.+2.*beta)*q*q + M_sq*(p+beta*pmax) * (p-pmax);
     return (y > 0);
 }
-
+*/
 
 
 __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, const double &initial_thickness,
@@ -926,6 +937,117 @@ __device__ void Wolper_Drucker_Prager(const unsigned long long &utility_data, co
 
 
 
+/*
+__device__ void Plastic_Project_to_Fracture_Surface(const unsigned long long &utility_data, const double &initial_thickness,
+                                                    const double &p_tr, const double &q_tr, const double &Je_tr,
+                                                    const Eigen::Matrix2d &U, const Eigen::Matrix2d &V, const Eigen::Vector2d &vSigmaSquared, const Eigen::Vector2d &v_s_hat_tr,
+                                                    Eigen::Matrix2d &Fe, double &Jp_inv)
+{
+    const double &mu = gprms.mu;
+    const double kappa = gprms.kappa;
+
+    double DP_threshold_p = gprms.DP_threshold_p;
+    const double pmin = -gprms.IceTensileStrength;
+
+    const double &pmax = gprms.IceCompressiveStrength;
+    const double &qmax = gprms.IceShearStrengthFractured;
+
+    const double tan_phi = tan(gprms.DP_phi*SimParams::pi/180);
+
+    double q_yield = 0;
+    double q_n_1 = 0, p_n_1 = 0;
+    constexpr double Jp_inv_threshold = 0.05;
+
+    if(p_tr < pmin)
+    {
+        // tension
+        if(Jp_inv < Jp_inv_threshold)
+        {
+            double sqrt_Je_new = sqrt(Je_tr);
+            Eigen::Vector2d vSigma_new(sqrt_Je_new,sqrt_Je_new); //= Vector2d::Constant(1.)*sqrt(Je_new);  //Matrix2d::Identity() * pow(Je_new, 1./(double)d);
+            Fe = U*vSigma_new.asDiagonal()*V.transpose();
+        }
+        else
+        {
+            // stretching in tension - no resistance
+            Eigen::Vector2d vSigma_new(1.0,1.0);
+            Fe = U*vSigma_new.asDiagonal()*V.transpose();
+            Jp_inv /= Je_tr;
+        }
+    }
+    else
+    {
+        // determine q_yeld from the combination of DP / elliptic yield surface, whichever is lower
+        if(p_tr < pmax)
+        {
+            double q_from_failure_surface = 2*sqrt((pmax-p_tr)*(p_tr-pmin))*qmax/(pmax-pmin);  // elliptic
+            q_yield = q_from_failure_surface;
+        }
+        else
+        {
+            // such hight pressures should not happen - everythigng is liquified
+            q_yield = 0;
+        }
+
+        if(q_tr > q_yield)
+        {
+            // plasticity will be applied
+
+            // estimate the new P based on the ridge height
+            if(p_tr < 0 && Jp_inv < Jp_inv_threshold)
+            {
+                p_n_1 = p_tr;
+                // otherwise p_n_1 = 0
+            }
+            else if(p_tr >= 0)
+            {
+                if(utility_data & SimParams::status_crushed)
+                {
+                    const double p_ridge_max = gprms.RidgeFormationCoeff * SimParams::g * gprms.IceDensity * initial_thickness * (Jp_inv);
+                    p_n_1 = min(p_tr, p_ridge_max);
+                }
+                else
+                {
+                    if(Jp_inv >= 1.0) p_n_1 = p_tr;
+                }
+            }
+
+            // re-evaluate q (to find the new "projected" value)
+            if(p_n_1 < pmax)
+            {
+                const double q_from_dp = max((double)0, (p_n_1-DP_threshold_p)*tan_phi);
+                const double q_from_failure_surface = 2*sqrt((pmax-p_n_1)*(p_n_1-pmin))*qmax/(pmax-pmin);
+                q_n_1 = min(q_from_failure_surface, q_from_dp);
+            }
+            else
+            {
+                q_n_1 = 0;
+            }
+
+            // given p_n_1 and q_n_1, compute the new Fe
+            const double Je_new = sqrt(-2*p_n_1/kappa + 1);
+            double s_hat_n_1_norm = q_n_1*coeff1_inv;
+            //Matrix2d B_hat_E_new = s_hat_n_1_norm*(pow(Je_tr,2./d)/mu)*s_hat_tr.normalized() + Matrix2d::Identity()*(SigmaSquared.trace()/d);
+
+            const Eigen::Vector2d vB_hat_E_new = s_hat_n_1_norm*(Je_tr/mu)*v_s_hat_tr.normalized() +
+                                                 Eigen::Vector2d::Constant(1)*(Je_new);
+
+            const Eigen::Vector2d vSigma_new = vB_hat_E_new.array().sqrt().matrix();
+            Fe = U*vSigma_new.asDiagonal()*V.transpose();
+            Jp_inv *= Je_new/Je_tr;
+        }
+    }
+
+#ifdef ENABLE_NAN_CHECKS
+    // check if something went wrong
+    if(isnan(Fe(0,0)) || isnan(Fe(1,0)) || isnan(Fe(0,1)) || isnan(Fe(1,1)))
+    {
+        gpu_error_indicator |= error_code_point_Fe_nan;
+    }
+#endif
+}
+
+*/
 
 
 __device__ void svd2x2(const Eigen::Matrix2d &mA, Eigen::Matrix2d &mU, Eigen::Vector2d &mS, Eigen::Matrix2d &mV)
